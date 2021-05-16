@@ -1,0 +1,23 @@
+syntax = "proto3";
+package Simple2;
+
+message Request {
+    int32 num1 = 1;
+    int32 num2 = 2;
+}
+
+message Response {
+    int32 result = 1;
+}
+
+message Event {
+    string message = 1;
+}
+
+message MultiEvent {
+    int32 count = 1;
+}
+
+service Service {
+    rpc simpleMethod(Simple2.Request) returns(Simple2.Response);
+}
