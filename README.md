@@ -14,7 +14,7 @@ These two underlying technologies ensure we'll have the ability to extend our pl
 
 This module is intended to be used in a high volume financial environment and as such we tried to choose battle tested components and as few dependencies as possible.
 
-Remarkable Bus is based on AMQP so you'll need to install either RabbitMQ or use a cloud AMQP provider, there are a few.. The advantage of this is that it adds virtually infinite scalability to the messaging layer with very little maintainance.
+ProtoBus is based on AMQP so you'll need to install either RabbitMQ or use a cloud AMQP provider (Amazon MQ, CloudAMQP, etc).
 
 As you can see for yourself from the package.json file we really kept the dependencies to a minimum with the few we did use being high profile and very popular. This termendously reduces the risk involved with foreign code in such a low level component.
 
