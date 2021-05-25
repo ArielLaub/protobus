@@ -1,6 +1,6 @@
 ## Overview
 
-The Remarkable Bus is a lean, mean and super scalable micro-services message bus written entirely in TypeScript.
+ProtoBus is a lean, mean and super scalable micro-services message bus written entirely in TypeScript.
 
 It is using RabbitMQ for routing and load balancing messages across different services.
 
@@ -22,11 +22,11 @@ As you can see for yourself from the package.json file we really kept the depend
 
 You can either clone this repo for the latest and greatest or download the official npm:
 ```
-npm install remarkable-bus --save
+npm install protobus --save
 ``` 
 or
 ```
-yarn add remarkable-bus --save
+yarn add protobus --save
 ```
 
 ## Main Components
@@ -126,18 +126,18 @@ createContext.then(async (context: IContext) => {
 ### ServiceCluster
 
 In many cases it makes sense to initiate a group of services together sharing the same process and the same context.
-The ServiceCluster class does exactly that. It's basically a glorified services container with some fancy typescript magic. using ServiceCluster you can initialize services in a more compact way (if you have more than a few...):
+The ServiceCluster class does exactly that. It's basically a glorified services container with some fancy typescript magic. using ServiceCluster you can initialize services in a more compact way (if you have more than a few...) while enabling you to initialized 1 or more listeners per service:
 ```ts
-import { ServiceCluster } from 'remarkable-bus';
+import { ServiceCluster } from 'protobus';
 
 ...
 
 const cluster = new ServiceCluster(context);
-cluster.use(FullService);
-cluster.use(ExcellentService);
-cluster.use(BadService);
-cluster.use(RoomService);
-cluster.use(TaxiService);
+cluster.use(FullService, 2);
+cluster.use(ExcellentService, 4);
+cluster.use(BadService, 1);
+cluster.use(RoomService, 2);
+cluster.use(TaxiService, 2);
 await cluster.init();
 ```
 
@@ -164,7 +164,37 @@ createContext.then(async (context: IContext) => {
 });
 ```
 
+protobus also supports an easy way to generate hard typed proxies. Based on a .proto file you can generate a typescript interface based proxy with all the added benefits like code completion and compilation level validations.
+
 ## Advanced Topics
+
+### Events
+You can easily implement pub/sub features using events. We support several event types:
+
+#### Simple events with a static topic
+In the following example a service is subscribing for its own event
+```
+const handler = async (event): Promise<any> => {
+    expect(event).to.have.property('message', 'hello');
+    resolve(undefined);
+};
+await subService.subscribeEvent('Simple.Event', handler);
+await pubService.publishEvent('Simple.Event', { message: 'hello' });
+```
+
+#### Wildcard Events - events with a wildcard topic
+In the following example we demonstrate the usage of wilcards.
+```
+const handler = async (event): Promise<any> => {
+    console.log(event.count);
+};
+await subService.subscribeEvent('Simple.MultiEvent', handler, 'CUSTOM.*.TOPIC');
+await pubService.publishEvent('Simple.MultiEvent', { count: 1 }, 'CUSTOM.1.TOPIC');
+await pubService.publishEvent('Simple.MultiEvent', { count: 2 }, 'CUSTOM.2.TOPIC');
+```
+
+#### Persistent Events
+Events in protobus are persisted until process successfully. This means that if a listener subscribes for a certain topic and got an event message, this message will be marked for deletion if and only if it was processed successfully (no errors) by the handler function. until they it remains in an 'unacked' state and will be re-delivered once the subscribing process recovers.
 
 ### Logger
 We mentioned in the preface our aim to have as few dependencies as we can reasonably have within our limitations. This module will use the default console object for logging but you can easily integrate your own logger by implementing our ILogger interface and supplying an instance. Here is an example:
