@@ -1,48 +1,9 @@
 {
-  "_args": [
-    [
-      "git+https://github.com/gurytraub/remarkable-bus.git",
-      "/Users/ariel/Development/bafla-server"
-    ]
-  ],
-  "_from": "git+https://github.com/gurytraub/remarkable-bus.git",
-  "_id": "remarkable-bus@git+https://github.com/gurytraub/remarkable-bus.git#dc63445b79d4a86298083071c7b94735fbe876a6",
-  "_inBundle": false,
-  "_integrity": "",
-  "_location": "/remarkable-bus",
-  "_phantomChildren": {
-    "@protobufjs/aspromise": "1.1.2",
-    "@protobufjs/base64": "1.1.2",
-    "@protobufjs/codegen": "2.0.4",
-    "@protobufjs/eventemitter": "1.1.0",
-    "@protobufjs/fetch": "1.1.0",
-    "@protobufjs/float": "1.0.2",
-    "@protobufjs/inquire": "1.1.0",
-    "@protobufjs/path": "1.1.2",
-    "@protobufjs/pool": "1.1.0",
-    "@protobufjs/utf8": "1.1.0",
-    "@types/long": "4.0.1",
-    "long": "4.0.0"
-  },
-  "_requested": {
-    "type": "git",
-    "raw": "git+https://github.com/gurytraub/remarkable-bus.git",
-    "rawSpec": "git+https://github.com/gurytraub/remarkable-bus.git",
-    "saveSpec": "git+https://github.com/gurytraub/remarkable-bus.git",
-    "fetchSpec": "https://github.com/gurytraub/remarkable-bus.git",
-    "gitCommittish": null
-  },
-  "_requiredBy": [
-    "/"
-  ],
-  "_resolved": "git+https://github.com/gurytraub/remarkable-bus.git#dc63445b79d4a86298083071c7b94735fbe876a6",
-  "_spec": "git+https://github.com/gurytraub/remarkable-bus.git",
-  "_where": "/Users/ariel/Development/bafla-server",
   "author": {
     "name": "Ariel Laub"
   },
   "bugs": {
-    "url": "https://github.com/gurytraub/remarkable-bus/issues"
+    "url": "https://github.com/ArielLaub/protobus/issues"
   },
   "dependencies": {
     "amqplib": "^0.7.1",
@@ -67,7 +28,7 @@
     "tslint": "^5.20.1",
     "typescript": "^3.4.4"
   },
-  "homepage": "https://github.com/gurytraub/remarkable-bus#readme",
+  "homepage": "https://github.com/ArielLaub/protobus#readme",
   "keywords": [
     "micro services",
     "bus",
@@ -79,7 +40,7 @@
   ],
   "license": "MIT",
   "main": "dist/index.js",
-  "name": "remarkable-bus",
+  "name": "protobus",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gurytraub/remarkable-bus.git"
