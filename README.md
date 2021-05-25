@@ -209,6 +209,10 @@ const emotionalLogger: ILogger = {
 };
 setLogger(emotionalLogger);
 ```
+### Tests
+ProtoBus is extensively tested. We provide acceptance tests for all exposed modules. These tests are the best place to get started and learn how to use the framework. The code base itself is small and has a minimal amount of external dependencies so we highly encourage you to go dig into it if you decide to use it.
+
+If you need any further examples you can contact us and we'll be happy to help out.
 
 ### Http routing (experimental)
 It's a very common use case to tunnel http requests to rpc methods in different services. In order to keep all the service related code encapulated we introduced a routeHttp() method to both MessageService and ServiceCluster. In addition ServiceCluster.use() accepts a second parameter which is the base http path for that service.
