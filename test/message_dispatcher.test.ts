@@ -63,7 +63,7 @@ describe('MessageDispatcher tests suite', () => {
                 expect(content.toString()).to.equal('fire and forget');
                 // check that call on the sender side was returned without waiting
                 expect(alreadyReturned).to.be.true;
-                resolve();
+                resolve(null);
                 return new Buffer('going nowhere');
             };
             await connection.consume(channel, queue, handler, {
