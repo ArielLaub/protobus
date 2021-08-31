@@ -32,7 +32,7 @@ describe('MessageDispatcher tests suite', () => {
             const handler = async (content: Buffer, id: string) => {
                 expect(content.toString()).to.equal('test 123');
                 expect(id).to.equal(correlationId);
-                resolve(null);
+                resolve(undefined);
             };
             await listener.init(handler);
             await listener.subscribe('REQUEST.TEST.SERVICE.*');
