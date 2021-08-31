@@ -43,7 +43,7 @@
   "name": "protobus",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gurytraub/remarkable-bus.git"
+    "url": "git+https://github.com/ArielLaub/protobus.git"
   },
   "scripts": {
     "build": "npm run clean && npm run build-ts && npm run tslint",
@@ -56,5 +56,5 @@
     "watch": "tsc -w"
   },
   "types": "dist/index.d.ts",
-  "version": "0.8.6"
+  "version": "0.9.0"
 }
