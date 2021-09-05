@@ -40,7 +40,7 @@ The context constructor receives two parameter. The first being amqp connection 
 
 here is an example of creating and initializing a context object:
 ```ts
-import { IContext, Context } from 'remarkable-bus';
+import { IContext, Context } from 'protobus';
 
 const createContext = async () => {
     const AMQP_CONNECTION_STRING = 'amqp://guest:guest@localhost:5672/';
@@ -93,7 +93,7 @@ You'll need to define the services you want to use with this context in .proto f
 A MessageService is the base class you need to inherit in order to implement a micro service on the bus. It also must have the interface defined in a .proto file, and this file also must be loaded into the context used to initiate the service.
 here is an implementation for the .proto file we presented above:
 ```ts
-import { IContext, Context, IMessageService, MessageService } from 'remarkable-bus';
+import { IContext, Context, IMessageService, MessageService } from 'protobus';
 
 class SimpleService extends MessageService {
     constructor(context: IContext) {
@@ -147,7 +147,7 @@ Once you have a running message service instance you'll need a proxy to interact
 
 Here is an example of creating a ServiceProxy to interact with our SimpleService:
 ```ts
-import { IContext, Context, ServiceProxy } from 'remarkable-bus';
+import { IContext, Context, ServiceProxy } from 'protobus';
 
 ...
 
@@ -199,7 +199,7 @@ Events in protobus are persisted until process successfully. This means that if 
 ### Logger
 We mentioned in the preface our aim to have as few dependencies as we can reasonably have within our limitations. This module will use the default console object for logging but you can easily integrate your own logger by implementing our ILogger interface and supplying an instance. Here is an example:
 ```ts
-import { ILogger, setLogger } from 'remarkable-bus';
+import { ILogger, setLogger } from 'protobus';
 
 const emotionalLogger: ILogger = {
     info: (message) => { console.log(':) ' + message); },

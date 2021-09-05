@@ -12,7 +12,7 @@
     "protobufjs": "^6.11.2",
     "source-map-support": "^0.5.19"
   },
-  "description": "The Remarkable micro-services framework",
+  "description": "The Protobus micro-services framework",
   "devDependencies": {
     "@types/amqplib": "^0.8.2",
     "@types/chai": "^4.2.18",
@@ -56,5 +56,5 @@
     "watch": "tsc -w"
   },
   "types": "dist/index.d.ts",
-  "version": "0.9.0"
+  "version": "0.9.1"
 }

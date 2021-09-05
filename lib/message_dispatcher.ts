@@ -41,6 +41,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
             const callback = this.callbacks.get(id);
             this.callbacks.delete(id);
             Logger.debug(`received result for message ${id}`);
+            Logger.debug(content);
             await callback.resolve(content);
         }
     }
