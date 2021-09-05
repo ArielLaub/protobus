@@ -50,6 +50,8 @@ export default class ServiceProxy {
                         let response;
                         try {
                             response = this.context.factory.decodeResponse(responseData);
+                            Logger.debug(`received result for message ${methodFullName}`);
+                            Logger.debug(JSON.stringify(response, undefined, 4));                
                         } catch (error) {
                             Logger.error(error);
                             throw new InvalidResponseError(`failed parsing result for ${methodFullName}`);
