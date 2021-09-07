@@ -30,7 +30,7 @@ export default class ServiceProxy {
         TMethods.forEach((name) => {
             const TMethod = TService.methods[name];
             const methodFullName = `${this.serviceName}.${TMethod.name}`; // <package>.<service>.<method>
-            (<any>this)[TMethod.name] = async (requestMessage: any, actor: string, rpc: boolean) => {
+            (<any>this)[TMethod.name] = async (requestMessage: any, actor?: string, rpc?: boolean) => {
                 let buffer;
                 try {
                     buffer = this.context.factory.buildRequest(methodFullName, requestMessage, actor);
@@ -44,7 +44,8 @@ export default class ServiceProxy {
                         throw new PublishMessageError(`failed dispatching request to ${methodFullName}`);
                     })
                     .then((responseData) => {
-                        if (!rpc) {
+                        if (rpc === false) {
+                            Logger.debug('recieved non rpc result sending back empty answer');
                             return {};
                         }
                         let response;
