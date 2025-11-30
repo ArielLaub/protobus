@@ -8,7 +8,7 @@ Protobus uses a two-layer encoding scheme:
 
 ```
 ┌─────────────────────────────────────────┐
-│         Container (Outer Layer)          │
+│         Container (Outer Layer)         │
 │  ┌───────────────────────────────────┐  │
 │  │ • method/type (string)            │  │
 │  │ • actor/topic (string)            │  │
@@ -33,10 +33,10 @@ Protobus uses a two-layer encoding scheme:
 
 ```
 CLIENT                                                    SERVICE
-  │                                                          │
+  │                                                         │
   │  1. client.add({ a: 5, b: 3 })                          │
   │  ─────────────────────────────►                         │
-  │                                                          │
+  │                                                         │
   │  2. MessageFactory.buildRequest()                       │
   │     ┌─────────────────────────────┐                     │
   │     │ Encode { a: 5, b: 3 }       │                     │
@@ -47,22 +47,22 @@ CLIENT                                                    SERVICE
   │     │  actor: "client-1"          │                     │
   │     │  data: <AddRequest bytes>   │                     │
   │     └─────────────────────────────┘                     │
-  │                                                          │
+  │                                                         │
   │  3. MessageDispatcher.publishMessage()                  │
   │     correlationId: "cjk8b9x0..."                        │
   │     replyTo: "callback-queue-abc"                       │
   │     routingKey: REQUEST.Calculator.Math.add             │
   │  ─────────────────────────────────────────────────────► │
-  │                                                          │
-  │              [proto.bus exchange]                        │
-  │                      │                                   │
-  │                      ▼                                   │
-  │              [Calculator.Math queue]                     │
-  │                      │                                   │
-  │                      ▼                                   │
-  │  4. MessageListener receives                             │
+  │                                                         │
+  │              [proto.bus exchange]                       │
+  │                      │                                  │
+  │                      ▼                                  │
+  │              [Calculator.Math queue]                    │
+  │                      │                                  │
+  │                      ▼                                  │
+  │  4. MessageListener receives                            │
   │     ─────────────────────────────────────────────────── │
-  │                                                          │
+  │                                                         │
   │  5. MessageFactory.decodeRequest()                      │
   │     ┌─────────────────────────────┐                     │
   │     │ Decode RequestContainer     │                     │
@@ -70,10 +70,10 @@ CLIENT                                                    SERVICE
   │     │ Decode inner AddRequest     │                     │
   │     │ Returns: { a: 5, b: 3 }     │                     │
   │     └─────────────────────────────┘                     │
-  │                                                          │
+  │                                                         │
   │  6. Service.add() executes                              │
   │     result = { result: 8 }                              │
-  │                                                          │
+  │                                                         │
   │  7. MessageFactory.buildResponse()                      │
   │     ┌─────────────────────────────┐                     │
   │     │ Encode { result: 8 }        │                     │
@@ -82,18 +82,18 @@ CLIENT                                                    SERVICE
   │     │ Wrap in ResponseContainer:  │                     │
   │     │  result.data: <bytes>       │                     │
   │     └─────────────────────────────┘                     │
-  │                                                          │
+  │                                                         │
   │  8. Send to callback exchange                           │
   │ ◄───────────────────────────────────────────────────────│
   │     routingKey: "cjk8b9x0..." (correlationId)           │
-  │                                                          │
-  │              [proto.bus.callback exchange]               │
-  │                      │                                   │
-  │                      ▼                                   │
-  │              [callback-queue-abc]                        │
-  │                      │                                   │
+  │                                                         │
+  │              [proto.bus.callback exchange]              │
+  │                      │                                  │
+  │                      ▼                                  │
+  │              [callback-queue-abc]                       │
+  │                      │                                  │
   │  9. CallbackListener receives                           │
-  │                                                          │
+  │                                                         │
   │ 10. MessageFactory.decodeResponse()                     │
   │     ┌─────────────────────────────┐                     │
   │     │ Decode ResponseContainer    │                     │
@@ -101,9 +101,9 @@ CLIENT                                                    SERVICE
   │     │ Decode inner AddResponse    │                     │
   │     │ Returns: { result: 8 }      │                     │
   │     └─────────────────────────────┘                     │
-  │                                                          │
+  │                                                         │
   │ 11. Promise resolves with { result: 8 }                 │
-  │                                                          │
+  │                                                         │
 ```
 
 ### Request Encoding Details
@@ -161,10 +161,10 @@ const errorContainer = new ResponseContainer({
 
 ```
 PUBLISHER                                              SUBSCRIBER(S)
-    │                                                        │
+    │                                                       │
     │  1. service.publishEvent('Calc.Event', { op: 'add' }) │
     │  ──────────────────────────────────────────────────►  │
-    │                                                        │
+    │                                                       │
     │  2. MessageFactory.buildEvent()                       │
     │     ┌────────────────────────────┐                    │
     │     │ Encode event data          │                    │
@@ -173,25 +173,25 @@ PUBLISHER                                              SUBSCRIBER(S)
     │     │  topic: EVENT.Calc.Event   │                    │
     │     │  data: <event bytes>       │                    │
     │     └────────────────────────────┘                    │
-    │                                                        │
+    │                                                       │
     │  3. EventDispatcher.publish()                         │
     │     routingKey: EVENT.Calc.Event                      │
     │  ──────────────────────────────────────────────────►  │
-    │                                                        │
-    │              [proto.bus.events exchange]               │
-    │                      │                                 │
+    │                                                       │
+    │              [proto.bus.events exchange]              │
+    │                     │                                 │
     │         ┌───────────┴───────────┐                     │
-    │         ▼                       ▼                      │
+    │         ▼                       ▼                     │
     │  [Service1.Events]      [Service2.Events]             │
-    │         │                       │                      │
-    │         ▼                       ▼                      │
+    │         │                       │                     │
+    │         ▼                       ▼                     │
     │  EventListener 1          EventListener 2             │
-    │                                                        │
+    │                                                       │
     │  4. Trie.match('EVENT.Calc.Event')                    │
     │     Finds registered handlers                         │
-    │                                                        │
+    │                                                       │
     │  5. Handler invoked with decoded event                │
-    │                                                        │
+    │                                                       │
 ```
 
 ### Wildcard Event Routing
@@ -226,7 +226,7 @@ Incoming event: ORDERS.EU.456.SHIPPED
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Message Received                          │
+│                    Message Received                         │
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
