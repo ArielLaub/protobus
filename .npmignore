@@ -1,0 +1,21 @@
+# Source TypeScript files (dist is published)
+/lib/
+/index.ts
+
+# Tests
+test/
+jest.config.js
+jest.integration.config.js
+dist/test/
+
+# Samples
+sample/
+
+# Documentation (available on GitHub)
+docs/
+
+# Development config
+.claude/
+eslint.config.mjs
+tsconfig.json
+docker-compose.yml

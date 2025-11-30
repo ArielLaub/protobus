@@ -64,7 +64,6 @@ const response = await client.add({ a: 1, b: 2 }); // { result: 3 }
 | [Protobuf Schema](docs/advanced/protobuf-schema.md) | Defining service interfaces |
 | [Error Handling](docs/advanced/error-handling.md) | Retry logic and dead-letter queues |
 | [Custom Logger](docs/advanced/custom-logger.md) | Integrating your own logger |
-| [HTTP Routing](docs/advanced/http-routing.md) | Exposing services over HTTP |
 
 ### Reference
 

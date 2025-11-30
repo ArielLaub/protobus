@@ -56,13 +56,6 @@ async myMethod(request: any, actor?: string, correlationId?: string) {
 
 ---
 
-### HTTP Routing Experimental
-
-**Description:**
-The `routeHttp()` feature is experimental and may change in future versions.
-
----
-
 ## Reporting Issues
 
 If you encounter issues not listed here:

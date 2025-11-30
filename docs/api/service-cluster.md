@@ -5,24 +5,23 @@
 ## Import
 
 ```typescript
-import { ServiceCluster, IServiceCluster, IContext } from 'protobus';
+import { ServiceCluster, IContext } from 'protobus';
 ```
 
 ## Class
 
 ```typescript
-class ServiceCluster implements IServiceCluster {
+class ServiceCluster {
     constructor(context: IContext);
 
-    use<T extends IMessageService>(
+    use<T extends MessageService>(
         ServiceClass: new (context: IContext) => T,
-        listenerCount?: number,
-        httpPath?: string
-    ): void;
+        count?: number
+    ): T;
 
     async init(): Promise<void>;
 
-    routeHttp(): Express.Application;
+    get ServiceNames(): string[];
 }
 ```
 
@@ -39,7 +38,7 @@ const cluster = new ServiceCluster(context);
 
 ## Methods
 
-### use(ServiceClass, listenerCount?, httpPath?)
+### use(ServiceClass, count?)
 
 Registers a service class to be managed by the cluster.
 
@@ -47,13 +46,13 @@ Registers a service class to be managed by the cluster.
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `ServiceClass` | `constructor` | - | Service class extending `MessageService` |
-| `listenerCount` | `number` | `1` | Number of concurrent listeners |
-| `httpPath` | `string?` | - | Base HTTP path for routing (experimental) |
+| `count` | `number` | `1` | Number of service instances to create |
+
+**Returns:** The last created service instance.
 
 ```typescript
-cluster.use(CalculatorService);           // 1 listener
-cluster.use(OrderService, 3);             // 3 listeners
-cluster.use(ApiService, 1, '/api/v1');    // With HTTP routing
+cluster.use(CalculatorService);           // 1 instance
+cluster.use(OrderService, 3);             // 3 instances
 ```
 
 ### init()
@@ -66,18 +65,16 @@ Initializes all registered services.
 await cluster.init();
 ```
 
-### routeHttp()
+### ServiceNames
 
-Returns an Express application with all service HTTP routes mounted.
+Returns the names of all registered services.
 
-**Returns:** `Express.Application`
+**Returns:** `string[]`
 
 ```typescript
-const app = cluster.routeHttp();
-app.listen(3000);
+const names = cluster.ServiceNames;
+// ['Calculator.Math', 'Order.Service', 'Order.Service', 'Order.Service']
 ```
-
-**Note:** This feature is experimental.
 
 ## Basic Example
 
@@ -93,10 +90,10 @@ async function main() {
 
     const cluster = new ServiceCluster(context);
 
-    // Register services with listener counts
-    cluster.use(CalculatorService, 2);      // 2 concurrent listeners
-    cluster.use(OrderService, 4);           // 4 concurrent listeners
-    cluster.use(NotificationService, 1);    // 1 listener
+    // Register services with instance counts
+    cluster.use(CalculatorService, 2);      // 2 instances for load balancing
+    cluster.use(OrderService, 4);           // 4 instances
+    cluster.use(NotificationService);       // 1 instance (default)
 
     await cluster.init();
 
@@ -106,9 +103,9 @@ async function main() {
 main().catch(console.error);
 ```
 
-## Listener Scaling
+## Instance Scaling
 
-The `listenerCount` parameter controls how many instances of the service listen for messages:
+The `count` parameter controls how many instances of the service are created. All instances share the same queue, so RabbitMQ load-balances messages between them:
 
 ```
                     RabbitMQ Queue
@@ -117,50 +114,21 @@ The `listenerCount` parameter controls how many instances of the service listen 
          │               │               │
          ▼               ▼               ▼
     ┌─────────┐    ┌─────────┐    ┌─────────┐
-    │Listener 1│   │Listener 2│   │Listener 3│
+    │Instance 1│   │Instance 2│   │Instance 3│
     └─────────┘    └─────────┘    └─────────┘
-         │               │               │
-         └───────────────┼───────────────┘
-                         │
-                         ▼
-                   Service Handler
 ```
 
 **Guidelines:**
-- **CPU-bound work:** Match listener count to CPU cores
+- **CPU-bound work:** Match instance count to CPU cores
 - **I/O-bound work:** Higher count (2-4x CPU cores)
 - **Memory-intensive:** Lower count based on available memory
-
-## HTTP Routing (Experimental)
-
-Mount services as HTTP endpoints:
-
-```typescript
-const cluster = new ServiceCluster(context);
-
-cluster.use(UserService, 1, '/api/users');
-cluster.use(OrderService, 1, '/api/orders');
-cluster.use(ProductService, 1, '/api/products');
-
-await cluster.init();
-
-const app = cluster.routeHttp();
-app.listen(3000);
-
-// Now available:
-// POST /api/users/createUser
-// POST /api/orders/createOrder
-// POST /api/products/getProduct
-```
-
-**Note:** HTTP routing is experimental and may change.
 
 ## Service Dependencies
 
 Handle dependencies between services:
 
 ```typescript
-import { ServiceCluster, MessageService, IContext } from 'protobus';
+import { ServiceCluster, MessageService, ServiceProxy, IContext } from 'protobus';
 
 class DatabaseService extends MessageService {
     private db: Database;
@@ -191,10 +159,10 @@ class UserService extends MessageService {
     get ProtoFileName() { return './users.proto'; }
 }
 
-// Usage
+// Usage - order matters for dependencies
 const cluster = new ServiceCluster(context);
-cluster.use(DatabaseService, 1);
-cluster.use(UserService, 2);
+cluster.use(DatabaseService);    // Initialize first
+cluster.use(UserService, 2);     // Depends on DatabaseService
 await cluster.init();
 ```
 
@@ -204,51 +172,23 @@ Implement graceful shutdown for the cluster:
 
 ```typescript
 async function main() {
-    const context = await createContext();
-    const cluster = new ServiceCluster(context);
+    const context = new Context();
+    await context.init('amqp://localhost', ['./proto/']);
 
+    const cluster = new ServiceCluster(context);
     cluster.use(Service1);
     cluster.use(Service2);
-
     await cluster.init();
 
     // Handle shutdown signals
-    process.on('SIGTERM', async () => {
+    const shutdown = async () => {
         console.log('Shutting down...');
-        // Note: Protobus doesn't have built-in shutdown
-        // Close connection manually
-        await context.connection.close();
+        await context.connection.disconnect();
         process.exit(0);
-    });
-}
-```
+    };
 
-## Monitoring Services
-
-Track service health:
-
-```typescript
-class MonitoredService extends MessageService {
-    private requestCount = 0;
-    private errorCount = 0;
-
-    async methodHandler(request: any): Promise<any> {
-        this.requestCount++;
-        try {
-            return await this.processRequest(request);
-        } catch (error) {
-            this.errorCount++;
-            throw error;
-        }
-    }
-
-    getMetrics() {
-        return {
-            requests: this.requestCount,
-            errors: this.errorCount,
-            errorRate: this.errorCount / this.requestCount
-        };
-    }
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
 }
 ```
 
@@ -283,14 +223,13 @@ class AuditService extends MessageService {
 
     async init() {
         await super.init();
-        // Subscribe to all calculation events
+        // Subscribe to events
         await this.subscribeEvent('Calculator.CalculationEvent', async (event) => {
             console.log('Audit:', event);
         });
     }
 
     async recordAudit(req: { action: string; userId: string }) {
-        // Store audit record
         return { recorded: true };
     }
 }
@@ -307,15 +246,15 @@ async function main() {
 
     // Register services
     cluster.use(CalculatorService, 2);  // High throughput
-    cluster.use(LoggingService, 1);     // Sequential logging
-    cluster.use(AuditService, 1);       // Event subscriber
+    cluster.use(LoggingService);        // Sequential logging
+    cluster.use(AuditService);          // Event subscriber
 
     await cluster.init();
 
     console.log('Cluster running with services:');
-    console.log('  - Calculator.Math (2 listeners)');
-    console.log('  - Logging.Logger (1 listener)');
-    console.log('  - Audit.AuditService (1 listener)');
+    console.log('  - Calculator.Math (2 instances)');
+    console.log('  - Logging.Logger (1 instance)');
+    console.log('  - Audit.AuditService (1 instance)');
 }
 
 main().catch(console.error);

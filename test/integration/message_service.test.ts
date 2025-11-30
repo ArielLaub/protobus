@@ -1,6 +1,4 @@
 import * as protobuf from 'protobufjs';
-import express from 'express';
-import request from 'supertest';
 
 import ServiceProxy from '../../lib/service_proxy';
 import MessageService from '../../lib/message_service';
@@ -52,19 +50,6 @@ class TestService extends MessageService {
         return {
             result: request.num1 + request.num2
         };
-    }
-
-    public async routeHttp(): Promise<express.Express> {
-        const app = express();
-        const proxy: any = new ServiceProxy(this.context, this.ServiceName);
-        await proxy.init();
-        app.get('/simpleMethod', async (req: express.Request, res: express.Response) => {
-            const num1 = parseInt(<string>req.query.num1);
-            const num2 = parseInt(<string>req.query.num2);
-            const result = await proxy.simpleMethod({ num1, num2 });
-            res.json(result);
-        });
-        return app;
     }
 }
 
@@ -128,13 +113,6 @@ describe('MessageService tests suite', () => {
         await expect(client.simpleMethod({ no: 'yes' })).rejects.toMatchObject({
             message: 'invalid_params'
         });
-    });
-
-    it('should test http routing', async () => {
-        const app = await theService.routeHttp();
-        const res = await request(app).get(`/simpleMethod?num1=1&num2=9`);
-        expect(res.status).toBe(200);
-        expect(res.body).toHaveProperty('result', 10);
     });
 
     it('should test TS interface export', async () => {

@@ -4,7 +4,6 @@ import MessageListener from './message_listener';
 import EventListener, { EventHandler } from './event_listener';
 // HandledError is re-exported for users, isHandledError is used by MessageListener
 export { HandledError, isHandledError } from './errors';
-import * as express from 'express';
 import * as fs from 'fs';
 
 export class InvalidResultError extends Error {}
@@ -23,7 +22,6 @@ export interface IMessageService {
     init(): Promise<void>;
     publishEvent(type: string, content: any, topic?: any): Promise<any>;
     subscribeEvent(type: string, handler: EventHandler, topic?: string): Promise<any>;
-    routeHttp(): Promise<express.Express>;
 }
 
 export interface RetryOptions {
@@ -96,12 +94,6 @@ export default abstract class MessageService implements IMessageService {
             Logger.error(`error initializing service ${this.ServiceName} - ${err}\n${err.stack}`);
             throw err;
         }
-    }
-
-    // any service thats needs an http interface can create and bind an express
-    // app in this method.
-    public async routeHttp(): Promise<express.Express> {
-        return undefined;
     }
 
     // core handler for incoming RPC requests made to REQUEST.<service name>.*
