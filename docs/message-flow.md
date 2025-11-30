@@ -8,7 +8,7 @@ Protobus uses a two-layer encoding scheme:
 
 ```
 ┌─────────────────────────────────────────┐
-│         Container (Outer Layer)          │
+│         Container (Outer Layer)         │
 │  ┌───────────────────────────────────┐  │
 │  │ • method/type (string)            │  │
 │  │ • actor/topic (string)            │  │
