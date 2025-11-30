@@ -1,4 +1,4 @@
-import * as cuid from 'cuid';
+import { createId } from '@paralleldrive/cuid2';
 import MessageFactory from './message_factory';
 import { IConnection, Channel, PublishOptions } from './connection';
 import { Logger } from './logger';
@@ -18,9 +18,38 @@ export default class EventDispatcher {
     constructor(connection: IConnection, messageFactory: MessageFactory) {
         this.connection = connection;
         this.messageFactory = messageFactory;
+
+        // Listen for connection events
+        this.connection.on('disconnected', this._onDisconnected.bind(this));
+        this.connection.on('reconnected', this._onReconnected.bind(this));
+    }
+
+    /**
+     * Called when connection is lost
+     */
+    private _onDisconnected(): void {
+        Logger.debug('EventDispatcher: connection lost, clearing channel');
+        this.channel = undefined;
+    }
+
+    /**
+     * Called when connection is re-established
+     */
+    private async _onReconnected(): Promise<void> {
+        if (!this._isInitialized) return;
+
+        Logger.info('EventDispatcher: reconnected, re-initializing channel');
+
+        try {
+            this.channel = await this.connection.openChannel();
+            Logger.info('EventDispatcher: successfully re-initialized after reconnection');
+        } catch (err) {
+            Logger.error(`EventDispatcher: failed to re-initialize after reconnection: ${err.message}`);
+        }
     }
 
     public async init() {
+        if (this._isInitialized) return;
         this.channel = await this.connection.openChannel();
         this._isInitialized = true;
     }
@@ -30,7 +59,7 @@ export default class EventDispatcher {
         if (!topic) {
             topic = `EVENT.${type}`;
         }
-        const id = cuid();
+        const id = createId();
         const properties: PublishOptions = {
             correlationId: id,
             contentType: 'application/octet-stream',

@@ -328,7 +328,7 @@ export default class MessageFactory {
                         }
                         t = modType(field.type);
                     }
-                    target.push(`        ${field.name}${field.rule !== 'required' ? '?' : ''}: (${t}${field.rule === 'repeated' ? '[]' : ''} | null);`);
+                    target.push(`        ${field.name}${!field.required ? '?' : ''}: (${t}${field.repeated ? '[]' : ''} | null);`);
                 });
                 target.push('    }\n');
                 newTypes.forEach(addType);

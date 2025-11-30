@@ -1,7 +1,7 @@
-import MessageService, { IMessageService } from './message_service';
+import MessageService from './message_service';
 import { IContext } from './context';
 import { Logger } from './logger';
-import * as express from 'express';
+import express from 'express';
 
 // static proto interface, the instance interface is IMessageService
 export type ServiceType<T extends MessageService> = {
@@ -22,12 +22,14 @@ export default class ServiceCluster {
         this.context = context;
     }
 
-    public use<T extends MessageService>(Service: ServiceType<T>, httpPath?: string, count?: number): T {
+    public use<T extends MessageService>(Service: ServiceType<T>, httpPath?: string, count: number = 1): T {
         let service = <T>(new Service(this.context));
         this.context.factory.parse(service.Proto, service.ServiceName);
         for (let i = 0; i < count; ++i) {
             this.services.push({ service, httpPath });
-            service = <T>(new Service(this.context));
+            if (i < count - 1) {
+                service = <T>(new Service(this.context));
+            }
         }
         return service;
     }

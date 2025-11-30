@@ -2,6 +2,8 @@ import { Logger } from './logger';
 import { IContext } from './context';
 import MessageListener from './message_listener';
 import EventListener, { EventHandler } from './event_listener';
+// HandledError is re-exported for users, isHandledError is used by MessageListener
+export { HandledError, isHandledError } from './errors';
 import * as express from 'express';
 import * as fs from 'fs';
 
@@ -24,8 +26,21 @@ export interface IMessageService {
     routeHttp(): Promise<express.Express>;
 }
 
+export interface RetryOptions {
+    maxRetries?: number;       // Max retry attempts (default: 3, 0 = no retries)
+    retryDelayMs?: number;     // Delay between retries in ms (default: 5000)
+    messageTtlMs?: number;     // Message TTL in ms (default: undefined = no TTL)
+}
+
+export const DEFAULT_RETRY_OPTIONS: Required<Omit<RetryOptions, 'messageTtlMs'>> & Pick<RetryOptions, 'messageTtlMs'> = {
+    maxRetries: 3,
+    retryDelayMs: 5000,
+    messageTtlMs: undefined,
+};
+
 export interface IMessageServiceOptions {
     maxConcurrent?: number;
+    retry?: RetryOptions;
 }
 
 export default abstract class MessageService implements IMessageService {
@@ -33,10 +48,20 @@ export default abstract class MessageService implements IMessageService {
 
     private listener: MessageListener;
     private eventListener: EventListener;
+    private retryOptions: Required<Omit<RetryOptions, 'messageTtlMs'>> & Pick<RetryOptions, 'messageTtlMs'>;
 
     constructor (context: IContext, options: IMessageServiceOptions = {}) {
         this.context = context;
-        this.listener = new MessageListener(context.connection, !!options.maxConcurrent, options.maxConcurrent);
+        this.retryOptions = {
+            ...DEFAULT_RETRY_OPTIONS,
+            ...options.retry,
+        };
+        this.listener = new MessageListener(
+            context.connection,
+            !!options.maxConcurrent,
+            options.maxConcurrent,
+            this.retryOptions
+        );
         this.eventListener = new EventListener(context.connection, context.factory);
     }
 

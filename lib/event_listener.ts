@@ -28,13 +28,11 @@ export default class EventListener extends BaseListener {
             }
             if (event && event.topic) {
                 const handlers = this.router.match(event.topic);
-                handlers.forEach(async (handler: EventHandler) => {
-                    if (handlers && handlers.length > 0) {
-                        for (const handler of handlers) {
-                            await handler(event.data, event.type, event.topic);
-                        }
+                if (handlers && handlers.length > 0) {
+                    for (const handler of handlers) {
+                        await handler(event.data, event.type, event.topic);
                     }
-                });
+                }
             } else {
                 Logger.warn(`ignoring unhandled event ${JSON.stringify(event)}`);
             }
@@ -46,6 +44,7 @@ export default class EventListener extends BaseListener {
             topic = `EVENT.${type}`;
         }
         this.router.add(topic, handler.bind(this));
+        this.trackBinding(topic); // Track for reconnection
 
         return this.connection.bindQueue(
             this.channel,
@@ -56,6 +55,8 @@ export default class EventListener extends BaseListener {
 
     subscribeAll(handler: EventHandler) {
         this.allHandler = handler;
+        this.trackBinding('#'); // Track for reconnection
+
         return this.connection.bindQueue(
             this.channel,
             this.queueName,

@@ -1,5 +1,5 @@
 import { IContext } from './context';
-import { Logger, ILogger } from './logger';
+import { Logger } from './logger';
 
 export class InvalidServiceNameError extends Error {}
 export class AlreadyInitializedError extends Error {}

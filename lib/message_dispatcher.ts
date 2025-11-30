@@ -1,4 +1,4 @@
-const cuid = require('cuid');
+import { createId } from '@paralleldrive/cuid2';
 
 import { IConnection, Channel, PublishOptions } from './connection';
 import Config from './config';
@@ -6,6 +6,11 @@ import { Logger } from './logger';
 import CallbackListener from './callback_listener';
 
 export class NotConnectedError extends Error {}
+export class DisconnectedError extends Error {
+    constructor() {
+        super('Connection lost during RPC call');
+    }
+}
 
 interface CallbackEntry {
     resolve: (result: any) => void;
@@ -21,7 +26,7 @@ export interface IMessageDispatcher {
 export default class MessageDispatcher implements IMessageDispatcher {
     private connection: IConnection;
     private callbacks: Map<string, CallbackEntry>;
-    private callbackListener: any;
+    private callbackListener: CallbackListener;
     private channel: Channel;
 
     private _isInitialized: boolean = false;
@@ -33,6 +38,41 @@ export default class MessageDispatcher implements IMessageDispatcher {
         this.callbacks = new Map<string, CallbackEntry>();
         this.callbackListener = new CallbackListener(this.connection);
 
+        // Listen for connection events
+        this.connection.on('disconnected', this._onDisconnected.bind(this));
+        this.connection.on('reconnected', this._onReconnected.bind(this));
+    }
+
+    /**
+     * Called when connection is lost - reject all pending callbacks
+     */
+    private _onDisconnected(): void {
+        Logger.debug('MessageDispatcher: connection lost, rejecting pending callbacks');
+        this.channel = undefined;
+
+        // Reject all pending RPC callbacks
+        const error = new DisconnectedError();
+        for (const [_id, callback] of this.callbacks) {
+            callback.reject(error);
+        }
+        this.callbacks.clear();
+    }
+
+    /**
+     * Called when connection is re-established
+     */
+    private async _onReconnected(): Promise<void> {
+        if (!this._isInitialized) return;
+
+        Logger.info('MessageDispatcher: reconnected, re-initializing channel');
+
+        try {
+            this.channel = await this.connection.openChannel();
+            // CallbackListener handles its own reconnection via BaseListener
+            Logger.info('MessageDispatcher: successfully re-initialized after reconnection');
+        } catch (err) {
+            Logger.error(`MessageDispatcher: failed to re-initialize after reconnection: ${err.message}`);
+        }
     }
 
     async _onResult(content: any, id: string) {
@@ -59,7 +99,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
             rpc = true;
         }
 
-        const id = cuid();
+        const id = createId();
         const properties: PublishOptions = {
             contentType: 'application/octet-stream',
             correlationId: id,

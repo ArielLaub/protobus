@@ -11,6 +11,7 @@
         "skipLibCheck": false,
         "experimentalDecorators": true,
         "emitDecoratorMetadata": true,
+        "esModuleInterop": true,
         "lib": ["es2016", "es6", "dom"],
         "baseUrl": "./lib",
         "paths": {
@@ -18,8 +19,8 @@
                 "node_modules/*",
             ]
         },
-        "typeRoots": [],
-        "types": []
+        "typeRoots": ["./node_modules/@types"],
+        "types": ["node", "jest"]
     },
     "include": [
         "lib/**/*",
