@@ -1,4 +1,4 @@
-import { createId } from '@paralleldrive/cuid2';
+import { randomUUID } from 'crypto';
 
 import { IConnection, Channel, PublishOptions } from './connection';
 import Config from './config';
@@ -99,7 +99,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
             rpc = true;
         }
 
-        const id = createId();
+        const id = randomUUID();
         const properties: PublishOptions = {
             contentType: 'application/octet-stream',
             correlationId: id,

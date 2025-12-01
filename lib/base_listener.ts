@@ -1,4 +1,4 @@
-import { createId } from '@paralleldrive/cuid2';
+import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 
 import { IConnection, Channel, ConsumeOptions, ConsumeRetryOptions, MessageHandler } from './connection';
@@ -143,7 +143,7 @@ export abstract class BaseListener extends EventEmitter {
      * Override getRetryOptions() in subclasses to enable retry support
      */
     protected async _startConsuming(): Promise<void> {
-        this.consumerTag = createId();
+        this.consumerTag = randomUUID();
         const options: ConsumeOptions = {
             consumerTag: this.consumerTag,
             noAck: false,

@@ -1,4 +1,4 @@
-import { createId } from '@paralleldrive/cuid2';
+import { randomUUID } from 'crypto';
 import MessageFactory from './message_factory';
 import { IConnection, Channel, PublishOptions } from './connection';
 import { Logger } from './logger';
@@ -59,7 +59,7 @@ export default class EventDispatcher {
         if (!topic) {
             topic = `EVENT.${type}`;
         }
-        const id = createId();
+        const id = randomUUID();
         const properties: PublishOptions = {
             correlationId: id,
             contentType: 'application/octet-stream',

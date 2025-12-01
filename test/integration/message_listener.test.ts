@@ -1,4 +1,4 @@
-import { createId } from '@paralleldrive/cuid2';
+import { randomUUID } from 'crypto';
 
 import MessageListener from '../../lib/message_listener';
 import Connection, { Channel } from '../../lib/connection';
@@ -24,7 +24,7 @@ describe('MessageListener tests suite', () => {
 
     it('should receive a message listener subscribed to', async () => {
         await new Promise<void>(async (resolve) => {
-            const correlationId = createId();
+            const correlationId = randomUUID();
             const listener = new MessageListener(connection);
             const handler = async (content: Buffer, id: string) => {
                 expect(content.toString()).toBe('test 123');
