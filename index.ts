@@ -8,3 +8,12 @@ export { set as setLogger, ILogger } from './lib/logger';
 export { ReconnectionOptions, ReconnectionError } from './lib/connection';
 export { DisconnectedError } from './lib/message_dispatcher';
 
+// Custom types
+export {
+    ICustomType,
+    BigIntType,
+    TimestampType,
+    bigintToBytes,
+    bytesToBigint
+} from './lib/custom_types';
+

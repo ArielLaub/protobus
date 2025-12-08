@@ -3,11 +3,64 @@ import * as path from 'path';
 import * as protoBuf from 'protobufjs';
 import { Type, Field, OneOf, Message } from 'protobufjs/light';
 import { Logger } from './logger';
+import {
+    ICustomType,
+    registerCustomType,
+    getCustomType,
+    isCustomType,
+    getCustomTypeNames,
+    BigIntMessage,
+    TimestampMessage
+} from './custom_types';
 
 export class MessageTypeRequiredError extends Error {}
 export class NotInitializedError extends Error {}
 
 (<any>protoBuf.parse).defaults.keepCase = true;
+
+// Re-export custom types functionality
+export { ICustomType, registerCustomType, getCustomType, isCustomType, getCustomTypeNames };
+export { BigIntMessage, TimestampMessage };
+export { bigintToBytes, bytesToBigint, BigIntType, TimestampType } from './custom_types';
+
+// Helper to preprocess objects before encoding - converts custom type values
+function preprocessForEncode(obj: any, messageType: protoBuf.Type, registeredTypes: Map<string, typeof Message>): any {
+    if (obj === null || obj === undefined) return obj;
+    if (typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) {
+        return obj.map((item) => preprocessForEncode(item, messageType, registeredTypes));
+    }
+
+    const result: any = {};
+    for (const key of Object.keys(obj)) {
+        const field = messageType.fields[key];
+        if (field && isCustomType(field.type)) {
+            // Convert using custom type's encode function
+            const customType = getCustomType(field.type);
+            const MessageClass = registeredTypes.get(field.type);
+            const val = obj[key];
+            if (val !== null && val !== undefined && customType && MessageClass) {
+                if (Array.isArray(val)) {
+                    result[key] = val.map(v => (MessageClass as any).create({ value: customType.encode(v) }));
+                } else {
+                    result[key] = (MessageClass as any).create({ value: customType.encode(val) });
+                }
+            } else {
+                result[key] = val;
+            }
+        } else if (field && field.resolvedType instanceof protoBuf.Type) {
+            // Nested message type - recurse
+            if (Array.isArray(obj[key])) {
+                result[key] = obj[key].map((item: any) => preprocessForEncode(item, field.resolvedType as protoBuf.Type, registeredTypes));
+            } else {
+                result[key] = preprocessForEncode(obj[key], field.resolvedType as protoBuf.Type, registeredTypes);
+            }
+        } else {
+            result[key] = obj[key];
+        }
+    }
+    return result;
+}
 
 export interface IEventContainer {
     type: string;
@@ -123,6 +176,7 @@ function uintArrayToBuffer(arr: Uint8Array): Buffer {
 export default class MessageFactory {
     public root: protoBuf.Root;
     private isInitialized: boolean = false;
+    private registeredTypes: Map<string, typeof Message> = new Map();
 
     constructor() {
     }
@@ -135,9 +189,44 @@ export default class MessageFactory {
         return TService.methods[methodName];
     }
 
+    /**
+     * Register a custom type with this MessageFactory instance.
+     * The type will be available for use in .proto files.
+     *
+     * @param customType - The custom type definition
+     * @returns The generated Message class for the type
+     *
+     * @example
+     * ```typescript
+     * const uuidType: ICustomType<string> = {
+     *     name: 'uuid',
+     *     wireType: 'bytes',
+     *     tsType: 'string',
+     *     encode: (value: string) => Buffer.from(value.replace(/-/g, ''), 'hex'),
+     *     decode: (data: Buffer) => {
+     *         const hex = data.toString('hex');
+     *         return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+     *     }
+     * };
+     *
+     * messageFactory.registerType(uuidType);
+     * ```
+     */
+    public registerType<T>(customType: ICustomType<T>): typeof Message {
+        const MessageClass = registerCustomType(customType);
+        this.registeredTypes.set(customType.name, MessageClass);
+
+        // Add to root if already initialized
+        if (this.isInitialized && this.root) {
+            this.root.add((MessageClass as any).$type);
+        }
+
+        return MessageClass;
+    }
+
     public init(rootPaths: string[]) {
 
-        const fileNames = [];
+        const fileNames: string[] = [];
         rootPaths.forEach(rootPath => {
             const newFiles = findFiles(rootPath, '.proto');
             newFiles.forEach(newFile => fileNames.push(newFile));
@@ -149,6 +238,21 @@ export default class MessageFactory {
         } else {
             this.root = new protoBuf.Root({ keepCase: true });
         }
+
+        // Register built-in custom types
+        this.root.add((BigIntMessage as any).$type);
+        this.registeredTypes.set('bigint', BigIntMessage);
+
+        this.root.add((TimestampMessage as any).$type);
+        this.registeredTypes.set('timestamp', TimestampMessage);
+
+        // Register any types that were added before init
+        for (const [name, MessageClass] of this.registeredTypes) {
+            if (name !== 'bigint' && name !== 'timestamp') {
+                this.root.add((MessageClass as any).$type);
+            }
+        }
+
         this.isInitialized = true;
         Logger.debug('message factory initialized');
     }
@@ -181,10 +285,11 @@ export default class MessageFactory {
         const messageType = TMethod.requestType;
         const Message = this.root.lookupType(messageType);
         try {
+            const processed = preprocessForEncode(obj, Message, this.registeredTypes);
             const request = RequestContainer.create({
                 method: methodFullName,
                 actor,
-                data: Message.encode(Message.create(obj)).finish()
+                data: Message.encode(Message.create(processed)).finish()
             });
             return uintArrayToBuffer(RequestContainer.encode(request).finish());
         } catch (error) {
@@ -223,10 +328,11 @@ export default class MessageFactory {
         } else {
             const Message = this.root.lookupType(messageType);
             try {
+                const processed = preprocessForEncode(obj, Message, this.registeredTypes);
                 response = ResponseContainer.create({
                     result: ResponseResult.create({
                         method: methodFullName,
-                        data: Message.encode(Message.create(obj)).finish(),
+                        data: Message.encode(Message.create(processed)).finish(),
                     }),
                 });
             } catch (error) {
@@ -255,10 +361,11 @@ export default class MessageFactory {
         const Event = this.root.lookupType(type);
 
         try {
+            const processed = preprocessForEncode(obj, Event, this.registeredTypes);
             return uintArrayToBuffer(EventContainer.encode(EventContainer.create({
                 type,
                 topic,
-                data: Event.encode(Event.create(obj)).finish(),
+                data: Event.encode(Event.create(processed)).finish(),
             })).finish());
         } catch (err) {
             Logger.error(Event.verify(obj));
@@ -292,6 +399,12 @@ export default class MessageFactory {
             };
 
             const convertType = (t: string) => {
+                // Check custom types first
+                const customType = getCustomType(t);
+                if (customType) {
+                    return customType.tsType;
+                }
+
                 if (['double', 'float', 'int32', 'uint32', 'sint32', 'fixed32', 'sfixed32', 'int64', 'uint64', 'sint64', 'fixed64', 'sfixed64'].indexOf(t) !== -1)
                     return 'number';
                 else if (t === 'string')

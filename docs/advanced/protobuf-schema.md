@@ -110,6 +110,116 @@ message OrderCreatedEvent {
 | `bool` | `boolean` | Flags |
 | `bytes` | `Buffer` | Binary data |
 | `double` | `number` | Floating point |
+| `bigint` | `bigint` | Large integers (uint256, etc.) |
+
+### Built-in Custom Types
+
+Protobus provides built-in custom types that extend the standard protobuf scalar types:
+
+| Type | TypeScript | Description |
+|------|------------|-------------|
+| `bigint` | `bigint` | Large integers (uint256 compatible, 32 bytes) |
+| `timestamp` | `Date` | Timestamps (milliseconds, stored as int64) |
+
+#### BigInt Type (Web3/Crypto)
+
+The `bigint` type handles large integers commonly used in Web3 applications:
+
+- Serializes to 32 bytes (big-endian, uint256 compatible)
+- Deserializes to native JavaScript `bigint`
+- Accepts `bigint`, `string` (decimal or hex), or `number` as input
+
+```protobuf
+message TokenTransfer {
+    string from = 1;
+    string to = 2;
+    bigint amount = 3;      // Native bigint support
+    bigint gas_price = 4;
+}
+```
+
+```typescript
+// Using native bigint
+await tokenService.transfer({
+    amount: 1000000000000000000n,  // 1 ETH in wei
+});
+
+// Using hex or decimal strings
+await tokenService.transfer({
+    amount: '0xde0b6b3a7640000',  // hex
+});
+
+// Response always returns native bigint
+const balance = await tokenService.getBalance({});
+console.log(typeof balance.value);  // 'bigint'
+```
+
+#### Timestamp Type
+
+The `timestamp` type provides convenient Date handling:
+
+- Serializes to int64 (milliseconds since epoch)
+- Deserializes to JavaScript `Date` object
+- Accepts `Date`, ISO string, or milliseconds number as input
+
+```protobuf
+message Event {
+    string name = 1;
+    timestamp created_at = 2;
+    timestamp updated_at = 3;
+}
+```
+
+```typescript
+// Using Date objects
+await eventService.create({
+    name: 'signup',
+    created_at: new Date(),
+});
+
+// Using ISO strings
+await eventService.create({
+    name: 'signup',
+    created_at: '2024-01-15T10:30:00.000Z',
+});
+
+// Response returns Date objects
+const event = await eventService.get({});
+console.log(event.created_at instanceof Date);  // true
+```
+
+### Custom Type Registration
+
+You can define your own custom types by implementing the `ICustomType` interface:
+
+```typescript
+import { ICustomType } from 'protobus';
+
+const uuidType: ICustomType<string> = {
+    name: 'uuid',           // Type name in .proto files
+    wireType: 'bytes',      // Underlying protobuf type
+    tsType: 'string',       // TypeScript type for exports
+    encode: (value: string) => Buffer.from(value.replace(/-/g, ''), 'hex'),
+    decode: (data: Buffer) => {
+        const hex = Buffer.from(data).toString('hex');
+        return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+    }
+};
+
+// Register before or after init()
+messageFactory.registerType(uuidType);
+messageFactory.init([]);
+
+// Now use in .proto files
+messageFactory.parse(`
+    message Entity {
+        uuid id = 1;
+        string name = 2;
+    }
+`);
+```
+
+Available wire types: `bytes`, `int64`, `uint64`, `string`, `int32`, `uint32`, `double`
 
 ### Timestamps
 
