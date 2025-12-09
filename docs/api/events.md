@@ -165,21 +165,21 @@ Pattern: ORDERS.#.SHIPPED
 
 ### Acknowledgment
 - Events are acknowledged after successful handler execution
-- Failed handlers cause the message to be requeued
-- Set `external: true` on errors to prevent requeuing
+- Failed handlers cause the message to be retried
+- Throw `HandledError` to prevent retrying (e.g., validation errors)
 
 ```typescript
+import { HandledError } from 'protobus';
+
 await this.subscribeEvent('Orders.OrderCreated', async (event) => {
     try {
         await this.processOrder(event);
     } catch (error) {
         if (error.message === 'Invalid order') {
             // Don't retry invalid orders
-            const err = new Error('Invalid order');
-            (err as any).external = true;
-            throw err;
+            throw new HandledError('Invalid order', 'INVALID_ORDER');
         }
-        throw error;  // Will be requeued
+        throw error;  // Will be retried
     }
 });
 ```

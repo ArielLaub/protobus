@@ -57,7 +57,13 @@ export default class ServiceProxy {
                             Logger.error(error);
                             throw new InvalidResponseError(`failed parsing result for ${methodFullName}`);
                         }
-                        if (response.error) { throw new Error(response.error.message); }
+                        if (response.error) {
+                            const err = new Error(response.error.message);
+                            if (response.error.code) {
+                                (err as any).code = response.error.code;
+                            }
+                            throw err;
+                        }
 
                         return response.result.data;
                     });

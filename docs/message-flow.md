@@ -243,7 +243,7 @@ Incoming event: ORDERS.EU.456.SHIPPED
          │                      │
          ▼                      ▼
     ┌─────────┐         ┌─────────────────┐
-    │   ACK   │         │ error.external? │
+    │   ACK   │         │ isHandledError? │
     └─────────┘         └────────┬────────┘
                                  │
                     ┌────────────┴────────────┐
@@ -255,8 +255,8 @@ Incoming event: ORDERS.EU.456.SHIPPED
                    │                         │
                    ▼                         ▼
             ┌───────────┐            ┌─────────────────┐
-            │ NACK      │            │ NACK + Requeue  │
-            │ (discard) │            │ (retry later)   │
+            │ NACK      │            │ Retry or DLQ    │
+            │ (discard) │            │ (with backoff)  │
             └───────────┘            └─────────────────┘
 ```
 

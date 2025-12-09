@@ -182,15 +182,15 @@ async divide(request: { a: number; b: number }): Promise<{ result: number }> {
 }
 ```
 
-For errors that should not cause message requeuing:
+For errors that should not be retried (e.g., validation errors):
 
 ```typescript
+import { HandledError } from 'protobus';
+
 async processOrder(request: { orderId: string }): Promise<{ success: boolean }> {
     const order = await db.findOrder(request.orderId);
     if (!order) {
-        const error = new Error('Order not found');
-        (error as any).external = true;  // Don't requeue
-        throw error;
+        throw new HandledError('Order not found', 'NOT_FOUND');
     }
     // ...
 }
@@ -299,11 +299,11 @@ class MyService extends MessageService {
 
 3. **Validate inputs early**
    ```typescript
+   import { HandledError } from 'protobus';
+
    async processOrder(request) {
        if (!request.orderId) {
-           const error = new Error('orderId is required');
-           (error as any).external = true;
-           throw error;
+           throw new HandledError('orderId is required', 'VALIDATION_ERROR');
        }
        // ...
    }

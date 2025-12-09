@@ -322,7 +322,8 @@ export default class MessageFactory {
             response = ResponseContainer.create({
                 error: ResponseError.create({
                     method: methodFullName,
-                    message: obj.message
+                    message: obj.message,
+                    code: (obj as any).code || ''
                 }),
             });
         } else {

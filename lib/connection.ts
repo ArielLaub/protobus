@@ -313,9 +313,8 @@ export default class Connection extends EventEmitter implements IConnection {
                         if (isHandled) {
                             Logger.warn(`handled error for message ${correlationId}, not retrying: ${err.message}`);
                         }
-                        const requeue = !!err.external;
-                        Logger.warn(`${requeue ? 'requeuing' : 'rejecting'} message ${correlationId}`);
-                        await this.reject(channel, msg, requeue);
+                        Logger.warn(`rejecting message ${correlationId}`);
+                        await this.reject(channel, msg, false);
                     }
                 }
             });

@@ -4,15 +4,15 @@ Patterns for handling errors in Protobus services and clients.
 
 ## Error Types
 
-### Service Errors (Retriable)
+### Unhandled Errors (Retriable)
 
-Errors that should cause the message to be requeued for retry:
+Regular errors that should cause the message to be retried:
 
 ```typescript
 async processOrder(request: any) {
     const db = await this.getDatabase();
     if (!db.isConnected) {
-        // Throwing without 'external' flag causes requeue
+        // Regular errors will be retried automatically
         throw new Error('Database temporarily unavailable');
     }
     // ...
@@ -25,25 +25,41 @@ async processOrder(request: any) {
 - Resource contention
 - Transient network issues
 
-### External Errors (Non-retriable)
+### Handled Errors (Non-retriable)
 
-Errors where retrying won't help:
+Use `HandledError` for errors where retrying won't help:
 
 ```typescript
+import { HandledError } from 'protobus';
+
 async processOrder(request: any) {
     if (!request.orderId) {
-        const error = new Error('orderId is required');
-        (error as any).external = true;  // Don't requeue
-        throw error;
+        throw new HandledError('orderId is required', 'VALIDATION_ERROR');
     }
 
     const order = await db.findOrder(request.orderId);
     if (!order) {
-        const error = new Error('Order not found');
-        (error as any).external = true;  // Don't requeue
-        throw error;
+        throw new HandledError('Order not found', 'NOT_FOUND');
     }
     // ...
+}
+```
+
+You can also create custom error classes that extend `HandledError`:
+
+```typescript
+import { HandledError } from 'protobus';
+
+class ValidationError extends HandledError {
+    constructor(message: string) {
+        super(message, 'VALIDATION_ERROR');
+    }
+}
+
+class NotFoundError extends HandledError {
+    constructor(resource: string, id: string) {
+        super(`${resource} ${id} not found`, 'NOT_FOUND');
+    }
 }
 ```
 
@@ -58,13 +74,16 @@ async processOrder(request: any) {
 ### Input Validation
 
 ```typescript
+import { HandledError } from 'protobus';
+
 async createUser(request: CreateUserRequest) {
     // Validate early
     const errors = this.validateCreateUser(request);
     if (errors.length > 0) {
-        const error = new Error(`Validation failed: ${errors.join(', ')}`);
-        (error as any).external = true;
-        throw error;
+        throw new HandledError(
+            `Validation failed: ${errors.join(', ')}`,
+            'VALIDATION_ERROR'
+        );
     }
 
     // Proceed with valid input
@@ -85,14 +104,16 @@ private validateCreateUser(request: any): string[] {
 ### Resource Not Found
 
 ```typescript
+import { HandledError } from 'protobus';
+
 async getOrder(request: { orderId: string }) {
     const order = await this.db.findOrder(request.orderId);
 
     if (!order) {
-        const error = new Error(`Order ${request.orderId} not found`);
-        (error as any).external = true;
-        (error as any).code = 'NOT_FOUND';
-        throw error;
+        throw new HandledError(
+            `Order ${request.orderId} not found`,
+            'NOT_FOUND'
+        );
     }
 
     return order;
@@ -102,20 +123,20 @@ async getOrder(request: { orderId: string }) {
 ### External Service Failures
 
 ```typescript
+import { HandledError } from 'protobus';
+
 async processPayment(request: PaymentRequest) {
     try {
         return await this.paymentGateway.charge(request);
     } catch (error) {
         if (error.code === 'GATEWAY_TIMEOUT') {
-            // Retriable - don't mark as external
+            // Retriable - throw regular error
             throw new Error('Payment gateway timeout');
         }
 
         if (error.code === 'CARD_DECLINED') {
-            // Not retriable
-            const err = new Error('Card declined');
-            (err as any).external = true;
-            throw err;
+            // Not retriable - throw HandledError
+            throw new HandledError('Card declined', 'CARD_DECLINED');
         }
 
         throw error;
@@ -126,13 +147,13 @@ async processPayment(request: PaymentRequest) {
 ### Graceful Degradation
 
 ```typescript
+import { HandledError } from 'protobus';
+
 async getProductWithRecommendations(request: { productId: string }) {
     const product = await this.db.getProduct(request.productId);
 
     if (!product) {
-        const error = new Error('Product not found');
-        (error as any).external = true;
-        throw error;
+        throw new HandledError('Product not found', 'NOT_FOUND');
     }
 
     // Optional: Get recommendations, but don't fail if unavailable
@@ -198,6 +219,8 @@ async function callService(proxy: ServiceProxy, method: string, request: any) {
 ### Retry Logic
 
 ```typescript
+import { isHandledError } from 'protobus';
+
 async function callWithRetry<T>(
     fn: () => Promise<T>,
     maxRetries: number = 3,
@@ -211,8 +234,8 @@ async function callWithRetry<T>(
         } catch (error) {
             lastError = error;
 
-            // Don't retry external errors
-            if ((error as any).external) {
+            // Don't retry handled errors (validation, not found, etc.)
+            if (isHandledError(error)) {
                 throw error;
             }
 
@@ -299,35 +322,38 @@ try {
 
 ### Consistent Error Format
 
+`HandledError` already provides a consistent error format with `message` and `code` properties:
+
 ```typescript
-interface ServiceError {
-    message: string;
-    code: string;
-    details?: Record<string, any>;
-}
+import { HandledError } from 'protobus';
 
-async createOrder(request: any) {
-    try {
-        // ...
-    } catch (error) {
-        const serviceError: ServiceError = {
-            message: error.message,
-            code: this.getErrorCode(error),
-            details: this.getErrorDetails(error)
-        };
+// HandledError has: message, code, isHandled properties
+throw new HandledError('Order not found', 'NOT_FOUND');
+// error.message = 'Order not found'
+// error.code = 'NOT_FOUND'
+// error.isHandled = true
+```
 
-        const err = new Error(JSON.stringify(serviceError));
-        (err as any).external = this.isExternalError(error);
-        throw err;
+For more complex error data, you can extend `HandledError`:
+
+```typescript
+import { HandledError } from 'protobus';
+
+class DetailedError extends HandledError {
+    public readonly details: Record<string, any>;
+
+    constructor(message: string, code: string, details: Record<string, any> = {}) {
+        super(message, code);
+        this.details = details;
     }
 }
 
-private getErrorCode(error: Error): string {
-    if (error.message.includes('not found')) return 'NOT_FOUND';
-    if (error.message.includes('validation')) return 'VALIDATION_ERROR';
-    if (error.message.includes('permission')) return 'PERMISSION_DENIED';
-    return 'INTERNAL_ERROR';
-}
+// Usage
+throw new DetailedError(
+    'Validation failed',
+    'VALIDATION_ERROR',
+    { fields: ['email', 'name'] }
+);
 ```
 
 ### Client Error Parsing
@@ -380,7 +406,11 @@ await this.subscribeEvent('Orders.OrderCreated', async (event) => {
 
 ### Dead Letter Queue Pattern
 
+Note: Protobus has built-in retry and DLQ support. Configure it via `RetryOptions` when creating your `MessageService`. The example below shows manual DLQ handling if needed:
+
 ```typescript
+import { HandledError } from 'protobus';
+
 await this.subscribeEvent('Orders.OrderCreated', async (event) => {
     const maxRetries = 3;
     const retryCount = event._retryCount || 0;
@@ -393,10 +423,8 @@ await this.subscribeEvent('Orders.OrderCreated', async (event) => {
             event._retryCount = retryCount + 1;
             await this.publishEvent('Orders.OrderCreated', event);
 
-            // Mark original as external (no requeue)
-            const err = new Error(error.message);
-            (err as any).external = true;
-            throw err;
+            // Mark as handled so original message is not retried
+            throw new HandledError(error.message, 'RETRY_SCHEDULED');
         }
 
         // Max retries exceeded - send to dead letter
