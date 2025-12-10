@@ -1,8 +1,10 @@
 # ProtoBus
 
-A lightweight, scalable microservices message bus written in TypeScript.
+**Scalable microservices. Any language. Zero bloat.**
 
-ProtoBus uses **RabbitMQ** for message routing and load balancing, and **Protocol Buffers** for fast, type-safe serialization.
+ProtoBus is an ultra-lightweight message bus with just 2 dependencies. Define your API once in Protocol Buffers, then call services across TypeScript, Python, or any language—with built-in load balancing via RabbitMQ.
+
+> Also available: [protobus-py](https://github.com/ArielLaub/protobus-py) for Python
 
 ## Installation
 
