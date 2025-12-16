@@ -28,6 +28,8 @@ export abstract class BaseListener extends EventEmitter {
     protected bindings: string[] = []; // Track bound routing keys for reconnection
     private _isInitialized: boolean = false;
     private _wasStarted: boolean = false;
+    private _boundOnReconnected: () => void;
+    private _boundOnDisconnected: () => void;
 
     constructor(connection: IConnection) {
         super();
@@ -48,9 +50,11 @@ export abstract class BaseListener extends EventEmitter {
             Logger.warn(`unhandled message by default handler ${JSON.stringify(message)}`);
         };
 
-        // Listen for reconnection events
-        this.connection.on('reconnected', this._onReconnected.bind(this));
-        this.connection.on('disconnected', this._onDisconnected.bind(this));
+        // Listen for reconnection events (store bound refs for proper cleanup)
+        this._boundOnReconnected = this._onReconnected.bind(this);
+        this._boundOnDisconnected = this._onDisconnected.bind(this);
+        this.connection.on('reconnected', this._boundOnReconnected);
+        this.connection.on('disconnected', this._boundOnDisconnected);
     }
 
     get isConnected() { return this.connection.isConnected; }
@@ -61,6 +65,12 @@ export abstract class BaseListener extends EventEmitter {
      */
     protected _onDisconnected(): void {
         Logger.debug(`${this.constructor.name}: connection lost, clearing channel state`);
+        // Try to cancel consumer before clearing channel (in case connection is still valid)
+        if (this.consumerTag && this.channel) {
+            this.connection.cancel(this.channel, this.consumerTag).catch(() => {
+                // Ignore - channel likely already closed
+            });
+        }
         this.channel = undefined;
         this.consumerTag = '';
         this.emit('disconnected');
@@ -223,8 +233,8 @@ export abstract class BaseListener extends EventEmitter {
         if (!this._isInitialized) throw new NotInitializedError();
 
         // Remove reconnection listeners
-        this.connection.removeListener('reconnected', this._onReconnected.bind(this));
-        this.connection.removeListener('disconnected', this._onDisconnected.bind(this));
+        this.connection.removeListener('reconnected', this._boundOnReconnected);
+        this.connection.removeListener('disconnected', this._boundOnDisconnected);
 
         if (this.connection.isConnected && this.channel) {
             try {
