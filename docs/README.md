@@ -6,7 +6,9 @@ A TypeScript microservices framework using RabbitMQ and Protocol Buffers.
 
 ### Getting Started
 - [Quick Start Guide](./getting-started.md) - Installation and first service
+- [CLI](./cli.md) - Type generation and service scaffolding
 - [Configuration](./configuration.md) - Environment variables and options
+- [Examples](./examples.md) - Common patterns and use cases
 
 ### Core Concepts
 - [Architecture Overview](./architecture.md) - System design and components
@@ -14,7 +16,8 @@ A TypeScript microservices framework using RabbitMQ and Protocol Buffers.
 
 ### API Reference
 - [Context](./api/context.md) - Main orchestrator
-- [MessageService](./api/message-service.md) - Service implementation
+- [MessageService](./api/message-service.md) - Base service class
+- [RunnableService](./api/runnable-service.md) - Service with lifecycle management
 - [ServiceProxy](./api/service-proxy.md) - Client proxy
 - [ServiceCluster](./api/service-cluster.md) - Multi-service orchestration
 - [Events](./api/events.md) - Pub/sub system

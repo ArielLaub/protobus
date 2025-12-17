@@ -4,6 +4,7 @@ export { default as ProxiedService } from './lib/proxied_service';
 export { default as ServiceProxy } from './lib/service_proxy';
 export { default as ServiceCluster } from './lib/service_cluster';
 export { default as EventListener } from './lib/event_listener';
+export { default as RunnableService } from './lib/runnable_service';
 export { set as setLogger, ILogger } from './lib/logger';
 export { ReconnectionOptions, ReconnectionError } from './lib/connection';
 export { DisconnectedError } from './lib/message_dispatcher';
