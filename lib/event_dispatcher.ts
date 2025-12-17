@@ -14,14 +14,18 @@ export default class EventDispatcher {
 
     private _isInitialized: boolean = false;
     public get isInitialized() { return this._isInitialized; }
+    private _boundOnReconnected: () => void;
+    private _boundOnDisconnected: () => void;
 
     constructor(connection: IConnection, messageFactory: MessageFactory) {
         this.connection = connection;
         this.messageFactory = messageFactory;
 
-        // Listen for connection events
-        this.connection.on('disconnected', this._onDisconnected.bind(this));
-        this.connection.on('reconnected', this._onReconnected.bind(this));
+        // Listen for connection events (store bound refs for proper cleanup)
+        this._boundOnReconnected = this._onReconnected.bind(this);
+        this._boundOnDisconnected = this._onDisconnected.bind(this);
+        this.connection.on('disconnected', this._boundOnDisconnected);
+        this.connection.on('reconnected', this._boundOnReconnected);
     }
 
     /**
@@ -74,5 +78,10 @@ export default class EventDispatcher {
         }
         return this.connection.publish(this.channel, Config.eventsExchangeName, topic,
             event, properties);
+    }
+
+    async close(): Promise<void> {
+        this.connection.removeListener('disconnected', this._boundOnDisconnected);
+        this.connection.removeListener('reconnected', this._boundOnReconnected);
     }
 }
