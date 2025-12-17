@@ -67,8 +67,10 @@ export abstract class BaseListener extends EventEmitter {
         Logger.debug(`${this.constructor.name}: connection lost, clearing channel state`);
         // Try to cancel consumer before clearing channel (in case connection is still valid)
         if (this.consumerTag && this.channel) {
-            this.connection.cancel(this.channel, this.consumerTag).catch(() => {
-                // Ignore - channel likely already closed
+            this.connection.cancel(this.channel, this.consumerTag).catch((error) => {
+                Logger.debug(
+                    `${this.constructor.name}: failed to cancel consumer '${this.consumerTag}' on disconnect (channel may already be closed): ${error instanceof Error ? error.message : String(error)}`
+                );
             });
         }
         this.channel = undefined;
