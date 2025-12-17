@@ -124,6 +124,8 @@ export default class MessageDispatcher implements IMessageDispatcher {
     async close(): Promise<void> {
         this.connection.removeListener('disconnected', this._boundOnDisconnected);
         this.connection.removeListener('reconnected', this._boundOnReconnected);
+        delete (this as any)._boundOnDisconnected;
+        delete (this as any)._boundOnReconnected;
         await this.callbackListener.close();
     }
 }
