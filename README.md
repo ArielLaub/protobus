@@ -32,6 +32,8 @@ ProtoBus + RabbitMQ:
   Request → Queue → A pulls → A crashes before ack → Requeue → B pulls → ✓
 ```
 
+**Why this matters for performance:** App-level routing means your JavaScript event loop handles both routing decisions AND your business logic. Every message passes through your Node.js process twice—once for routing, once for handling. RabbitMQ's Erlang runtime was purpose-built for message switching: lightweight processes, preemptive scheduling, and pattern matching optimized over decades. Let the broker do what it's designed for.
+
 ### Protocol Buffers > JSON
 
 | | JSON | Protocol Buffers |

@@ -18,6 +18,8 @@ When ProtoBus does load balancing, messages sit in a RabbitMQ queue. Consumers p
 
 This isn't a minor implementation detail. It's the difference between "usually works" and "guaranteed delivery."
 
+There's also a performance angle: app-level routing in JavaScript means routing logic runs on your event loop, competing with your business logic for CPU time. Every message routes through your Node.js process before reaching a handler. RabbitMQ's Erlang runtime, by contrast, was purpose-built for telecom-grade message switching—lightweight processes, preemptive scheduling, and pattern matching optimized over decades. Why reimplement that in JavaScript?
+
 ### True Polyglot Support
 
 Here's something transport-agnostic frameworks don't tell you: their "flexibility" creates lock-in. To call a Moleculer service from Python, you'd need to reimplement Moleculer's entire protocol—service registry, load balancing, request/response correlation, serialization format. Good luck.
