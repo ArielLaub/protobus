@@ -18,6 +18,19 @@ When ProtoBus does load balancing, messages sit in a RabbitMQ queue. Consumers p
 
 This isn't a minor implementation detail. It's the difference between "usually works" and "guaranteed delivery."
 
+### True Polyglot Support
+
+Here's something transport-agnostic frameworks don't tell you: their "flexibility" creates lock-in. To call a Moleculer service from Python, you'd need to reimplement Moleculer's entire protocol—service registry, load balancing, request/response correlation, serialization format. Good luck.
+
+ProtoBus is different. Because we use:
+- **Protocol Buffers** for serialization (supported in every language)
+- **RabbitMQ** for routing and load balancing (standard AMQP clients everywhere)
+- **No app-level protocol** beyond "serialize protobuf, publish to queue"
+
+...implementing a compatible client in Go, Rust, Java, or any language takes days, not months. The `.proto` files are your contract. The broker handles the rest.
+
+We already have [protobus-py](https://github.com/ArielLaub/protobus-py) for Python, fully compatible with the TypeScript version. A Go or Rust implementation would follow the same pattern.
+
 ### Why RabbitMQ?
 
 RabbitMQ is boring technology—and that's a compliment. It's been battle-tested since 2007, powers systems at scale across every industry, and isn't going anywhere. In our experience, it's remarkably hard to find a project that RabbitMQ can't serve well.
@@ -50,6 +63,7 @@ Transport-agnostic frameworks can't use most of these—they're RabbitMQ-specifi
 | **Routing** | Broker-native | App-level | App-level | Pattern matching |
 | **Load balancing** | Broker-level | App-level | App-level | App-level |
 | **Message delivery** | Guaranteed | Best effort | Best effort | Best effort |
+| **Cross-language** | Native (proto + AMQP) | Reimplement protocol | Reimplement protocol | Reimplement protocol |
 | **Learning curve** | Low | Medium | High | Low |
 | **Dependencies** | 3 | 15+ | 50+ | 10+ |
 
