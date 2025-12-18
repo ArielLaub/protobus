@@ -18,6 +18,44 @@ export class NotInitializedError extends Error {}
 
 (<any>protoBuf.parse).defaults.keepCase = true;
 
+// Cache for which message types need preprocessing (have custom types in their tree)
+const needsPreprocessCache = new Map<string, boolean>();
+
+/**
+ * Check if a message type or any of its nested types contain custom types.
+ * Results are cached for performance.
+ */
+function messageNeedsPreprocess(messageType: protoBuf.Type): boolean {
+    const fullName = messageType.fullName;
+
+    if (needsPreprocessCache.has(fullName)) {
+        return needsPreprocessCache.get(fullName)!;
+    }
+
+    let needsIt = false;
+
+    for (const fieldName of Object.keys(messageType.fields)) {
+        const field = messageType.fields[fieldName];
+
+        // Check if field is a custom type
+        if (isCustomType(field.type)) {
+            needsIt = true;
+            break;
+        }
+
+        // Check nested message types recursively
+        if (field.resolvedType instanceof protoBuf.Type) {
+            if (messageNeedsPreprocess(field.resolvedType)) {
+                needsIt = true;
+                break;
+            }
+        }
+    }
+
+    needsPreprocessCache.set(fullName, needsIt);
+    return needsIt;
+}
+
 // Re-export custom types functionality
 export { ICustomType, registerCustomType, getCustomType, isCustomType, getCustomTypeNames };
 export { BigIntMessage, TimestampMessage };
@@ -285,7 +323,10 @@ export default class MessageFactory {
         const messageType = TMethod.requestType;
         const Message = this.root.lookupType(messageType);
         try {
-            const processed = preprocessForEncode(obj, Message, this.registeredTypes);
+            // OPTIMIZATION: Skip preprocessing if message has no custom types
+            const processed = messageNeedsPreprocess(Message)
+                ? preprocessForEncode(obj, Message, this.registeredTypes)
+                : obj;
             const request = RequestContainer.create({
                 method: methodFullName,
                 actor,
@@ -329,7 +370,10 @@ export default class MessageFactory {
         } else {
             const Message = this.root.lookupType(messageType);
             try {
-                const processed = preprocessForEncode(obj, Message, this.registeredTypes);
+                // OPTIMIZATION: Skip preprocessing if message has no custom types
+                const processed = messageNeedsPreprocess(Message)
+                    ? preprocessForEncode(obj, Message, this.registeredTypes)
+                    : obj;
                 response = ResponseContainer.create({
                     result: ResponseResult.create({
                         method: methodFullName,
@@ -362,7 +406,10 @@ export default class MessageFactory {
         const Event = this.root.lookupType(type);
 
         try {
-            const processed = preprocessForEncode(obj, Event, this.registeredTypes);
+            // OPTIMIZATION: Skip preprocessing if message has no custom types
+            const processed = messageNeedsPreprocess(Event)
+                ? preprocessForEncode(obj, Event, this.registeredTypes)
+                : obj;
             return uintArrayToBuffer(EventContainer.encode(EventContainer.create({
                 type,
                 topic,
