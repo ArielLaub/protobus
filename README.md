@@ -42,6 +42,23 @@ ProtoBus + RabbitMQ:
 | Schema | Hope the docs are right | Contract-first `.proto` files |
 | Versioning | Breaking changes everywhere | Built-in forward/backward compatibility |
 
+### True Cross-Language Polyglot
+
+Because ProtoBus uses Protocol Buffers for schemas and RabbitMQ for routing/load balancing, implementing compatible clients in other languages is trivial. The `.proto` files ARE the contract—no proprietary app-level protocols to reverse-engineer.
+
+| | Transport-Agnostic Frameworks | ProtoBus |
+|---|---|---|
+| Protocol | Custom app-level (must reimplement) | Standard Protobuf + AMQP |
+| Schema | Framework-specific or none | Language-agnostic `.proto` files |
+| Routing logic | Embedded in each SDK | Handled by RabbitMQ |
+| New language support | Months of work | Days—just Protobuf + AMQP client |
+
+**Available implementations:**
+- **TypeScript/Node.js**: [protobus](https://github.com/ArielLaub/protobus) (this repo)
+- **Python**: [protobus-py](https://github.com/ArielLaub/protobus-py)
+
+A Go, Rust, or Java implementation would be straightforward—just generate Protobuf types and connect to RabbitMQ. The broker handles service discovery, load balancing, and message routing. Your new client just needs to serialize/deserialize Protobuf and publish/consume from the right queues.
+
 ### Pluggable Custom Types
 
 Protobuf's built-in types not enough? ProtoBus supports custom type serialization for seamless handling of BigInt, Timestamps, or any domain-specific types:
