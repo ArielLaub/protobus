@@ -196,16 +196,31 @@ Choose something else when:
 
 ## Performance
 
-ProtoBus should outperform transport-agnostic frameworks in:
+ProtoBus outperforms Moleculer in all tested scenarios. Benchmarks run on the same hardware with RabbitMQ, using realistic single-publisher patterns:
 
-- **Throughput** — Binary Protobuf serialization is faster and smaller than JSON
-- **Latency** — No app-level routing overhead; broker handles it natively
-- **Reliability under load** — Broker-managed queues vs app-level message tracking
+### Benchmark Results
 
-We're planning to publish benchmarks comparing ProtoBus against Moleculer and NestJS in realistic scenarios:
-- High message throughput with varying payload sizes
-- Complex routing patterns
-- Consumer failure and recovery
-- Sustained load over time
+| Scenario | Payload | ProtoBus | Moleculer | Difference |
+|----------|---------|----------|-----------|------------|
+| **Simple RPC** | ~100 bytes | 15,698 msg/sec | 12,269 msg/sec | **+28%** |
+| **Complex Order** | ~5 KB | 8,880 msg/sec | 8,032 msg/sec | **+10%** |
+| **Metrics Batch** | ~139 KB | 637 msg/sec | 567 msg/sec | **+12%** |
 
-Contributions and independent benchmarks are welcome!
+### Why ProtoBus is Faster
+
+1. **Binary serialization** — Protobuf encodes smaller payloads than JSON, reducing network I/O
+2. **No preprocessing overhead** — ProtoBus caches message type analysis, skipping object traversal when no custom types are present
+3. **Broker-native routing** — No JavaScript event loop overhead for routing decisions; Erlang handles it
+4. **Direct AMQP** — Messages go straight to RabbitMQ queues without app-level indirection
+
+### Methodology
+
+- **Transport**: RabbitMQ 3.x (same for both)
+- **Pattern**: Single shared publisher context (realistic usage)
+- **Services**: 10 competing consumer instances
+- **Warm-up**: 50 messages before measurement
+- **Messages**: 10,000 (simple/complex), 5,000 (metrics)
+
+The "Complex Order" benchmark uses a realistic e-commerce order with nested objects, arrays, and a ~3KB text field. The "Metrics" benchmark simulates time-series ingestion with 3,200 data points per message.
+
+Benchmark code available in the repository. Independent benchmarks welcome!
