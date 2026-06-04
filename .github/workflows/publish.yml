@@ -1,0 +1,46 @@
+name: Publish to npm
+
+# Mirrors the protobus-py PyPI trusted-publishing workflow.
+# Triggered when a GitHub Release is published. Authenticates to npm via
+# OIDC — no tokens stored anywhere. Setup steps documented in CONTRIBUTING.md.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: Build and publish to npm
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write       # required for npm trusted publishing (OIDC)
+      contents: read        # for actions/checkout
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm
+        # Trusted publishing: setup-node configured the registry, OIDC token
+        # is picked up automatically. --provenance attaches a signed
+        # supply-chain attestation linking this tarball to the source commit.
+        run: npm publish --provenance --access public
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
