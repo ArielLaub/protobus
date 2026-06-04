@@ -4,6 +4,17 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-06-04
+
+### Fixed
+
+- Top-level package now re-exports the streaming error classes that landed in
+  1.4.0 but were accidentally left out of `index.ts`. Code can now do
+  `import { StreamTimeoutError, StreamingError, StreamBackpressureError,
+  StreamClosedError } from 'protobus'` instead of reaching into
+  `protobus/dist/lib/errors`. No runtime changes — purely a typings/export
+  fix for a documented 1.4.0 feature.
+
 ## [1.4.0] — 2026-06-04
 
 ### Added
