@@ -4,7 +4,7 @@
 
 Unlike transport-agnostic frameworks that reduce your message broker to a dumb pipe, ProtoBus is *opinionated*—it's built exclusively for RabbitMQ and leverages its full power: topic exchanges, routing keys, competing consumers, dead-letter queues, and message persistence. Combined with Protocol Buffers for type-safe binary serialization (smaller, faster, and less error-prone than JSON), ProtoBus delivers the reliability and performance that production microservices demand.
 
-> Also available: [protobus-py](https://github.com/ArielLaub/protobus-py) for Python
+> Also available: [protobus-py](https://github.com/ArielLaub/protobus-py) for Python | [protobus-go](https://github.com/ArielLaub/protobus-go) for Go (experimental)
 
 ## Why ProtoBus?
 
@@ -58,8 +58,9 @@ Because ProtoBus uses Protocol Buffers for schemas and RabbitMQ for routing/load
 **Available implementations:**
 - **TypeScript/Node.js**: [protobus](https://github.com/ArielLaub/protobus) (this repo)
 - **Python**: [protobus-py](https://github.com/ArielLaub/protobus-py)
+- **Go**: [protobus-go](https://github.com/ArielLaub/protobus-go) (experimental)
 
-A Go, Rust, or Java implementation would be straightforward—just generate Protobuf types and connect to RabbitMQ. The broker handles service discovery, load balancing, and message routing. Your new client just needs to serialize/deserialize Protobuf and publish/consume from the right queues.
+A Rust or Java implementation would be straightforward—just generate Protobuf types and connect to RabbitMQ. The broker handles service discovery, load balancing, and message routing. Your new client just needs to serialize/deserialize Protobuf and publish/consume from the right queues.
 
 ### Pluggable Custom Types
 
