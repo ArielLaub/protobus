@@ -13,11 +13,37 @@ export type ConsumeOptions = amqplib.Options.Consume;
 export type PublishOptions = amqplib.Options.Publish;
 export type AssertQueueOptions = amqplib.Options.AssertQueue;
 export type AssertExchangeOptions = amqplib.Options.AssertExchange;
-export type MessageHandler =  (content: Buffer, correlationId: string) => Promise<Buffer | void>;
+
+/**
+ * Result a {@link MessageHandler} can return:
+ *  - `Buffer`                          → a single unary reply is published
+ *  - `void` / `undefined`              → no reply (one-way event or suppressed)
+ *  - `AsyncIterable<Buffer>`           → streaming reply; each yielded chunk
+ *                                        is published with x-protobus-final=false,
+ *                                        the last one with x-protobus-final=true.
+ *
+ * See `docs/advanced/streaming.md` for the protocol contract.
+ */
+export type MessageHandlerResult = Buffer | void | AsyncIterable<Buffer>;
+
+export type MessageHandler = (
+    content: Buffer,
+    correlationId: string,
+    headers?: Record<string, any>,
+) => Promise<MessageHandlerResult>;
 
 export interface ConsumeRetryOptions {
     maxRetries: number;
     retryQueueName: string;
+    /**
+     * Topic exchange the retry queue is bound to with `#`. We publish to
+     * this exchange (not sendToQueue) so the message's routing key stays
+     * set to the original `REQUEST.<service>.<method>`. That's what makes
+     * the post-TTL DLX redelivery route correctly to the main queue.
+     * When absent we fall back to sendToQueue() — which works for unary
+     * tests not relying on redelivery, but redelivery WILL silently drop.
+     */
+    retryExchangeName?: string;
     dlqName: string;
     isHandledError?: (error: unknown) => boolean;
 }
@@ -234,32 +260,61 @@ export default class Connection extends EventEmitter implements IConnection {
                 await this.ack(channel, msg);
             }
 
-            let timeout;
-            return new Promise(async (resolve: any, reject: any) => {
-                // set timeout for RPC calls that do not resolve
+            // NOTE: do NOT use `new Promise(async (resolve, reject) => {...})`
+            // — async-executor rejections are invisible to the outer Promise
+            // constructor, which silently swallowed handler errors and kept
+            // the retry/DLQ path below as dead code. A plain try/catch makes
+            // errors actually propagate to the catch arm.
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            let timedOut = false;
+            try {
                 timeout = setTimeout(() => {
-                    reject(new TimeoutError(`message ${correlationId} timed out`));
+                    timedOut = true;
                 }, Config.messageProcessingTimeout);
-                const result = await messageHandler(msg.content, correlationId);
-                // clear timeout once result is received
+
+                const result = await messageHandler(msg.content, correlationId, headers);
                 clearTimeout(timeout);
+
+                if (timedOut) {
+                    throw new TimeoutError(`message ${correlationId} timed out`);
+                }
+
                 if (!options.noAck && lateAck) { // late ackers ack when processing is done
                     await this.ack(channel, msg);
                 }
                 if (replyTo) {
-                    const p = {
-                        contentType: 'application/octet-stream',
-                        correlationId,
-                    };
-                    if (result) {
+                    // Streaming reply: handler returned an AsyncIterable<Buffer>.
+                    // Each chunk is published to replyTo with x-protobus-final
+                    // headers; see docs/advanced/streaming.md.
+                    if (result && !Buffer.isBuffer(result) && typeof (result as any)[Symbol.asyncIterator] === 'function') {
+                        await this._publishStreamReply(channel, replyTo, correlationId, result as AsyncIterable<Buffer>);
+                    } else if (Buffer.isBuffer(result)) {
+                        // Unary reply (current behavior)
+                        const p = {
+                            contentType: 'application/octet-stream',
+                            correlationId,
+                        };
                         await this.publish(channel, Config.callbacksExchangeName, replyTo, result, p);
                     }
                 }
-                resolve();
-            }).catch(async err => {
+            } catch (err: any) {
                 // clear timeout so we don't get 2 errors for the same message
                 clearTimeout(timeout);
                 Logger.error(`unhandled error consuming bus message - ${err.message || err}:\n${err.stack}`);
+
+                // If MessageService pre-encoded the error as a ResponseContainer
+                // (via the __PROTOBUS_RESPONSE_BUFFER symbol), we use it to
+                // reply to the caller on terminal paths (DLQ / no-retry-config).
+                // See message_service.ts handleUnaryError for the contract.
+                const errorReplyBuffer: Buffer | undefined = (err as any)?.__PROTOBUS_RESPONSE_BUFFER;
+                const publishErrorReply = async () => {
+                    if (replyTo && errorReplyBuffer) {
+                        await this.publish(channel, Config.callbacksExchangeName, replyTo, errorReplyBuffer, {
+                            contentType: 'application/octet-stream',
+                            correlationId,
+                        });
+                    }
+                };
 
                 if (!options.noAck && lateAck) {
                     // Check if retry is configured and error is retryable
@@ -268,7 +323,16 @@ export default class Connection extends EventEmitter implements IConnection {
                     if (retryOptions && !isHandled && retryOptions.maxRetries > 0) {
                         // Retry logic for unhandled errors
                         if (retryCount < retryOptions.maxRetries) {
-                            // Send to retry queue for delayed redelivery
+                            // Park the message on the retry queue for delayed
+                            // redelivery. We publish to the retry EXCHANGE with
+                            // the original routing key so the message's
+                            // routing key is preserved across the queue → TTL
+                            // expiry → DLX → main exchange round-trip. Without
+                            // that, the redelivery's routing key would be the
+                            // retry queue name and the main queue's binding
+                            // wouldn't match — see message_listener.ts.
+                            //
+                            // The caller stays parked: no reply published here.
                             const newRetryCount = retryCount + 1;
                             Logger.warn(`retrying message ${correlationId} (attempt ${newRetryCount}/${retryOptions.maxRetries})`);
 
@@ -280,16 +344,40 @@ export default class Connection extends EventEmitter implements IConnection {
                                 'x-last-error': err.message || String(err),
                             };
 
-                            await channel.sendToQueue(retryOptions.retryQueueName, msg.content, {
-                                persistent: true,
-                                correlationId,
-                                replyTo,
-                                headers: retryHeaders,
-                            });
+                            if (retryOptions.retryExchangeName) {
+                                // Preferred path: routing-key-preserving publish.
+                                await this.publish(
+                                    channel,
+                                    retryOptions.retryExchangeName,
+                                    originalRoutingKey,
+                                    msg.content,
+                                    {
+                                        persistent: true,
+                                        correlationId,
+                                        replyTo,
+                                        headers: retryHeaders,
+                                    },
+                                );
+                            } else {
+                                // Fallback for legacy callers that didn't wire
+                                // a retry exchange. Works for the immediate
+                                // first hop; the DLX redelivery will drop.
+                                await channel.sendToQueue(retryOptions.retryQueueName, msg.content, {
+                                    persistent: true,
+                                    correlationId,
+                                    replyTo,
+                                    headers: retryHeaders,
+                                });
+                            }
                             await this.ack(channel, msg);
                         } else {
-                            // Max retries exceeded, send to DLQ
+                            // Max retries exceeded — terminal failure. Reply to
+                            // the caller with the encoded error so they get a
+                            // thrown exception instead of timing out, THEN send
+                            // the message to the DLQ for ops investigation.
                             Logger.error(`message ${correlationId} exceeded max retries (${retryOptions.maxRetries}), sending to DLQ`);
+
+                            await publishErrorReply();
 
                             const dlqHeaders = {
                                 ...headers,
@@ -309,15 +397,18 @@ export default class Connection extends EventEmitter implements IConnection {
                             await this.ack(channel, msg);
                         }
                     } else {
-                        // No retry configured or handled error - just reject without requeue
+                        // No retry configured (or retries disabled / handled
+                        // error). Reply to the caller with the encoded error,
+                        // then reject without requeue so we don't loop forever.
                         if (isHandled) {
                             Logger.warn(`handled error for message ${correlationId}, not retrying: ${err.message}`);
                         }
+                        await publishErrorReply();
                         Logger.warn(`rejecting message ${correlationId}`);
                         await this.reject(channel, msg, false);
                     }
                 }
-            });
+            }
         };
         await channel.consume(queueName, onMessage, options);
     }
@@ -333,5 +424,50 @@ export default class Connection extends EventEmitter implements IConnection {
     async publish(channel: Channel, exchangeName: string,
       routingKey: string, content: Buffer, properties: PublishOptions): Promise<any> {
         channel.publish(exchangeName, routingKey, content, properties);
+    }
+
+    /**
+     * Publish a streaming reply: each chunk gets the same correlationId; all
+     * chunks but the last carry `x-protobus-final=false`, the last carries
+     * `x-protobus-final=true`. If the iterable yields nothing, a single empty
+     * terminal message is published so the client iterator ends cleanly.
+     *
+     * Look-ahead-by-one keeps us from needing an extra empty terminal in the
+     * common case where the user's generator yields its final-data chunk last.
+     */
+    private async _publishStreamReply(
+        channel: Channel,
+        replyTo: string,
+        correlationId: string,
+        chunks: AsyncIterable<Buffer>,
+    ): Promise<void> {
+        const publishOne = async (body: Buffer, seq: number, final: boolean): Promise<void> => {
+            await this.publish(channel, Config.callbacksExchangeName, replyTo, body, {
+                contentType: 'application/octet-stream',
+                correlationId,
+                headers: {
+                    [Config.HEADER_FINAL]: final,
+                    [Config.HEADER_SEQ]: seq,
+                },
+            });
+        };
+
+        let seq = 0;
+        let buffered: Buffer | undefined = undefined;
+
+        for await (const chunk of chunks) {
+            if (buffered !== undefined) {
+                await publishOne(buffered, seq, false);
+                seq++;
+            }
+            buffered = chunk;
+        }
+
+        if (buffered !== undefined) {
+            await publishOne(buffered, seq, true);
+        } else {
+            // Empty stream — terminal-only marker so the client iterator can stop.
+            await publishOne(Buffer.alloc(0), 0, true);
+        }
     }
 }

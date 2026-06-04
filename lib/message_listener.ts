@@ -14,6 +14,18 @@ export default class MessageListener extends BaseListener {
     protected retryConfig: RetryConfig;
     protected dlqName: string;
     protected retryQueueName: string;
+    /**
+     * Dedicated topic exchange we publish retried messages to. The retry
+     * queue is bound to this with `#`, so the message's routing key is
+     * preserved as the original `REQUEST.<service>.<method>`. When the
+     * TTL on the retry queue expires, the message dead-letters back to
+     * the main bus exchange with that original routing key still attached
+     * — which is what makes the main queue's binding match on redelivery.
+     *
+     * Using sendToQueue() directly would set the routing key to the queue
+     * name, breaking redelivery routing. (That was the original retry bug.)
+     */
+    protected retryExchangeName: string;
 
     constructor(connection: IConnection, lateAck?: boolean, maxConcurrent?: number, retryOptions?: RetryOptions) {
         super(connection);
@@ -35,6 +47,7 @@ export default class MessageListener extends BaseListener {
 
         this.dlqName = '';
         this.retryQueueName = '';
+        this.retryExchangeName = '';
     }
 
     /**
@@ -58,8 +71,8 @@ export default class MessageListener extends BaseListener {
             arguments: {}
         });
 
-        // Create retry queue with TTL - messages wait here before being redelivered
-        // When TTL expires, messages are routed back to the main exchange
+        // Retry queue with TTL — messages park here briefly before being
+        // redelivered to the main exchange via DLX.
         this.retryQueueName = `${serviceName}.Retry`;
         await this.connection.declareQueue(this.channel, this.retryQueueName, {
             durable: true,
@@ -68,9 +81,30 @@ export default class MessageListener extends BaseListener {
             arguments: {
                 'x-message-ttl': this.retryConfig.retryDelayMs,
                 'x-dead-letter-exchange': this.exchangeName,
-                // Route back to original routing key
+                // No x-dead-letter-routing-key: we want the message's *own*
+                // routing key preserved on DLX, which we ensure by publishing
+                // to the retry exchange below with that key.
             }
         });
+
+        // Dedicated topic exchange for retried messages. We bind the retry
+        // queue here with `#` so any routing key lands in the queue, AND
+        // the routing key is preserved on the message — which is what makes
+        // the post-TTL DLX redelivery route correctly to the main queue.
+        this.retryExchangeName = `${serviceName}.Retry.Exchange`;
+        await this.connection.declareExchange(
+            this.channel,
+            this.retryExchangeName,
+            'topic',
+            { durable: true, autoDelete: false, internal: false, arguments: {} },
+        );
+        await this.connection.bindQueue(
+            this.channel,
+            this.retryQueueName,
+            this.retryExchangeName,
+            '#',
+            {},
+        );
     }
 
     /**
@@ -104,6 +138,7 @@ export default class MessageListener extends BaseListener {
         return {
             maxRetries: this.retryConfig.maxRetries,
             retryQueueName: this.retryQueueName,
+            retryExchangeName: this.retryExchangeName,
             dlqName: this.dlqName,
             isHandledError,
         };

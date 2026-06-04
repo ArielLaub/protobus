@@ -2,6 +2,7 @@ import { Logger } from './logger';
 import { IContext } from './context';
 import MessageListener from './message_listener';
 import EventListener, { EventHandler } from './event_listener';
+import { isHandledError } from './errors';
 // HandledError is re-exported for users, isHandledError is used by MessageListener
 export { HandledError, isHandledError } from './errors';
 import * as fs from 'fs';
@@ -97,30 +98,111 @@ export default abstract class MessageService implements IMessageService {
     }
 
     // core handler for incoming RPC requests made to REQUEST.<service name>.*
-    private async _onMessage(data: any, id: string) {
+    private async _onMessage(data: any, id: string, _headers?: Record<string, any>) {
         const request = this.context.factory.decodeRequest(data);
         const method = request.method.split('.')[2]; // <package>.<service>.<method>
         Logger.debug(`received request ${request.method} (${id})`);
-        try {
-            if ((<any> this)[method] && typeof (<any> this)[method] === 'function') {
-                const p = (<any>this)[method](request.data, request.actor, id);
-                if (!p || !p.then) {
-                    throw new InvalidResultError(p);
-                }
 
-                const result = await p;
-                Logger.debug(`sending result ${request.method} (${JSON.stringify(result)})`);
-                return this.context.factory.buildResponse(request.method, result);
-            } else {
-                throw new InvalidMethodError(`invalid service method ${method}`);
+        const handler = (<any>this)[method];
+        if (!handler || typeof handler !== 'function') {
+            const error = new InvalidMethodError(`invalid service method ${method}`);
+            Logger.error(error.message);
+            return this.context.factory.buildResponse(request.method, error);
+        }
+
+        // Streaming path: if the .proto declares this method as
+        // server-streaming, the handler is expected to return an
+        // AsyncIterable<chunkData>. The framework wraps each yielded chunk
+        // in a ResponseContainer; the connection layer publishes them with
+        // x-protobus-final headers. See docs/advanced/streaming.md.
+        if (this.context.factory.isStreamingMethod(request.method)) {
+            const iter = handler.call(this, request.data, request.actor, id);
+            if (!iter || typeof iter[Symbol.asyncIterator] !== 'function') {
+                const error = new InvalidResultError(
+                    `streaming method ${method} must return an AsyncIterable`,
+                );
+                return this.context.factory.buildResponse(request.method, error);
+            }
+            return this._streamResponses(request.method, iter);
+        }
+
+        // Unary path
+        let p: any;
+        try {
+            p = handler.call(this, request.data, request.actor, id);
+        } catch (error) {
+            // Synchronous throw from the handler — handled-vs-unhandled split below.
+            return this.handleUnaryError(request.method, error);
+        }
+        if (!p || !p.then) {
+            return this.handleUnaryError(request.method, new InvalidResultError(p));
+        }
+        try {
+            const result = await p;
+            Logger.debug(`sending result ${request.method} (${JSON.stringify(result)})`);
+            return this.context.factory.buildResponse(request.method, result);
+        } catch (error) {
+            return this.handleUnaryError(request.method, error);
+        }
+    }
+
+    /**
+     * Decide what to do with an error from a unary handler.
+     *
+     * `HandledError` (and anything `isHandledError`-shaped) is *expected* —
+     * validation failures, business-logic rejections. We return it as a
+     * normal error response so the client sees it immediately. No retry.
+     *
+     * Anything else is treated as an *infrastructure* failure (timeout,
+     * connection issue, unexpected bug) and is re-thrown so the connection
+     * layer's retry/DLQ machinery takes over. The client receives a response
+     * only after the retries succeed OR are exhausted (DLQ path publishes
+     * the final error back to the caller — see connection.ts).
+     */
+    private handleUnaryError(method: string, error: unknown): Buffer {
+        if (isHandledError(error)) {
+            Logger.warn(`handled error in ${method}: ${(error as any).message || error}`);
+            return this.context.factory.buildResponse(method, error);
+        }
+        // Pre-encode the error as a ResponseContainer so the connection
+        // layer can publish it back to the caller on the DLQ / reject paths
+        // (after retries are exhausted) without needing access to the
+        // MessageFactory. The connection layer reads this off the thrown
+        // error via a well-known symbol — see __PROTOBUS_RESPONSE_BUFFER below.
+        if (error && typeof error === 'object') {
+            try {
+                (error as any).__PROTOBUS_RESPONSE_BUFFER = this.context.factory.buildResponse(method, error);
+            } catch (encodeErr) {
+                // If we can't encode the error, fall back to throwing without
+                // a buffer. The client will time out — better than crashing here.
+                Logger.warn(`failed to pre-encode error response: ${(encodeErr as any)?.message}`);
+            }
+        }
+        if (error) {
+            Logger.error((error as any).stack || (error as any).message || String(error));
+        } else {
+            Logger.error('null error received');
+        }
+        throw error;
+    }
+
+    /**
+     * Wrap a user async-iterable so each chunk is encoded as a
+     * ResponseContainer Buffer before being handed to the connection layer.
+     * An exception during iteration becomes a terminal error response — the
+     * connection layer publishes it with x-protobus-final=true so the
+     * client's iterator raises.
+     */
+    private async *_streamResponses(method: string, iter: AsyncIterable<any>): AsyncIterable<Buffer> {
+        try {
+            for await (const chunk of iter) {
+                yield this.context.factory.buildResponse(method, chunk);
             }
         } catch (error) {
             if (error) {
-                Logger.error(error.stack || error.message);
-            } else {
-                Logger.error('null error received');
+                Logger.error((error as any).stack || (error as any).message || String(error));
             }
-            return this.context.factory.buildResponse(request.method, error);
+            yield this.context.factory.buildResponse(method, error);
         }
     }
 }

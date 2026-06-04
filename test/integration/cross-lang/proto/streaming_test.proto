@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package streaming_test;
+
+// Same contract as the per-language test protos in protobus-py/tests/
+// and the inline string in protobus/test/integration/streaming.test.ts.
+// Cross-language test loads this file from BOTH the Python server and the
+// TS client so the inner data encoding is unambiguous.
+
+message TickRequest {
+    int32 count = 1;
+    int32 fail_at = 2;
+    bool emit_nothing = 3;
+}
+
+message Tick {
+    int32 seq = 1;
+    string payload = 2;
+}
+
+message AddRequest { int32 a = 1; int32 b = 2; }
+message AddResponse { int32 sum = 1; }
+
+service Counter {
+    rpc add (AddRequest) returns (AddResponse);
+    rpc tick (TickRequest) returns (stream Tick);
+}

@@ -228,6 +228,27 @@ export default class MessageFactory {
     }
 
     /**
+     * Return true if the given fully-qualified method is declared as
+     * server-streaming in its .proto file.
+     *
+     * Uses the standard gRPC `stream` keyword on the response type, which
+     * protobufjs surfaces as `Method.responseStream = true`. Methods missing
+     * from the schema return false (treated as unary).
+     *
+     * @param fullName - Fully-qualified method name (e.g. "Llm.Service.completeStream")
+     */
+    public isStreamingMethod(fullName: string): boolean {
+        try {
+            const method = this.getMethodType(fullName);
+            // protobufjs uses .resolve() lazily; call it to ensure responseStream is populated
+            method.resolve();
+            return method.responseStream === true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
      * Register a custom type with this MessageFactory instance.
      * The type will be available for use in .proto files.
      *

@@ -23,6 +23,7 @@ A TypeScript microservices framework using RabbitMQ and Protocol Buffers.
 - [Events](./api/events.md) - Pub/sub system
 
 ### Advanced Topics
+- [Streaming RPC](./advanced/streaming.md) - Server-streaming responses (`rpc foo (Req) returns (stream Chunk)`)
 - [Protobuf Schema Design](./advanced/protobuf-schema.md) - Best practices for .proto files
 - [Error Handling](./advanced/error-handling.md) - Exception patterns
 - [HTTP Routing](./advanced/http-routing.md) - Express integration (experimental)
