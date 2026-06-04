@@ -22,7 +22,7 @@ import * as protobuf from 'protobufjs';
 
 import ServiceProxy from '../../lib/service_proxy';
 import MessageService from '../../lib/message_service';
-import Context, { IContext } from '../../lib/context';
+import Context from '../../lib/context';
 import { HandledError } from '../../lib/errors';
 
 const proto = `syntax = "proto3";

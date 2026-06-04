@@ -101,10 +101,17 @@ export default class ServiceProxy {
             buffer = factory.buildRequest(methodFullName, requestMessage, actor);
         } catch (error) {
             Logger.error(`failed building streaming request '${requestType}' from ${JSON.stringify(requestMessage)}\n${error}`);
-            // Throw on iteration so the caller's try/catch around `for await` catches it.
-            return (async function* (): AsyncIterable<any> {
-                throw new InvalidRequestError('failed parsing message');
-            })();
+            // Return an iterable whose first iteration throws — surfaces the
+            // request-build error inside the caller's try/catch around `for await`.
+            return {
+                [Symbol.asyncIterator]() {
+                    return {
+                        async next(): Promise<IteratorResult<any>> {
+                            throw new InvalidRequestError('failed parsing message');
+                        },
+                    };
+                },
+            };
         }
 
         const chunks = context.publishStreamingMessage(

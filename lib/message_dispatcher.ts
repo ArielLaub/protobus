@@ -214,7 +214,9 @@ export default class MessageDispatcher implements IMessageDispatcher {
         const stream: StreamEntry = { chunks: [], ended: false };
         this.pendingStreams.set(id, stream);
 
-        const dispatcher = this;
+        // Capture only what the iterator needs to release on cleanup —
+        // no `this` alias (lints clean under @typescript-eslint/no-this-alias).
+        const pendingStreams = this.pendingStreams;
         const timeoutMs = idleTimeoutMs ?? Config.streamIdleTimeoutMs;
 
         const properties: PublishOptions = {
@@ -250,7 +252,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
 
                         while (true) {
                             if (stream.error) {
-                                dispatcher.pendingStreams.delete(id);
+                                pendingStreams.delete(id);
                                 throw stream.error;
                             }
                             if (stream.chunks.length > 0) {
@@ -258,7 +260,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
                                 return { value, done: false };
                             }
                             if (stream.ended) {
-                                dispatcher.pendingStreams.delete(id);
+                                pendingStreams.delete(id);
                                 return { value: undefined as any, done: true };
                             }
                             // Park on the next chunk arrival.
@@ -280,12 +282,12 @@ export default class MessageDispatcher implements IMessageDispatcher {
 
                     async return(): Promise<IteratorResult<Buffer>> {
                         // Caller broke out of the for-await; release the slot.
-                        dispatcher.pendingStreams.delete(id);
+                        pendingStreams.delete(id);
                         return { value: undefined as any, done: true };
                     },
 
                     async throw(err): Promise<IteratorResult<Buffer>> {
-                        dispatcher.pendingStreams.delete(id);
+                        pendingStreams.delete(id);
                         throw err;
                     },
                 };
