@@ -25,6 +25,13 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.48.0"
   },
+  "files": [
+    "dist",
+    "!dist/test",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "homepage": "https://github.com/ArielLaub/protobus#readme",
   "keywords": [
     "micro services",
@@ -63,5 +70,5 @@
     "watch": "tsc -w"
   },
   "types": "dist/index.d.ts",
-  "version": "1.4.1"
+  "version": "1.4.2"
 }

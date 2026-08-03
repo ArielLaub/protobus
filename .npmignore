@@ -19,3 +19,11 @@ docs/
 eslint.config.mjs
 tsconfig.json
 docker-compose.yml
+
+# Secrets and CI — never publish. package.json "files" is the real allowlist;
+# these are belt-and-braces after .env leaked into 1.4.0/1.4.1.
+.env
+.env.*
+*.pem
+*.key
+.github/
