@@ -31,6 +31,10 @@ service Service {
 
 class TestService extends MessageService {
     constructor(context: IContext) {
+        // NB: retryDelayMs is deliberately left at its default. It becomes the
+        // retry queue's x-message-ttl, which RabbitMQ bakes in at declare time,
+        // so changing it here makes startup fail with PRECONDITION_FAILED
+        // against an already-declared queue.
         super(context, { maxConcurrent: 1 });
         Logger.info('simple service initialized');
     }
@@ -109,11 +113,17 @@ describe('MessageService tests suite', () => {
         });
     });
 
+    // simpleMethod throws a plain Error, which handleUnaryError classifies as an
+    // *infrastructure* failure: the message is retried maxRetries times before
+    // the error is published back to the caller. At the default 5s retry delay
+    // that is ~15s, so the default 30s budget leaves almost no headroom — one
+    // message queued ahead of this one (prefetch is 1) and it fails. Throw a
+    // HandledError instead if you want an immediate, no-retry error response.
     it('should test error exceptions flowing back to client', async () => {
         await expect(client.simpleMethod({ no: 'yes' })).rejects.toMatchObject({
             message: 'invalid_params'
         });
-    });
+    }, 90000);
 
     it('should test TS interface export', async () => {
         const source = context.factory.exportTS('Simple.Service');

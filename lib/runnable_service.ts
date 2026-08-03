@@ -64,8 +64,17 @@ export default abstract class RunnableService extends MessageService {
         postInit?: (service: T) => Promise<void>
     ): Promise<T> {
         let service: T | null = null;
+        let shuttingDown = false;
 
-        const shutdown = async (signal?: string) => {
+        /**
+         * @param exitCode - 0 for a signal-initiated shutdown, non-zero when we
+         *   are bailing out of a failed startup. Exiting 0 on a startup failure
+         *   told Kubernetes and systemd the process had succeeded, so a service
+         *   that could not start was never restarted.
+         */
+        const shutdown = async (signal?: string, exitCode: number = 0) => {
+            if (shuttingDown) { return; }
+            shuttingDown = true;
             Logger.info(`Shutdown initiated${signal ? ` (signal: ${signal})` : ''}`);
 
             if (service) {
@@ -84,12 +93,16 @@ export default abstract class RunnableService extends MessageService {
                 Logger.error(`Connection close failed: ${error}`);
             }
 
-            process.exit(0);
+            process.exit(exitCode);
         };
 
-        // Setup signal handlers
-        process.on('SIGINT', () => shutdown('SIGINT'));
-        process.on('SIGTERM', () => shutdown('SIGTERM'));
+        // Setup signal handlers. `once`, not `on`: calling start() more than
+        // once per process otherwise stacked duplicate handlers that each ran a
+        // full shutdown.
+        const onSigint = () => { void shutdown('SIGINT'); };
+        const onSigterm = () => { void shutdown('SIGTERM'); };
+        process.once('SIGINT', onSigint);
+        process.once('SIGTERM', onSigterm);
 
         try {
             service = new ServiceClass(context, options);
@@ -106,7 +119,9 @@ export default abstract class RunnableService extends MessageService {
 
         } catch (error) {
             Logger.error(`Service startup failed: ${error}`);
-            await shutdown();
+            process.removeListener('SIGINT', onSigint);
+            process.removeListener('SIGTERM', onSigterm);
+            await shutdown(undefined, 1);
             throw error;
         }
     }

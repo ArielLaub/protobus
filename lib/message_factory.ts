@@ -18,19 +18,50 @@ export class NotInitializedError extends Error {}
 
 (<any>protoBuf.parse).defaults.keepCase = true;
 
-// Cache for which message types need preprocessing (have custom types in their tree)
-const needsPreprocessCache = new Map<string, boolean>();
+/**
+ * Resolve a field if protobufjs hasn't done it yet.
+ *
+ * protobufjs resolves lazily, so `field.resolvedType` is null until something
+ * forces resolution. Anything that inspects the type tree *before* the first
+ * encode must resolve explicitly — otherwise nested message fields look like
+ * scalars and get skipped. That was the cause of nested bigint/timestamp
+ * fields silently encoding as zero.
+ */
+function ensureResolved(field: protoBuf.Field): void {
+    if (!field.resolved) {
+        try {
+            field.resolve();
+        } catch {
+            // A field referencing a type that isn't in the root yet. Leaving it
+            // unresolved is fine here: callers treat "unknown" conservatively.
+        }
+    }
+}
 
 /**
  * Check if a message type or any of its nested types contain custom types.
- * Results are cached for performance.
+ *
+ * Cycles (`message Tree { Tree child = 1; }`) are resolved *conservatively*:
+ * re-entering a type that is already on the stack returns true, so recursive
+ * schemas always take the preprocessing path. Returning false there would be
+ * wrong — a cycle can reach a custom type through its back edge — and
+ * recursing again would overflow the stack. Preprocessing a message that
+ * turns out to have no custom types is merely slower, never incorrect.
  */
-function messageNeedsPreprocess(messageType: protoBuf.Type): boolean {
+function messageNeedsPreprocess(
+    messageType: protoBuf.Type,
+    cache: Map<string, boolean>,
+    visiting: Set<string> = new Set(),
+): boolean {
     const fullName = messageType.fullName;
 
-    if (needsPreprocessCache.has(fullName)) {
-        return needsPreprocessCache.get(fullName)!;
+    if (cache.has(fullName)) {
+        return cache.get(fullName)!;
     }
+    if (visiting.has(fullName)) {
+        return true; // cycle — assume it needs preprocessing
+    }
+    visiting.add(fullName);
 
     let needsIt = false;
 
@@ -44,15 +75,17 @@ function messageNeedsPreprocess(messageType: protoBuf.Type): boolean {
         }
 
         // Check nested message types recursively
+        ensureResolved(field);
         if (field.resolvedType instanceof protoBuf.Type) {
-            if (messageNeedsPreprocess(field.resolvedType)) {
+            if (messageNeedsPreprocess(field.resolvedType, cache, visiting)) {
                 needsIt = true;
                 break;
             }
         }
     }
 
-    needsPreprocessCache.set(fullName, needsIt);
+    visiting.delete(fullName);
+    cache.set(fullName, needsIt);
     return needsIt;
 }
 
@@ -72,6 +105,7 @@ function preprocessForEncode(obj: any, messageType: protoBuf.Type, registeredTyp
     const result: any = {};
     for (const key of Object.keys(obj)) {
         const field = messageType.fields[key];
+        if (field) { ensureResolved(field); }
         if (field && isCustomType(field.type)) {
             // Convert using custom type's encode function
             const customType = getCustomType(field.type);
@@ -191,30 +225,42 @@ function findFiles(startPath: string, filter: string, parentFiltered?: any[]): s
         const fullName = path.join(startPath, filename);
         const stat = fs.lstatSync(fullName);
 
-        if (stat.isDirectory()) { childDirs.push(fullName); } else if (filename.indexOf(filter) !== -1) { filtered.push(fullName); }
+        // endsWith, not indexOf: indexOf('.proto') also matched files like
+        // notes.protocol.txt and schema.proto.bak, feeding them to the parser.
+        if (stat.isDirectory()) { childDirs.push(fullName); } else if (filename.endsWith(filter)) { filtered.push(fullName); }
     });
 
     childDirs.forEach((fullName) => {
-        console.warn(fullName);
+        Logger.debug(`scanning ${fullName} for ${filter} files`);
         findFiles(fullName, filter, filtered);
     });
 
     return filtered;
 }
 
+/**
+ * Copy protobufjs's writer output into a Buffer of its own.
+ *
+ * `finish()` hands back a view into protobufjs's shared allocation pool. The
+ * previous implementation returned another view over that same pool, so every
+ * message in flight pinned the whole pooled ArrayBuffer (8 KB by default) for
+ * as long as it was referenced. Copying costs one small memcpy and lets the
+ * pool be reclaimed.
+ */
 function uintArrayToBuffer(arr: Uint8Array): Buffer {
-    const buf = Buffer.from(arr.buffer);
-    if (arr.byteLength !== arr.buffer.byteLength) {
-        return buf.slice(arr.byteOffset, arr.byteOffset + arr.byteLength);
-    } else {
-        return buf;
-    }
+    return Buffer.from(arr.subarray(0, arr.byteLength));
 }
 
 export default class MessageFactory {
     public root: protoBuf.Root;
     private isInitialized: boolean = false;
     private registeredTypes: Map<string, typeof Message> = new Map();
+    /**
+     * Per-instance. Was module-global keyed by fullName, which meant two
+     * factories holding different roots with same-named types shared (and
+     * corrupted) each other's decisions.
+     */
+    private needsPreprocessCache: Map<string, boolean> = new Map();
 
     constructor() {
     }
@@ -243,7 +289,10 @@ export default class MessageFactory {
             // protobufjs uses .resolve() lazily; call it to ensure responseStream is populated
             method.resolve();
             return method.responseStream === true;
-        } catch {
+        } catch (error) {
+            // Treated as unary, but say so — a typo'd or unregistered method
+            // silently degrading to unary is very hard to diagnose otherwise.
+            Logger.debug(`isStreamingMethod(${fullName}): treating as unary (${(error as any)?.message ?? error})`);
             return false;
         }
     }
@@ -290,15 +339,13 @@ export default class MessageFactory {
             const newFiles = findFiles(rootPath, '.proto');
             newFiles.forEach(newFile => fileNames.push(newFile));
         });
-        if (fileNames.length) {
-            Logger.info(`loading proto files:\n ${JSON.stringify(fileNames)}`);
-            const root  = protoBuf.loadSync(fileNames);
-            this.root = root;
-        } else {
-            this.root = new protoBuf.Root({ keepCase: true });
-        }
 
-        // Register built-in custom types
+        // The root and its custom types must exist BEFORE any .proto is loaded.
+        // loadSync() resolves eagerly, so loading first meant a schema using
+        // `bigint` failed with "no such type: 'bigint'" — the custom types were
+        // added a few lines too late.
+        this.root = new protoBuf.Root({ keepCase: true });
+
         this.root.add((BigIntMessage as any).$type);
         this.registeredTypes.set('bigint', BigIntMessage);
 
@@ -312,11 +359,39 @@ export default class MessageFactory {
             }
         }
 
+        if (fileNames.length) {
+            Logger.info(`loading ${fileNames.length} proto file(s)`);
+            this.root.loadSync(fileNames, { keepCase: true });
+        }
+
         this.isInitialized = true;
         Logger.debug('message factory initialized');
     }
 
+    /** True if the given fully-qualified service is already in the root. */
+    public hasService(fullName: string): boolean {
+        if (!this.root) return false;
+        try {
+            return !!this.root.lookupService(fullName);
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Add a schema to the root.
+     *
+     * Idempotent by service name: re-parsing the same schema is a no-op rather
+     * than a protobufjs duplicate-name error. Services register their own
+     * schema during init() now that ServiceCluster is deprecated, and the same
+     * schema legitimately arrives twice when a proto directory was also passed
+     * to Context.init().
+     */
     public parse(proto: string, moduleName?: string): void {
+        if (moduleName && this.hasService(moduleName)) {
+            Logger.debug(`schema for ${moduleName} already registered, skipping`);
+            return;
+        }
         if (moduleName) {
             (<any>protoBuf.parse).filename = moduleName;
         }
@@ -331,8 +406,9 @@ export default class MessageFactory {
         try {
             return Message.toObject(Message.decode(data), { arrays: true, enums: String });
         } catch (error) {
-            Logger.error(Message.verify(data));
-            Logger.error(`error decoding message ${messageType} with data ${JSON.stringify(data)}`);
+            // Deliberately no payload in the log line — message bodies routinely
+            // carry credentials and personal data. Type name and byte length only.
+            Logger.error(`error decoding message ${messageType} (${data?.length ?? 0} bytes)`);
             throw error;
         }
     }
@@ -345,7 +421,7 @@ export default class MessageFactory {
         const Message = this.root.lookupType(messageType);
         try {
             // OPTIMIZATION: Skip preprocessing if message has no custom types
-            const processed = messageNeedsPreprocess(Message)
+            const processed = messageNeedsPreprocess(Message, this.needsPreprocessCache)
                 ? preprocessForEncode(obj, Message, this.registeredTypes)
                 : obj;
             const request = RequestContainer.create({
@@ -355,8 +431,7 @@ export default class MessageFactory {
             });
             return uintArrayToBuffer(RequestContainer.encode(request).finish());
         } catch (error) {
-            Logger.error(Message.verify(obj));
-            Logger.error(`error building request ${messageType} with data ${JSON.stringify(obj)}`);
+            Logger.error(`error building request ${messageType}: ${(error as any)?.message ?? error}`);
             throw error;
         }
     }
@@ -365,11 +440,9 @@ export default class MessageFactory {
         const request = RequestContainer.decode(data);
         const TMethod = this.getMethodType(request.method);
         const result = request.toJSON();
-        const messageType = TMethod.requestType;
-        result.data = this.decodeMessage(messageType, request.data);
         return {
             method: result.method,
-            data: this.decodeMessage(messageType, request.data),
+            data: this.decodeMessage(TMethod.requestType, request.data),
             actor: result.actor
         };
     }
@@ -392,7 +465,7 @@ export default class MessageFactory {
             const Message = this.root.lookupType(messageType);
             try {
                 // OPTIMIZATION: Skip preprocessing if message has no custom types
-                const processed = messageNeedsPreprocess(Message)
+                const processed = messageNeedsPreprocess(Message, this.needsPreprocessCache)
                     ? preprocessForEncode(obj, Message, this.registeredTypes)
                     : obj;
                 response = ResponseContainer.create({
@@ -402,8 +475,7 @@ export default class MessageFactory {
                     }),
                 });
             } catch (error) {
-                Logger.error(Message.verify(obj));
-                Logger.error(`error building response message ${messageType} with data ${JSON.stringify(obj)}`);
+                Logger.error(`error building response ${messageType}: ${(error as any)?.message ?? error}`);
                 throw error;
             }
         }
@@ -428,7 +500,7 @@ export default class MessageFactory {
 
         try {
             // OPTIMIZATION: Skip preprocessing if message has no custom types
-            const processed = messageNeedsPreprocess(Event)
+            const processed = messageNeedsPreprocess(Event, this.needsPreprocessCache)
                 ? preprocessForEncode(obj, Event, this.registeredTypes)
                 : obj;
             return uintArrayToBuffer(EventContainer.encode(EventContainer.create({
@@ -437,8 +509,7 @@ export default class MessageFactory {
                 data: Event.encode(Event.create(processed)).finish(),
             })).finish());
         } catch (err) {
-            Logger.error(Event.verify(obj));
-            Logger.error(`failed building event message ${type}`);
+            Logger.error(`failed building event message ${type}: ${(err as any)?.message ?? err}`);
             throw err;
         }
     }

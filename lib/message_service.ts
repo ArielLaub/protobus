@@ -40,6 +40,19 @@ export const DEFAULT_RETRY_OPTIONS: Required<Omit<RetryOptions, 'messageTtlMs'>>
 export interface IMessageServiceOptions {
     maxConcurrent?: number;
     retry?: RetryOptions;
+    /**
+     * Ack after the handler completes (default) rather than on delivery.
+     *
+     * This used to be derived from `maxConcurrent`, so a service constructed
+     * without options acked on delivery — which silently disabled the entire
+     * retry / DLQ / error-reply path in the connection layer, dropped the
+     * message, and left the caller waiting for a reply that never came. It is
+     * now an explicit option defaulting to true. Set it to false only if you
+     * genuinely want at-most-once delivery with no error reporting.
+     */
+    lateAck?: boolean;
+    /** Per-message processing timeout. Defaults to Config.messageProcessingTimeout. */
+    processingTimeoutMs?: number;
 }
 
 export default abstract class MessageService implements IMessageService {
@@ -57,9 +70,10 @@ export default abstract class MessageService implements IMessageService {
         };
         this.listener = new MessageListener(
             context.connection,
-            !!options.maxConcurrent,
+            options.lateAck ?? true,
             options.maxConcurrent,
-            this.retryOptions
+            this.retryOptions,
+            options.processingTimeoutMs,
         );
         this.eventListener = new EventListener(context.connection, context.factory);
     }
@@ -84,8 +98,25 @@ export default abstract class MessageService implements IMessageService {
         return this.eventListener.subscribe(type, handler, topic);
     }
 
+    /**
+     * Make sure this service's schema is in the factory's root.
+     *
+     * ServiceCluster used to be the only caller of factory.parse(), so a
+     * service started on its own relied on the schema arriving via
+     * Context.init(protoLocations). Registering here makes a standalone service
+     * self-sufficient; it is skipped when the schema is already present, so
+     * passing a proto directory as well still works.
+     */
+    private registerSchema(): void {
+        if (this.context.factory.hasService(this.ServiceName)) {
+            return;
+        }
+        this.context.factory.parse(this.Proto, this.ServiceName);
+    }
+
     public async init(): Promise<void> {
         try {
+            this.registerSchema();
             await this.listener.init(this._onMessage.bind(this), this.ServiceName);
             await this.eventListener.init(undefined, `${this.ServiceName}.Events`);
             await this.listener.subscribe(`REQUEST.${this.ServiceName}.*`);
@@ -98,10 +129,39 @@ export default abstract class MessageService implements IMessageService {
     }
 
     // core handler for incoming RPC requests made to REQUEST.<service name>.*
-    private async _onMessage(data: any, id: string, _headers?: Record<string, any>) {
+    private async _onMessage(
+        data: any,
+        id: string,
+        _headers?: Record<string, any>,
+        context?: { routingKey?: string } | string,
+    ) {
         const request = this.context.factory.decodeRequest(data);
         const method = request.method.split('.')[2]; // <package>.<service>.<method>
         Logger.debug(`received request ${request.method} (${id})`);
+
+        // The method to run comes from the message body, so it must be checked
+        // against what the broker actually routed and against this service's
+        // own name. Without this, a client that can publish to the bus picks the
+        // method regardless of the routing key — which makes RabbitMQ topic
+        // permissions unenforceable and lets one service's request schema be
+        // paired with another service's handler.
+        const routingKey = typeof context === 'string' ? context : context?.routingKey;
+        const rejectDispatch = (reason: string) => {
+            const error = new InvalidMethodError(reason);
+            Logger.error(reason);
+            return this.context.factory.buildResponse(request.method, error);
+        };
+
+        if (!request.method.startsWith(`${this.ServiceName}.`)) {
+            return rejectDispatch(
+                `request method ${request.method} does not belong to service ${this.ServiceName}`,
+            );
+        }
+        if (routingKey !== undefined && routingKey !== `REQUEST.${request.method}`) {
+            return rejectDispatch(
+                `request method ${request.method} contradicts routing key ${routingKey}`,
+            );
+        }
 
         const handler = (<any>this)[method];
         if (!handler || typeof handler !== 'function') {
@@ -139,7 +199,8 @@ export default abstract class MessageService implements IMessageService {
         }
         try {
             const result = await p;
-            Logger.debug(`sending result ${request.method} (${JSON.stringify(result)})`);
+            // No payload in the log line — responses carry secrets and PII.
+            Logger.debug(`sending result ${request.method} (${id})`);
             return this.context.factory.buildResponse(request.method, result);
         } catch (error) {
             return this.handleUnaryError(request.method, error);

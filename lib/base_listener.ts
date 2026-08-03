@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 
 import { IConnection, Channel, ConsumeOptions, ConsumeRetryOptions, MessageHandler } from './connection';
+import Config from './config';
 import { Logger } from './logger';
 
 export class ConnectionError extends Error {}
@@ -24,6 +25,7 @@ export abstract class BaseListener extends EventEmitter {
     protected lateAck: boolean;
     protected maxConcurrent: number;
     protected messageTtlMs: number | undefined;
+    protected processingTimeoutMs: number | undefined;
     protected defaultHandler: MessageHandler;
     protected bindings: string[] = []; // Track bound routing keys for reconnection
     private _isInitialized: boolean = false;
@@ -119,7 +121,7 @@ export abstract class BaseListener extends EventEmitter {
         this.channel = await this.connection.openChannel();
 
         if (this.lateAck) {
-            await this.channel.prefetch(this.maxConcurrent, false);
+            await this.channel.prefetch(this.effectivePrefetch(), false);
         }
 
         await this.connection.declareExchange(this.channel, this.exchangeName, this.exchangeType, {
@@ -164,7 +166,10 @@ export abstract class BaseListener extends EventEmitter {
             arguments: {}
         };
         const retryOptions = this.getRetryOptions();
-        await this.connection.consume(this.channel, this.queueName, this.handler, options, this.lateAck, retryOptions);
+        await this.connection.consume(
+            this.channel, this.queueName, this.handler, options,
+            this.lateAck, retryOptions, this.processingTimeoutMs,
+        );
         Logger.debug(`${this.constructor.name}: started consuming from ${this.queueName}`);
     }
 
@@ -186,7 +191,7 @@ export abstract class BaseListener extends EventEmitter {
 
         this.channel = await this.connection.openChannel();
         if (this.lateAck) { // support late ack worker services.
-            await this.channel.prefetch(this.maxConcurrent, false);
+            await this.channel.prefetch(this.effectivePrefetch(), false);
         }
         await this.connection.declareExchange(this.channel, this.exchangeName, this.exchangeType, {
             autoDelete: false,
@@ -218,17 +223,11 @@ export abstract class BaseListener extends EventEmitter {
         if (this._wasStarted && this.consumerTag) throw new AlreadyStartedError();
         if (!this.connection.isConnected) throw new NotConnectedError();
 
-        try {
-            await this._startConsuming();
-            this._wasStarted = true;
-            this.emit('started', {});
-        } catch (error) {
-            if (error instanceof AlreadyStartedError) {
-                Logger.warn('service already running. ignoring call to start.');
-                return;
-            }
-            throw error;
-        }
+        // No try//catch for AlreadyStartedError here: it can only be thrown by
+        // the guard above, which runs before this point.
+        await this._startConsuming();
+        this._wasStarted = true;
+        this.emit('started', {});
     }
 
     async close() {
@@ -256,6 +255,23 @@ export abstract class BaseListener extends EventEmitter {
         this._isInitialized = false;
         this._wasStarted = false;
         this.bindings = [];
+    }
+
+    /**
+     * Prefetch to apply for late-ack consumers.
+     *
+     * amqplib maps `undefined` (and 0) to prefetchCount 0, which RabbitMQ reads
+     * as *unlimited* — with late ack that lets the broker push an entire queue
+     * backlog into process memory before anything is acked. Subclasses that
+     * enable lateAck without setting maxConcurrent (EventListener) used to hit
+     * exactly that, so fall back to a bounded default instead.
+     */
+    protected effectivePrefetch(): number {
+        const configured = this.maxConcurrent;
+        if (typeof configured === 'number' && Number.isInteger(configured) && configured > 0) {
+            return configured;
+        }
+        return Config.defaultPrefetch;
     }
 
     /**

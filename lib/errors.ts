@@ -47,6 +47,23 @@ export function isHandledError(error: unknown): error is HandledError {
 }
 
 /**
+ * Raised when a unary RPC call gets no reply within its timeout.
+ *
+ * Before this existed, an unanswered request left the caller's promise pending
+ * forever — and its entry in the dispatcher's callback map leaked. That happens
+ * whenever nothing is bound to the routing key, the exchange drops the message,
+ * or the handler dies without replying.
+ */
+export class RpcTimeoutError extends Error {
+    public readonly code = 'RPC_TIMEOUT';
+
+    constructor(message: string) {
+        super(message);
+        this.name = 'RpcTimeoutError';
+    }
+}
+
+/**
  * Base class for streaming RPC errors. See docs/advanced/streaming.md.
  */
 export class StreamingError extends Error {

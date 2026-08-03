@@ -70,5 +70,5 @@
     "watch": "tsc -w"
   },
   "types": "dist/index.d.ts",
-  "version": "1.4.2"
+  "version": "1.5.0"
 }

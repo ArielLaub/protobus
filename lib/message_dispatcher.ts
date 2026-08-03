@@ -4,7 +4,7 @@ import { IConnection, Channel, PublishOptions } from './connection';
 import Config from './config';
 import { Logger } from './logger';
 import CallbackListener from './callback_listener';
-import { StreamTimeoutError } from './errors';
+import { StreamTimeoutError, RpcTimeoutError } from './errors';
 
 export class NotConnectedError extends Error {}
 export class DisconnectedError extends Error {
@@ -16,6 +16,7 @@ export class DisconnectedError extends Error {
 interface CallbackEntry {
     resolve: (result: any) => void;
     reject: (error: Error) => void;
+    timer?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -91,6 +92,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
         // Reject all pending RPC callbacks
         const error = new DisconnectedError();
         for (const [_id, callback] of this.callbacks) {
+            if (callback.timer) { clearTimeout(callback.timer); }
             callback.reject(error);
         }
         this.callbacks.clear();
@@ -157,7 +159,8 @@ export default class MessageDispatcher implements IMessageDispatcher {
         if (this.callbacks.has(id)) {
             const callback = this.callbacks.get(id);
             this.callbacks.delete(id);
-            await callback.resolve(content);
+            if (callback.timer) { clearTimeout(callback.timer); }
+            callback.resolve(content);
         }
     }
 
@@ -169,7 +172,12 @@ export default class MessageDispatcher implements IMessageDispatcher {
         this._isInitialized = true;
     }
 
-    async publish(content: any, routingKey: string, rpc: boolean): Promise<Buffer> {
+    /**
+     * @param timeoutMs - How long to wait for a reply before rejecting with
+     *   RpcTimeoutError. Defaults to Config.rpcCallTimeoutMs. Ignored when
+     *   `rpc` is false, since there is nothing to wait for.
+     */
+    async publish(content: any, routingKey: string, rpc: boolean, timeoutMs?: number): Promise<Buffer> {
         if (!this.connection.isConnected) throw new NotConnectedError();
 
         if (rpc !== false) {
@@ -189,8 +197,22 @@ export default class MessageDispatcher implements IMessageDispatcher {
 
         if (!rpc) return; // we are not expecting any result so resolve
 
+        const limit = timeoutMs ?? Config.rpcCallTimeoutMs;
+
         return new Promise<Buffer>((resolve: any, reject: any) => {
-            this.callbacks.set(id, { resolve, reject } );
+            // Bound the wait. Without this, a request nothing is listening for
+            // leaves this promise pending forever and its map entry leaks.
+            const timer = setTimeout(() => {
+                if (this.callbacks.get(id)?.timer === timer) {
+                    this.callbacks.delete(id);
+                    reject(new RpcTimeoutError(
+                        `no reply for ${routingKey} (correlationId ${id}) within ${limit}ms`,
+                    ));
+                }
+            }, limit);
+            if (timer.unref) { timer.unref(); }
+
+            this.callbacks.set(id, { resolve, reject, timer });
         });
     }
 

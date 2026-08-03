@@ -10,7 +10,7 @@ export interface ContextOptions {
 
 export interface IContext {
     init(amqpConnectionString: string, protoLocations: string[], options?: ContextOptions): Promise<void>;
-    publishMessage(content: any, routingKey: string, rpc?: boolean): Promise<Buffer>;
+    publishMessage(content: any, routingKey: string, rpc?: boolean, timeoutMs?: number): Promise<Buffer>;
     /**
      * Publish a request expecting a streaming reply. See
      * `docs/advanced/streaming.md` and `ServiceProxy` for the high-level API.
@@ -68,8 +68,8 @@ export default class Context implements IContext {
         return this._connection.isReconnecting;
     }
 
-    async publishMessage(content: any, routingKey: string, rpc?: boolean): Promise<Buffer> {
-        return this.messageDispatcher.publish(content, routingKey, rpc !== false);
+    async publishMessage(content: any, routingKey: string, rpc?: boolean, timeoutMs?: number): Promise<Buffer> {
+        return this.messageDispatcher.publish(content, routingKey, rpc !== false, timeoutMs);
     }
 
     publishStreamingMessage(content: Buffer, routingKey: string, idleTimeoutMs?: number): AsyncIterable<Buffer> {

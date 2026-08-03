@@ -26,10 +26,24 @@ export type AssertExchangeOptions = amqplib.Options.AssertExchange;
  */
 export type MessageHandlerResult = Buffer | void | AsyncIterable<Buffer>;
 
+/**
+ * Extra context handed to a message handler.
+ *
+ * `signal` aborts when the processing timeout elapses. A handler doing long or
+ * cancellable work should watch it — JavaScript cannot preempt a running
+ * function, so the timeout can only stop the framework from acting on a late
+ * result. It cannot stop the handler itself unless the handler cooperates.
+ */
+export interface MessageHandlerContext {
+    signal: AbortSignal;
+    routingKey: string;
+}
+
 export type MessageHandler = (
     content: Buffer,
     correlationId: string,
     headers?: Record<string, any>,
+    context?: MessageHandlerContext,
 ) => Promise<MessageHandlerResult>;
 
 export interface ConsumeRetryOptions {
@@ -77,7 +91,7 @@ export interface IConnection extends EventEmitter {
     deleteQueue(channel: Channel, queueName: string): Promise<any>;
     ack(channel: Channel, message: amqplib.Message, upTo?: boolean): Promise<any>;
     reject(channel: Channel, message: amqplib.Message, requeue?: boolean): Promise<any>;
-    consume(channel: Channel, queueName: string, messageHandler: MessageHandler, options: ConsumeOptions, lateAck: boolean, retryOptions?: ConsumeRetryOptions): Promise<any>;
+    consume(channel: Channel, queueName: string, messageHandler: MessageHandler, options: ConsumeOptions, lateAck: boolean, retryOptions?: ConsumeRetryOptions, processingTimeoutMs?: number): Promise<any>;
     cancel(channel: Channel, consumerTag: string): Promise<any>;
     purgeQueue(channel: Channel, queueName: string): Promise<any>;
     publish(channel: Channel, exchangeName: string, routingKey: string, content: Buffer, properties: PublishOptions): Promise<any>;
@@ -92,6 +106,14 @@ export default class Connection extends EventEmitter implements IConnection {
     private reconnectAttempts: number = 0;
     private reconnectTimer: ReturnType<typeof setTimeout> | undefined = undefined;
     private manualDisconnect: boolean = false;
+
+    constructor() {
+        super();
+        // Every listener and dispatcher subscribes to 'reconnected'/'disconnected'
+        // on this one emitter, so a handful of services legitimately exceeds
+        // Node's default cap of 10 and printed a MaxListenersExceededWarning.
+        this.setMaxListeners(0);
+    }
 
     private _isConnected: boolean = false;
     public get isConnected() {
@@ -246,8 +268,23 @@ export default class Connection extends EventEmitter implements IConnection {
         return channel.reject(message, requeue);
     }
 
-    async consume(channel: Channel, queueName: string, messageHandler: MessageHandler, options: ConsumeOptions, lateAck: boolean, retryOptions?: ConsumeRetryOptions): Promise<any> {
-        const onMessage = async (msg: amqplib.Message) => {
+    async consume(
+        channel: Channel,
+        queueName: string,
+        messageHandler: MessageHandler,
+        options: ConsumeOptions,
+        lateAck: boolean,
+        retryOptions?: ConsumeRetryOptions,
+        processingTimeoutMs?: number,
+    ): Promise<any> {
+        const onMessage = async (msg: amqplib.ConsumeMessage | null) => {
+            // amqplib delivers null when the broker cancels the consumer
+            // (queue deleted, for example). Dereferencing it crashed the process.
+            if (!msg) {
+                Logger.warn(`consumer for ${queueName} was cancelled by the broker`);
+                return;
+            }
+
             const replyTo = msg.properties.replyTo;
             const correlationId = msg.properties.correlationId;
             const headers = msg.properties.headers || {};
@@ -265,19 +302,39 @@ export default class Connection extends EventEmitter implements IConnection {
             // constructor, which silently swallowed handler errors and kept
             // the retry/DLQ path below as dead code. A plain try/catch makes
             // errors actually propagate to the catch arm.
+            //
+            // Real timeout semantics. The previous version only set a flag from
+            // the timer, which meant (a) a hung handler hung forever, because
+            // nothing interrupted the await, and (b) a handler that merely ran
+            // long had its *successful* result thrown away after the fact.
+            // Racing the handler against the timer fixes both; the AbortSignal
+            // lets a cooperative handler actually stop.
+            const limit = processingTimeoutMs ?? Config.messageProcessingTimeout;
+            const controller = new AbortController();
             let timeout: ReturnType<typeof setTimeout> | undefined;
-            let timedOut = false;
+
             try {
-                timeout = setTimeout(() => {
-                    timedOut = true;
-                }, Config.messageProcessingTimeout);
+                const expiry = new Promise<never>((_resolve, rejectTimeout) => {
+                    timeout = setTimeout(() => {
+                        controller.abort();
+                        rejectTimeout(new TimeoutError(
+                            `message ${correlationId} exceeded the ${limit}ms processing timeout`,
+                        ));
+                    }, limit);
+                    // unref: this timer must never be the reason the process
+                    // stays alive. The default limit is 10 minutes, so a
+                    // ref'd timer held a finished process open for that long.
+                    if (timeout.unref) { timeout.unref(); }
+                });
 
-                const result = await messageHandler(msg.content, correlationId, headers);
+                const result = await Promise.race([
+                    messageHandler(msg.content, correlationId, headers, {
+                        signal: controller.signal,
+                        routingKey: msg.fields.routingKey,
+                    }),
+                    expiry,
+                ]);
                 clearTimeout(timeout);
-
-                if (timedOut) {
-                    throw new TimeoutError(`message ${correlationId} timed out`);
-                }
 
                 if (!options.noAck && lateAck) { // late ackers ack when processing is done
                     await this.ack(channel, msg);
@@ -407,6 +464,12 @@ export default class Connection extends EventEmitter implements IConnection {
                         Logger.warn(`rejecting message ${correlationId}`);
                         await this.reject(channel, msg, false);
                     }
+                } else {
+                    // Early-ack (or noAck) consumer: the message was acked before
+                    // processing, so retry and DLQ are impossible. The caller must
+                    // still be told it failed — otherwise it waits out its whole
+                    // RPC timeout for a reply that is never coming.
+                    await publishErrorReply();
                 }
             }
         };
@@ -421,9 +484,20 @@ export default class Connection extends EventEmitter implements IConnection {
         return channel.purgeQueue(queueName);
     }
 
+    /**
+     * Publish, honouring the channel's write buffer.
+     *
+     * amqplib returns false when its internal buffer is full and expects the
+     * caller to wait for 'drain'. Discarding that return value let a fast
+     * producer — a streaming handler yielding chunks in a tight loop, say —
+     * grow the buffer without bound. Awaiting drain applies real backpressure.
+     */
     async publish(channel: Channel, exchangeName: string,
       routingKey: string, content: Buffer, properties: PublishOptions): Promise<any> {
-        channel.publish(exchangeName, routingKey, content, properties);
+        const accepted = channel.publish(exchangeName, routingKey, content, properties);
+        if (accepted === false) {
+            await new Promise<void>((resolve) => channel.once('drain', resolve));
+        }
     }
 
     /**

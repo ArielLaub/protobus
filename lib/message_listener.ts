@@ -4,6 +4,17 @@ import { IConnection, ConsumeRetryOptions } from './connection';
 import { RetryOptions, DEFAULT_RETRY_OPTIONS } from './message_service';
 import { isHandledError } from './errors';
 
+/**
+ * Thrown when the retry queue exists with arguments that differ from what this
+ * service is configured for — in practice, a changed `retryDelayMs`.
+ */
+export class RetryQueueMismatchError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'RetryQueueMismatchError';
+    }
+}
+
 export interface RetryConfig {
     maxRetries: number;
     retryDelayMs: number;
@@ -27,7 +38,13 @@ export default class MessageListener extends BaseListener {
      */
     protected retryExchangeName: string;
 
-    constructor(connection: IConnection, lateAck?: boolean, maxConcurrent?: number, retryOptions?: RetryOptions) {
+    constructor(
+        connection: IConnection,
+        lateAck?: boolean,
+        maxConcurrent?: number,
+        retryOptions?: RetryOptions,
+        processingTimeoutMs?: number,
+    ) {
         super(connection);
 
         this.exchangeName = Config.busExchangeName;
@@ -35,6 +52,7 @@ export default class MessageListener extends BaseListener {
 
         this.lateAck = !!lateAck;
         this.maxConcurrent = maxConcurrent || 1;
+        this.processingTimeoutMs = processingTimeoutMs;
 
         this.retryConfig = {
             maxRetries: retryOptions?.maxRetries ?? DEFAULT_RETRY_OPTIONS.maxRetries,
@@ -74,18 +92,34 @@ export default class MessageListener extends BaseListener {
         // Retry queue with TTL — messages park here briefly before being
         // redelivered to the main exchange via DLX.
         this.retryQueueName = `${serviceName}.Retry`;
-        await this.connection.declareQueue(this.channel, this.retryQueueName, {
-            durable: true,
-            autoDelete: false,
-            exclusive: false,
-            arguments: {
-                'x-message-ttl': this.retryConfig.retryDelayMs,
-                'x-dead-letter-exchange': this.exchangeName,
-                // No x-dead-letter-routing-key: we want the message's *own*
-                // routing key preserved on DLX, which we ensure by publishing
-                // to the retry exchange below with that key.
+        try {
+            await this.connection.declareQueue(this.channel, this.retryQueueName, {
+                durable: true,
+                autoDelete: false,
+                exclusive: false,
+                arguments: {
+                    'x-message-ttl': this.retryConfig.retryDelayMs,
+                    'x-dead-letter-exchange': this.exchangeName,
+                    // No x-dead-letter-routing-key: we want the message's *own*
+                    // routing key preserved on DLX, which we ensure by publishing
+                    // to the retry exchange below with that key.
+                }
+            });
+        } catch (error) {
+            // retryDelayMs becomes the queue's x-message-ttl, and RabbitMQ fixes
+            // queue arguments at declare time. Changing retryDelayMs for a
+            // service that has already run therefore fails startup with an
+            // opaque PRECONDITION_FAILED. Say what actually has to happen.
+            if (/PRECONDITION[_-]FAILED/i.test((error as any)?.message ?? '')) {
+                throw new RetryQueueMismatchError(
+                    `retry queue '${this.retryQueueName}' already exists with different arguments ` +
+                    `(most likely a different retryDelayMs — now ${this.retryConfig.retryDelayMs}ms). ` +
+                    `RabbitMQ cannot change a queue's x-message-ttl in place: drain and delete the ` +
+                    `queue, or keep the original retryDelayMs. Original error: ${(error as any).message}`,
+                );
             }
-        });
+            throw error;
+        }
 
         // Dedicated topic exchange for retried messages. We bind the retry
         // queue here with `#` so any routing key lands in the queue, AND
