@@ -19,7 +19,6 @@ A TypeScript microservices framework using RabbitMQ and Protocol Buffers.
 - [MessageService](./api/message-service.md) - Base service class
 - [RunnableService](./api/runnable-service.md) - Service with lifecycle management
 - [ServiceProxy](./api/service-proxy.md) - Client proxy
-- [ServiceCluster](./api/service-cluster.md) - Multi-service orchestration
 - [Events](./api/events.md) - Pub/sub system
 
 ### Advanced Topics

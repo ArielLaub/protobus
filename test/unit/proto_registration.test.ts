@@ -13,9 +13,8 @@ import MessageService from '../../lib/message_service';
  *     `bigint` blew up at startup with "no such type: 'bigint'" — the library's
  *     headline feature was unusable through its own documented entry point.
  *
- *  2. ServiceCluster was the only caller of factory.parse(service.Proto, ...).
- *     With it retired, a service has to be able to register its own schema, and
- *     doing so twice must not throw.
+ *  2. A service has to be able to register its own schema, and doing so twice
+ *     must not throw.
  */
 describe('custom types in on-disk protos', () => {
     let dir: string;
@@ -84,9 +83,8 @@ describe('registering a service schema more than once', () => {
 });
 
 /**
- * ServiceCluster was the only thing that ever registered a service's own
- * schema. With it deprecated, MessageService.init() has to do it, so a service
- * works standalone — which is how it has always actually been deployed.
+ * MessageService.init() registers its own schema so a service works standalone —
+ * which is how it has always actually been deployed.
  */
 describe('MessageService registers its own schema', () => {
     let dir: string;

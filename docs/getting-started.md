@@ -219,32 +219,32 @@ my-project/
 └── tsconfig.json
 ```
 
-## Using ServiceCluster
+## Running One Service Per Process
 
-For multiple services in one process:
+Run each service as its own process. Node is single-threaded, so co-locating
+services in one process buys no parallelism — it only couples their failure
+domains and their deploys. Scale by running more processes, and set
+`maxConcurrent` to control how many messages one process handles at a time:
 
 ```typescript
-import { ServiceCluster } from 'protobus';
+import { RunnableService } from 'protobus';
 import { createContext } from './context';
 import { CalculatorService } from './services/calculator-service';
-import { LoggingService } from './services/logging-service';
 
 async function main() {
     const context = await createContext();
-
-    const cluster = new ServiceCluster(context);
-
-    // Add services with optional listener count
-    cluster.use(CalculatorService, 2);  // 2 concurrent listeners
-    cluster.use(LoggingService, 1);     // 1 listener
-
-    await cluster.init();
-
-    console.log('Service cluster running');
+    await RunnableService.start(context, CalculatorService, {
+        maxConcurrent: 2,  // in-flight messages per process
+    });
+    console.log('Service running');
 }
 
 main().catch(console.error);
 ```
+
+`RunnableService.start` also wires up SIGINT/SIGTERM handling and exits
+non-zero if startup fails, so an orchestrator can tell a crash-on-boot from a
+clean shutdown.
 
 ## Type-Safe Proxies
 

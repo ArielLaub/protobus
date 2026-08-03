@@ -6,10 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.5.0] — 2026-08-03
 
-Audit follow-up. Everything here is backward compatible at the API level: no
-export was removed, and every new parameter is optional. Three behaviours
-deliberately changed because the old behaviour was silently wrong — they are
-called out under **Changed behaviour** below.
+Audit follow-up: bug fixes, no new features. Every new parameter is optional and
+no existing signature changed incompatibly.
+
+Two caveats for anyone upgrading. `ServiceCluster` was **removed** (see
+**Removed** below) — released as a minor rather than a major because it had no
+known users. And three behaviours deliberately changed because the old
+behaviour was silently wrong; see **Changed behaviour**.
 
 ### Fixed — data corruption
 
@@ -90,14 +93,29 @@ called out under **Changed behaviour** below.
 - **Debug logging is off by default** (see above). Set `LOG_LEVEL=debug` to
   restore the old verbosity, minus the payloads.
 
-### Deprecated
+### Removed
 
-- **`ServiceCluster`.** Node is single-threaded, so co-locating services in one
-  process buys no parallelism and only couples their failure domains; it also
-  cannot pass `IMessageServiceOptions` through, leaving retry, DLQ and prefetch
-  tuning unreachable. `MessageService` now registers its own schema during
-  `init()`, so a service is self-sufficient. Still exported and working, warns
-  once on construction. Use `RunnableService.start(context, MyService)`.
+- **`ServiceCluster`**, along with its docs and tests. Node is single-threaded,
+  so co-locating services in one process bought no parallelism and only coupled
+  their failure domains and deploys; it also could not pass
+  `IMessageServiceOptions` through, leaving retry, DLQ and prefetch tuning
+  unreachable for any service started through it. `MessageService` now registers
+  its own schema during `init()`, so a service is self-sufficient:
+
+  ```typescript
+  // before
+  const cluster = new ServiceCluster(context);
+  cluster.use(MyService);
+  await cluster.init();
+
+  // after — one service per process
+  await RunnableService.start(context, MyService, { maxConcurrent: 2 });
+  ```
+
+### Added to the top-level export
+
+- `RpcTimeoutError`, `RetryQueueMismatchError`, and `LogLevel` / `setLogLevel` /
+  `getLogLevel`, all of which the fixes above introduce.
 
 ### Performance
 

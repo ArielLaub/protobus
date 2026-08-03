@@ -382,10 +382,9 @@ export default class MessageFactory {
      * Add a schema to the root.
      *
      * Idempotent by service name: re-parsing the same schema is a no-op rather
-     * than a protobufjs duplicate-name error. Services register their own
-     * schema during init() now that ServiceCluster is deprecated, and the same
-     * schema legitimately arrives twice when a proto directory was also passed
-     * to Context.init().
+     * than a protobufjs duplicate-name error. A MessageService registers its own
+     * schema during init(), and the same schema legitimately arrives twice when
+     * a proto directory was also passed to Context.init().
      */
     public parse(proto: string, moduleName?: string): void {
         if (moduleName && this.hasService(moduleName)) {

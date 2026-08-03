@@ -101,11 +101,10 @@ export default abstract class MessageService implements IMessageService {
     /**
      * Make sure this service's schema is in the factory's root.
      *
-     * ServiceCluster used to be the only caller of factory.parse(), so a
-     * service started on its own relied on the schema arriving via
-     * Context.init(protoLocations). Registering here makes a standalone service
-     * self-sufficient; it is skipped when the schema is already present, so
-     * passing a proto directory as well still works.
+     * Registering here makes a service self-sufficient rather than relying on
+     * the schema arriving via Context.init(protoLocations). Skipped when the
+     * schema is already present, so passing a proto directory as well still
+     * works.
      */
     private registerSchema(): void {
         if (this.context.factory.hasService(this.ServiceName)) {
