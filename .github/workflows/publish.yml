@@ -8,39 +8,77 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
+  # The full release gate — unit matrix, RabbitMQ integration, tarball contents,
+  # and the production dependency audit — run against the release commit before
+  # anything is published.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   publish:
-    name: Build and publish to npm
+    name: Publish to npm
+    needs: ci
     runs-on: ubuntu-latest
+    # Binds this job to the "npm" deployment environment: protection rules
+    # (required reviewers) gate the publish, and npm's trusted-publisher
+    # config may pin the OIDC `environment` claim to this exact name — if it
+    # does, removing this line makes the registry reject the publish.
     environment: npm
     permissions:
       id-token: write       # required for npm trusted publishing (OIDC)
       contents: read        # for actions/checkout
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          # npm trusted publishing requires Node >=22.14 and npm >=11.5.1.
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Verify toolchain supports trusted publishing
+        # Fail loudly here rather than getting an opaque auth error from the
+        # registry if the runner image ever ships an older npm.
+        run: |
+          node --version
+          npm --version
+          npx --yes semver -r ">=11.5.1" "$(npm --version)" >/dev/null \
+            || { echo "npm $(npm --version) is below the 11.5.1 required for trusted publishing"; exit 1; }
 
-      - name: Lint
-        run: npm run lint
+      # The exact build the CI jobs ran against, produced once by ci.yml's
+      # build job in this same workflow run. Publishing this instead of
+      # recompiling means the bytes on npm are the bytes the unit matrix,
+      # the tarball assertions and the integration suite tested.
+      #
+      # Dependencies are deliberately not installed: `npm publish` needs only
+      # package.json, dist/ and the docs listed in "files", so the job that
+      # holds the OIDC identity never executes third-party install scripts.
+      - name: Download dist from CI
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist
 
-      - name: Typecheck
-        run: npx tsc --noEmit -p tsconfig.json
-
-      - name: Build
-        run: npm run build
+      - name: Verify the artifact looks publishable
+        # A missing or truncated download would otherwise surface as a
+        # published package with no entry point.
+        run: |
+          test -f dist/index.js || { echo "dist/index.js missing from CI artifact"; exit 1; }
+          test -f dist/index.d.ts || { echo "dist/index.d.ts missing from CI artifact"; exit 1; }
+          npm pack --dry-run
 
       - name: Publish to npm
         # Trusted publishing: setup-node configured the registry, OIDC token
         # is picked up automatically. --provenance attaches a signed
         # supply-chain attestation linking this tarball to the source commit.
-        run: npm publish --provenance --access public
+        #
+        # --ignore-scripts is what preserves the tested artifact: the
+        # prepublishOnly script runs `npm run build`, whose first step deletes
+        # dist/, so without this npm would discard the download and recompile.
+        run: npm publish --provenance --access public --ignore-scripts
         env:
           NPM_CONFIG_PROVENANCE: "true"
