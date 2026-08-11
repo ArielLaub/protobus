@@ -223,7 +223,7 @@ See [CLI Documentation](docs/cli.md) for details.
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+ (enforced by the `engines` field; CI tests 20, 22 and 24)
 - RabbitMQ 3.8+
 
 ## Running Tests

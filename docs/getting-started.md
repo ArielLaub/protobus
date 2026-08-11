@@ -4,7 +4,7 @@ This guide walks you through creating your first Protobus microservice.
 
 ## Prerequisites
 
-- Node.js 14+ (recommended: 18 LTS or later)
+- Node.js 20+ (CI tests 20, 22 and 24)
 - RabbitMQ server running locally or remotely
 - TypeScript knowledge
 

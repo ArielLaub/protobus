@@ -151,20 +151,71 @@ try {
 }
 ```
 
-### Early termination
+### Cancellation
 
-Break out of the loop — the iterator's `return()` method runs, telling the framework to release the pending-stream slot:
+Cancelling stops the **producer**, not just the reader. Two ways to trigger it.
+
+**Break out of the loop.** The iterator's `return()` runs, which releases the client's slot and sends a cancellation notice to the server:
 
 ```typescript
 for await (const chunk of llm.completeStream(req)) {
-    if (userCancelled) {
-        break;   // releases the dispatcher slot immediately
-    }
     process(chunk);
+    if (seenEnough) break;   // the server stops generating too
 }
 ```
 
-In v1, this releases client-side resources but does **not** signal the server to stop generating. Server-side cancellation is on the roadmap (see [Limitations](#limitations)).
+**Pass an `AbortSignal`.** `break` only takes effect once the next chunk arrives to resume the loop, so it cannot help when the decision is made elsewhere — a Stop button in a different request handler, or a client that disconnects. A signal fires immediately, from anywhere:
+
+```typescript
+const stop = new AbortController();
+app.post('/chat/:id/stop', (req, res) => { stop.abort(); res.end(); });
+
+for await (const chunk of llm.completeStream(req, undefined, undefined, { signal: stop.signal })) {
+    send(chunk);
+}
+```
+
+It composes with signals you already have. Passing an HTTP request's own `signal` stops the stream when the user closes the tab, with no Stop button involved.
+
+On the server, watch `context.signal` — the fourth argument to your handler:
+
+```typescript
+public async *completeStream(request, actor?, correlationId?, context?) {
+    for await (const delta of openai.chat.completions.create({
+        ...params,
+        stream: true,
+        signal: context?.signal,     // the upstream request is torn down too
+    })) {
+        if (context?.signal?.aborted) return;
+        yield { text: delta.choices[0]?.delta?.content ?? '' };
+    }
+}
+```
+
+Cancellation is **cooperative**. JavaScript cannot preempt a running generator, so a handler that ignores its signal runs to completion — the framework stops publishing its output, so the caller is unaffected either way, but the work is still done. Checking the signal is what makes cancellation *save* anything.
+
+#### Delivery is best effort
+
+The cancellation notice is an ordinary message, published once and not retried. If it is lost, the producer never hears it and runs to completion — the same outcome as never having cancelled. There is no correctness risk; the cost is wasted work.
+
+If that work is expensive enough to matter, detect it and cancel again: chunks still arriving well after you cancelled mean the notice did not land.
+
+```typescript
+// Cancel, then re-cancel if the producer is evidently still going.
+stop.abort();
+const stillArriving = () => Date.now() - lastChunkAt < 500;
+setTimeout(() => { if (stillArriving()) stop2.abort(); }, 1000);
+```
+
+The framework deliberately does not do this for you: how long to wait, and whether to bother, depends on what the stream costs.
+
+#### How it travels
+
+Cancellation is published to a **fanout** exchange (`proto.bus.cancel`), and every service process binds its own exclusive, auto-deleting queue to it. Each replica sees every cancellation and acts only on correlation IDs it is actually running.
+
+Fanout rather than a routed queue because the caller has no way to know *which* replica picked up its request. A shared queue would deliver the notice to one replica at random — usually the wrong one.
+
+If the broker credentials cannot declare that exchange, the service logs a warning and runs without cancellation support rather than failing to start.
 
 ### Timeouts
 
@@ -266,7 +317,7 @@ The biggest practical difference: gRPC streams ride on HTTP/2's multiplexed conn
 ## Limitations
 
 - **Server-streaming only.** Client-streaming and bidirectional streaming aren't supported.
-- **No server-side cancellation in v1.** When a client breaks out of the iterator, the server keeps generating until its own generator exhausts. Wasted upstream work, but no correctness problem. Roadmap: a `<correlationId>.cancel` sentinel queue.
+- **Cancellation is cooperative and best effort.** A handler that never checks `context.signal` runs to completion, and a lost cancellation notice is not retried. See [Cancellation](#cancellation).
 - **No exactly-once semantics.** If RabbitMQ requeues a chunk during failover, the client may see duplicates. The framework provides no dedup. For idempotent chunks (LLM deltas, log lines) this is fine; for non-idempotent chunks, the caller is responsible.
 - **No chunk-level retry/DLQ.** Standard retry/DLQ applies to the entire RPC, not to individual chunks.
 - **Single reply queue per client.** All in-flight streams to a single proxy share one reply queue. Very-high-concurrency callers may want multiple proxy instances.
@@ -292,3 +343,4 @@ The wire format itself uses **only AMQP headers** — no `ResponseContainer` sch
 - [Message Flow](../message-flow.md) — the underlying unary RPC pipeline this builds on
 - [Error Handling](../advanced/error-handling.md) — `HandledError` and retry semantics, which apply identically to streaming
 - [Configuration](../configuration.md) — `STREAM_IDLE_TIMEOUT_MS` setting
+- `sample/tokenStream/` — a runnable token-stream demo with a Stop button, showing how many tokens the server is spared
