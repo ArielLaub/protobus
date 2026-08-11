@@ -16,7 +16,16 @@ import {
 export class MessageTypeRequiredError extends Error {}
 export class NotInitializedError extends Error {}
 
-(<any>protoBuf.parse).defaults.keepCase = true;
+/**
+ * Every parse this module performs passes `keepCase: true` explicitly — the
+ * Root constructor, `loadSync()` and `parse()` alike — so field names reach the
+ * wire exactly as the .proto declares them.
+ *
+ * It is passed per call rather than by assigning `protoBuf.parse.defaults`,
+ * because that object is protobufjs's module-level state: writing to it changes
+ * how every *other* consumer of protobufjs in the same process parses, which is
+ * not ours to decide.
+ */
 
 /**
  * Resolve a field if protobufjs hasn't done it yet.
@@ -24,8 +33,7 @@ export class NotInitializedError extends Error {}
  * protobufjs resolves lazily, so `field.resolvedType` is null until something
  * forces resolution. Anything that inspects the type tree *before* the first
  * encode must resolve explicitly — otherwise nested message fields look like
- * scalars and get skipped. That was the cause of nested bigint/timestamp
- * fields silently encoding as zero.
+ * scalars and get skipped, encoding nested bigint/timestamp fields as zero.
  */
 function ensureResolved(field: protoBuf.Field): void {
     if (!field.resolved) {
@@ -256,9 +264,13 @@ export default class MessageFactory {
     private isInitialized: boolean = false;
     private registeredTypes: Map<string, typeof Message> = new Map();
     /**
-     * Per-instance. Was module-global keyed by fullName, which meant two
-     * factories holding different roots with same-named types shared (and
-     * corrupted) each other's decisions.
+     * Schema texts already added to the current root, so re-registering the
+     * same .proto is a no-op regardless of the service name it arrives under.
+     */
+    private parsedSchemas: Set<string> = new Set();
+    /**
+     * Per-instance, not module-global: two factories holding different roots
+     * with same-named types must not share preprocessing decisions.
      */
     private needsPreprocessCache: Map<string, boolean> = new Map();
 
@@ -345,6 +357,9 @@ export default class MessageFactory {
         // `bigint` failed with "no such type: 'bigint'" — the custom types were
         // added a few lines too late.
         this.root = new protoBuf.Root({ keepCase: true });
+        // Tied to the root's lifetime: a fresh root has nothing registered, so
+        // the "already parsed" memo must start empty alongside it.
+        this.parsedSchemas.clear();
 
         this.root.add((BigIntMessage as any).$type);
         this.registeredTypes.set('bigint', BigIntMessage);
@@ -362,6 +377,20 @@ export default class MessageFactory {
         if (fileNames.length) {
             Logger.info(`loading ${fileNames.length} proto file(s)`);
             this.root.loadSync(fileNames, { keepCase: true });
+
+            // loadSync bypasses parse(), so record what came off disk here.
+            // A service whose Proto getter reads a file already loaded from a
+            // proto directory must recognise it as present rather than
+            // re-parsing it into a duplicate-name error.
+            for (const fileName of fileNames) {
+                try {
+                    this.parsedSchemas.add(fs.readFileSync(fileName).toString());
+                } catch (err: any) {
+                    // Non-fatal: the schema is loaded either way, we just lose
+                    // the ability to recognise a later re-registration of it.
+                    Logger.debug(`could not memoise schema text for ${fileName}: ${err?.message || err}`);
+                }
+            }
         }
 
         this.isInitialized = true;
@@ -381,20 +410,50 @@ export default class MessageFactory {
     /**
      * Add a schema to the root.
      *
-     * Idempotent by service name: re-parsing the same schema is a no-op rather
-     * than a protobufjs duplicate-name error. A MessageService registers its own
+     * Idempotent: re-parsing a schema already present is a no-op rather than a
+     * protobufjs duplicate-name error. A MessageService registers its own
      * schema during init(), and the same schema legitimately arrives twice when
      * a proto directory was also passed to Context.init().
+     *
+     * Two guards, because the service name alone is not enough: a service's
+     * runtime name need not be the name declared in its .proto, and several
+     * instances can share one schema under distinct names. Keying on the
+     * schema text as well makes the check independent of naming.
+     *
+     * Conflicting definitions are still an error: identical TEXT is a no-op,
+     * a different definition of the same type is not.
      */
     public parse(proto: string, moduleName?: string): void {
         if (moduleName && this.hasService(moduleName)) {
             Logger.debug(`schema for ${moduleName} already registered, skipping`);
             return;
         }
-        if (moduleName) {
-            (<any>protoBuf.parse).filename = moduleName;
+        if (this.parsedSchemas.has(proto)) {
+            Logger.debug(
+                `schema text already registered${moduleName ? ` (as ${moduleName})` : ''}, skipping`,
+            );
+            return;
         }
-        protoBuf.parse(proto, this.root, { keepCase: true });
+        // protobufjs reports the source of a syntax error as "(<filename>, line
+        // n)", and takes that filename from a property on the parse function
+        // itself — there is no per-call option for it. Naming the module is
+        // worth a lot when a schema fails to parse, so set it, and restore the
+        // previous value in a finally so nothing is left behind: protobufjs
+        // clears it on the way out of a *successful* parse but not when one
+        // throws, which is exactly when a stale name would go on to mislabel
+        // some unrelated caller's error. parse() is synchronous, so no other
+        // code can observe the property while it is borrowed.
+        const parser = <any>protoBuf.parse;
+        const previousFilename = parser.filename;
+        try {
+            if (moduleName) {
+                parser.filename = moduleName;
+            }
+            protoBuf.parse(proto, this.root, { keepCase: true });
+        } finally {
+            parser.filename = previousFilename;
+        }
+        this.parsedSchemas.add(proto);
     }
 
     public decodeMessage(messageType: string, data: Buffer) {
@@ -403,7 +462,16 @@ export default class MessageFactory {
         const Message = this.root.lookupType(messageType);
 
         try {
-            return Message.toObject(Message.decode(data), { arrays: true, enums: String });
+            // `defaults: true` is required for proto3 correctness, not a
+            // convenience. proto3 omits any scalar equal to its default from
+            // the wire, so without this a legitimate 0, "" or false decodes as
+            // undefined and is indistinguishable from a field nobody set —
+            // a distinction proto3 does not have for scalars.
+            return Message.toObject(Message.decode(data), {
+                arrays: true,
+                defaults: true,
+                enums: String,
+            });
         } catch (error) {
             // Deliberately no payload in the log line — message bodies routinely
             // carry credentials and personal data. Type name and byte length only.

@@ -46,7 +46,12 @@ export default class EventListener extends BaseListener {
                     }
                 }
             } else {
-                Logger.warn(`ignoring unhandled event ${JSON.stringify(event)}`);
+                // Type only — `event.data` is application payload and must not
+                // reach the log. The type is what tells an operator which
+                // publisher is emitting events nothing is subscribed to.
+                Logger.warn(
+                    `ignoring unhandled event of type '${event?.type ?? 'unknown'}' (no topic to route on)`,
+                );
             }
         });
     }

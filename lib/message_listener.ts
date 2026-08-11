@@ -34,7 +34,7 @@ export default class MessageListener extends BaseListener {
      * — which is what makes the main queue's binding match on redelivery.
      *
      * Using sendToQueue() directly would set the routing key to the queue
-     * name, breaking redelivery routing. (That was the original retry bug.)
+     * name, breaking redelivery routing.
      */
     protected retryExchangeName: string;
 

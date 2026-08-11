@@ -77,6 +77,36 @@ export default abstract class RunnableService extends MessageService {
             shuttingDown = true;
             Logger.info(`Shutdown initiated${signal ? ` (signal: ${signal})` : ''}`);
 
+            // 1. Stop taking new work, keeping channels open. The cleanup
+            //    hook must not run while consumers are still delivering, or a
+            //    request can arrive after the user has closed its resources.
+            if (service) {
+                try {
+                    await service.stopConsuming();
+                    Logger.info('Stopped accepting new messages');
+                } catch (error) {
+                    Logger.error(`Failed to stop consumers: ${error}`);
+                }
+            }
+
+            // 2. Let work already in hand finish — including the reply, retry
+            //    or DLQ publish that settles it — before anything is torn down.
+            try {
+                const budget = Number(process.env.SHUTDOWN_DRAIN_TIMEOUT_MS) || 30000;
+                const inFlight = context.connection.inFlightDeliveries;
+                if (inFlight > 0) {
+                    Logger.info(`Draining ${inFlight} in-flight message(s), up to ${budget}ms`);
+                    const drained = await context.connection.drainInFlight(budget);
+                    Logger.info(drained
+                        ? 'In-flight messages drained'
+                        : `Drain deadline reached with ${context.connection.inFlightDeliveries} still running; ` +
+                          'they stay unacknowledged and will be redelivered');
+                }
+            } catch (error) {
+                Logger.error(`Drain failed: ${error}`);
+            }
+
+            // 3. Only now is it safe to release the user's resources.
             if (service) {
                 try {
                     await service.cleanup();
@@ -93,7 +123,17 @@ export default abstract class RunnableService extends MessageService {
                 Logger.error(`Connection close failed: ${error}`);
             }
 
-            process.exit(exitCode);
+            // 4. Set the status and let the event loop drain naturally, so
+            //    pending stdout writes are not truncated. The bounded backstop
+            //    still guarantees the process leaves if something else keeps
+            //    the loop alive past the grace period.
+            process.exitCode = exitCode;
+            const grace = Number(process.env.SHUTDOWN_EXIT_GRACE_MS) || 5000;
+            const backstop = setTimeout(() => {
+                Logger.warn(`Event loop still active ${grace}ms after shutdown; forcing exit`);
+                process.exit(exitCode);
+            }, grace);
+            if (backstop.unref) { backstop.unref(); }
         };
 
         // Setup signal handlers. `once`, not `on`: calling start() more than

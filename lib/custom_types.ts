@@ -148,10 +148,9 @@ export const BIGINT_MAX = 2n ** 256n - 1n;
  * Supports Web3/crypto applications with large integers.
  *
  * The wire format is **unsigned**. Values outside [0, 2^256-1] are rejected
- * with a RangeError rather than coerced: this encoder previously took the
- * absolute value (so -5n was stored as 5n) and truncated mod 2^256 (so
- * 2^256+7 was stored as 7), both silently. For financial and on-chain
- * amounts, failing loudly is the only safe behaviour.
+ * with a RangeError rather than coerced — neither taking the absolute value
+ * nor truncating mod 2^256. For financial and on-chain amounts, failing
+ * loudly is the only safe behaviour.
  */
 export const BigIntType: ICustomType<bigint> = {
     name: 'bigint',

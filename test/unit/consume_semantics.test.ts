@@ -6,9 +6,8 @@ import { HandledError } from '../../lib/errors';
 
 /**
  * A fake amqplib Channel that records everything the connection layer does to
- * it. The retry/ack/DLQ state machine in connection.ts had no unit coverage at
- * all — it was only reachable through Docker-gated integration tests — which is
- * why the defects below survived.
+ * it, so the retry/ack/DLQ state machine in connection.ts can be exercised
+ * without a broker.
  */
 class FakeChannel {
     public acked: any[] = [];
@@ -20,6 +19,14 @@ class FakeChannel {
     public drainListeners: Array<() => void> = [];
     private onMessage: ((msg: any) => Promise<void>) | undefined;
 
+    /**
+     * When false, the broker never confirms, modelling a publish whose outcome
+     * is unknown. Confirms are otherwise delivered asynchronously, as a real
+     * ConfirmChannel does — never synchronously from publish(), or the write
+     * buffer state would not yet be known.
+     */
+    public autoConfirm = true;
+
     async prefetch() { return undefined; }
     async consume(_q: string, handler: (msg: any) => Promise<void>) {
         this.onMessage = handler;
@@ -27,13 +34,15 @@ class FakeChannel {
     }
     ack(msg: any) { this.acked.push(msg); }
     reject(msg: any, requeue: boolean) { this.rejected.push({ msg, requeue }); }
-    publish(exchange: string, routingKey: string, content: Buffer, options: any) {
+    publish(exchange: string, routingKey: string, content: Buffer, options: any, callback?: any) {
         this.published.push({ exchange, routingKey, content, options });
+        if (callback && this.autoConfirm) { setImmediate(() => callback(null)); }
         return this.writable;
     }
-    async sendToQueue(queue: string, _content: Buffer, options: any) {
+    sendToQueue(queue: string, _content: Buffer, options: any, callback?: any) {
         this.sentToQueue.push({ queue, options });
-        return true;
+        if (callback && this.autoConfirm) { setImmediate(() => callback(null)); }
+        return this.writable;
     }
     once(event: string, cb: () => void) {
         if (event === 'drain') { this.drainListeners.push(cb); }
@@ -184,6 +193,9 @@ describe('publisher backpressure', () => {
         let settled = false;
         const p = conn.publish(ch as any, 'ex', 'rk', Buffer.from('x'), {}).then(() => { settled = true; });
 
+        // Two ticks: one for the broker confirm, one for this assertion. The
+        // confirm alone must not settle the publish while the buffer is full.
+        await new Promise((r) => setImmediate(r));
         await new Promise((r) => setImmediate(r));
         expect(settled).toBe(false);       // still parked on 'drain'
         expect(ch.drainListeners.length).toBe(1);
@@ -193,11 +205,30 @@ describe('publisher backpressure', () => {
         expect(settled).toBe(true);
     });
 
-    it('resolves immediately when the channel accepts the write', async () => {
+    it('resolves once the broker confirms the write', async () => {
+        // Acceptance into amqplib's local buffer is not delivery; the
+        // contract is the broker's confirm.
         const conn = new Connection();
         const ch = new FakeChannel();
         await conn.publish(ch as any, 'ex', 'rk', Buffer.from('x'), {});
         expect(ch.published.length).toBe(1);
+    });
+
+    it('does not resolve when the broker never confirms', async () => {
+        process.env.PUBLISH_CONFIRM_TIMEOUT_MS = '10000';
+        const conn = new Connection();
+        const ch = new FakeChannel();
+        ch.autoConfirm = false;
+
+        let settled = false;
+        conn.publish(ch as any, 'ex', 'rk', Buffer.from('x'), {}).then(
+            () => { settled = true; }, () => { settled = true; },
+        );
+
+        await new Promise((r) => setImmediate(r));
+        expect(ch.published.length).toBe(1);   // bytes went out
+        expect(settled).toBe(false);           // but nothing is confirmed
+        delete process.env.PUBLISH_CONFIRM_TIMEOUT_MS;
     });
 });
 

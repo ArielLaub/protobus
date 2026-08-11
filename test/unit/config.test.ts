@@ -2,10 +2,9 @@ import Config from '../../lib/config';
 import MessageFactory from '../../lib/message_factory';
 
 /**
- * Config previously called parseInt() with no radix and no NaN guard on every
- * access, so `MESSAGE_PROCESSING_TIMEOUT=6oo000` yielded NaN — and
- * setTimeout(fn, NaN) fires immediately, silently flagging every message as
- * timed out. A malformed env var must fall back to the default instead.
+ * A malformed numeric env var must fall back to its default. Yielding NaN is
+ * the dangerous case: setTimeout(fn, NaN) fires immediately, flagging every
+ * message as timed out.
  */
 describe('Config numeric env parsing', () => {
     const saved: Record<string, string | undefined> = {};

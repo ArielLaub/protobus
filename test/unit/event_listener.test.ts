@@ -16,6 +16,7 @@ function createMockConnection(): IConnection {
     return Object.assign(emitter, {
         isConnected: true,
         isReconnecting: false,
+        cancelStream: () => false,
         connect: async () => ({} as any),
         disconnect: async () => {},
         openChannel: async () => createMockChannel(),

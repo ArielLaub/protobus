@@ -14,6 +14,45 @@ interface ParsedService {
     methods: RpcMethod[];
 }
 
+/** Raised when a service name could not be used safely in a file path. */
+export class InvalidServiceNameError extends Error {
+    constructor(name: string, reason: string) {
+        super(`invalid service name ${JSON.stringify(name)}: ${reason}`);
+        this.name = 'InvalidServiceNameError';
+    }
+}
+
+/**
+ * Validate a service name before it is interpolated into a filesystem path.
+ *
+ * The name arrives from argv and is joined onto the configured proto and
+ * services directories, so anything containing a separator or a `..` segment
+ * writes outside them. Rather than sanitising — which invites disagreement
+ * between what was asked for and what was written — reject and say why.
+ *
+ * @returns the name unchanged, so call sites can use it inline.
+ */
+export function assertSafeServiceName(name: string): string {
+    if (typeof name !== 'string' || name.length === 0) {
+        throw new InvalidServiceNameError(String(name), 'must be a non-empty string');
+    }
+    if (name.length > 100) {
+        throw new InvalidServiceNameError(name, 'must be 100 characters or fewer');
+    }
+    // A single conservative rule: identifier characters only. This excludes
+    // path separators, `..`, null bytes, whitespace and drive letters in one
+    // step, rather than trying to enumerate what to forbid.
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+        throw new InvalidServiceNameError(
+            name, 'may contain only letters, digits, underscore and hyphen',
+        );
+    }
+    if (name === '.' || name === '..') {
+        throw new InvalidServiceNameError(name, 'is a path segment, not a name');
+    }
+    return name;
+}
+
 /**
  * Generate a service stub from a .proto file.
  *
@@ -21,6 +60,11 @@ interface ParsedService {
  * @param cwd - Working directory
  */
 export async function generateService(serviceName: string, cwd: string = process.cwd()): Promise<void> {
+    // Reusable functions throw; only the command wrapper at the bottom of this
+    // file decides the process should die. Calling process.exit() from here
+    // made this impossible to call from a script, a test, or another tool.
+    assertSafeServiceName(serviceName);
+
     const config = loadConfig(cwd);
     const protoDir = resolvePath(config.protoDir, cwd);
     const servicesDir = resolvePath(config.servicesDir, cwd);
@@ -29,8 +73,7 @@ export async function generateService(serviceName: string, cwd: string = process
     // Find the proto file
     const protoFile = path.join(protoDir, `${serviceName}.proto`);
     if (!fs.existsSync(protoFile)) {
-        console.error(`Error: Proto file not found: ${protoFile}`);
-        process.exit(1);
+        throw new Error(`Proto file not found: ${protoFile}`);
     }
 
     // Parse the proto file
@@ -38,8 +81,7 @@ export async function generateService(serviceName: string, cwd: string = process
     const parsed = parseProtoFile(protoContent, serviceName);
 
     if (!parsed) {
-        console.error(`Error: Could not find service definition in ${protoFile}`);
-        process.exit(1);
+        throw new Error(`Could not find service definition in ${protoFile}`);
     }
 
     // Generate the service stub
@@ -55,9 +97,9 @@ export async function generateService(serviceName: string, cwd: string = process
     const outputFile = path.join(serviceDir, `${serviceName}Service.ts`);
 
     if (fs.existsSync(outputFile)) {
-        console.error(`Error: Service file already exists: ${outputFile}`);
-        console.error(`Remove it first if you want to regenerate.`);
-        process.exit(1);
+        throw new Error(
+            `Service file already exists: ${outputFile}. Remove it first if you want to regenerate.`,
+        );
     }
 
     fs.writeFileSync(outputFile, serviceCode);

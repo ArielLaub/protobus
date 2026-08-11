@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { loadConfig, resolvePath } from './config';
 
@@ -19,11 +20,10 @@ export async function generateTypes(cwd: string = process.cwd()): Promise<void> 
         fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    // Create temp directory for intermediate files
-    const tempDir = path.join(cwd, '.protobus-temp');
-    if (!fs.existsSync(tempDir)) {
-        fs.mkdirSync(tempDir, { recursive: true });
-    }
+    // Scratch space for intermediate files. mkdtemp gives each run its own
+    // directory: concurrent runs must not share one, and the cleanup below is
+    // a recursive force delete that must never point at a predictable path.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'protobus-'));
 
     const tempJsOutput = path.join(tempDir, 'proto.js');
     const tempTsOutput = path.join(tempDir, 'proto.d.ts');
@@ -37,25 +37,28 @@ export async function generateTypes(cwd: string = process.cwd()): Promise<void> 
             pbjs = require('protobufjs-cli/pbjs');
             pbts = require('protobufjs-cli/pbts');
         } catch {
-            console.error('Error: protobufjs-cli is required for type generation.');
-            console.error('Install it with: npm install --save-dev protobufjs-cli');
-            process.exit(1);
+            // Throw, don't exit: this is a reusable function. Only the
+            // command wrapper decides the process should die.
+            throw new Error(
+                'protobufjs-cli is required for type generation. ' +
+                'Install it with: npm install --save-dev protobufjs-cli',
+            );
         }
 
         const protoGlob = path.join(protoDir, '*.proto');
 
         // Check if proto directory exists
         if (!fs.existsSync(protoDir)) {
-            console.error(`Error: Proto directory not found: ${protoDir}`);
-            console.error(`Create the directory and add your .proto files, or configure "protoDir" in package.json`);
-            process.exit(1);
+            throw new Error(
+                `Proto directory not found: ${protoDir}. Create it and add your .proto files, ` +
+                'or configure "protoDir" in package.json',
+            );
         }
 
         // Check if proto files exist
         const protoFiles = fs.readdirSync(protoDir).filter(f => f.endsWith('.proto'));
         if (protoFiles.length === 0) {
-            console.error(`Error: No .proto files found in ${protoDir}`);
-            process.exit(1);
+            throw new Error(`No .proto files found in ${protoDir}`);
         }
 
         console.log(`Found ${protoFiles.length} proto file(s) in ${protoDir}`);

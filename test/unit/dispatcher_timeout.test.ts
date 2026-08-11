@@ -6,10 +6,9 @@ import MessageFactory from '../../lib/message_factory';
 import { RpcTimeoutError } from '../../lib/errors';
 
 /**
- * A connection stub that accepts publishes and never replies. This is the
- * shape of every real failure that used to hang a caller forever: no consumer
- * bound to the routing key, an exchange that dropped the message, or a handler
- * that died after an early ack.
+ * A connection stub that accepts publishes and never replies — the shape of a
+ * request with no consumer bound to the routing key, an exchange that dropped
+ * the message, or a handler that died after an early ack.
  */
 class SilentConnection extends EventEmitter {
     public isConnected = true;

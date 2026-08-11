@@ -68,8 +68,7 @@ describe('MessageService tests suite', () => {
         context = new Context();
         await context.init(AMQP_CONNECTION_STRING, []);
         // load proto from string in a hacky way. got this idea from protobuf.js tests
-        (protobuf.parse as any).filename = 'simple.proto';
-        (context.factory as any).root = protobuf.parse(proto).root;
+        (context.factory as any).root = protobuf.parse(proto, { keepCase: true }).root;
         // init the micro service instance
         theService = new TestService(context);
         await theService.init();

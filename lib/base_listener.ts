@@ -48,8 +48,14 @@ export abstract class BaseListener extends EventEmitter {
         this.maxConcurrent = undefined; // only used for late ack workers.
         this.messageTtlMs = undefined;
         this.bindings = [];
-        this.defaultHandler = async (message: Buffer/*, correlationId: string*/) => {
-            Logger.warn(`unhandled message by default handler ${JSON.stringify(message)}`);
+        this.defaultHandler = async (message: Buffer, correlationId?: string) => {
+            // Size and correlationId only. Never the body: JSON.stringify
+            // renders a Buffer as {"type":"Buffer","data":[...]}, which is
+            // payload disclosure with an extra decoding step.
+            Logger.warn(
+                'unhandled message by default handler ' +
+                `(${message?.length ?? 0} bytes, correlationId ${correlationId ?? 'none'})`,
+            );
         };
 
         // Listen for reconnection events (store bound refs for proper cleanup)
@@ -230,6 +236,36 @@ export abstract class BaseListener extends EventEmitter {
         this.emit('started', {});
     }
 
+    /**
+     * Stop accepting NEW deliveries while leaving the channel open.
+     *
+     * This is the missing first step of a graceful shutdown. `close()` cancels
+     * the consumer and closes the channel in one go, which is too blunt during
+     * a drain: handlers still running need the channel to ack and to publish
+     * their replies. Cancelling alone lets the broker stop pushing work while
+     * everything already in hand can still finish.
+     *
+     * Safe to call more than once, and safe when already disconnected.
+     */
+    async stopConsuming(): Promise<void> {
+        if (!this.consumerTag) return;
+
+        const tag = this.consumerTag;
+        this.consumerTag = '';
+
+        if (!this.connection.isConnected || !this.channel) return;
+
+        try {
+            await this.connection.cancel(this.channel, tag);
+            Logger.debug(`${this.constructor.name}: stopped consuming (${tag})`);
+        } catch (err: any) {
+            // The channel may already be gone; nothing left to cancel.
+            Logger.debug(
+                `${this.constructor.name}: failed to cancel consumer '${tag}' during drain: ${err?.message || err}`,
+            );
+        }
+    }
+
     async close() {
         if (!this._isInitialized) throw new NotInitializedError();
 
@@ -263,8 +299,8 @@ export abstract class BaseListener extends EventEmitter {
      * amqplib maps `undefined` (and 0) to prefetchCount 0, which RabbitMQ reads
      * as *unlimited* — with late ack that lets the broker push an entire queue
      * backlog into process memory before anything is acked. Subclasses that
-     * enable lateAck without setting maxConcurrent (EventListener) used to hit
-     * exactly that, so fall back to a bounded default instead.
+     * enable lateAck without setting maxConcurrent (EventListener) rely on this
+     * bounded fallback.
      */
     protected effectivePrefetch(): number {
         const configured = this.maxConcurrent;

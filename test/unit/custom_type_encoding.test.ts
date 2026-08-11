@@ -49,7 +49,7 @@ function roundTrip(f: MessageFactory, method: string, payload: any): any {
     return f.decodeRequest(buf).data;
 }
 
-describe('custom types at the top level (previously working)', () => {
+describe('custom types at the top level', () => {
     it('round-trips a top-level bigint', () => {
         const out = roundTrip(newFactory(), 'topup', { amount: 42n });
         expect(out.amount).toBe(42n);

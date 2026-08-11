@@ -36,13 +36,68 @@ function envInt(name: string, fallback: number): number {
     return value;
 }
 
+/** Parse a boolean env var. Only an explicit affirmative counts as true. */
+function envBool(name: string, fallback: boolean): boolean {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === '') return fallback;
+    const v = raw.trim().toLowerCase();
+    if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+    if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+    return fallback;
+}
+
 export default class Config {
+    /**
+     * Send the message of an *unhandled* service error back to the caller.
+     *
+     * **On by default**, which is the 1.x behaviour.
+     *
+     * The audit grouped this with its logging findings, but the threat models
+     * differ. Logs and DLQ metadata escape into systems with looser access
+     * control than the bus — aggregators with broad read access and long
+     * retention, dashboards, queue browsers — so those are redacted
+     * unconditionally (see the default handlers and `safeErrorSummary`).
+     *
+     * A protobus caller is a different matter: it is another of your own
+     * services, already inside the trust boundary and already holding the
+     * broker credentials. An error message travelling service to service is an
+     * internal detail moving between components that already trust each other,
+     * not a disclosure. Suppressing it by default would silently degrade every
+     * consumer's error reporting to buy very little.
+     *
+     * Set PROTOBUS_EXPOSE_INTERNAL_ERRORS=false where that assumption does not
+     * hold — chiefly a service that forwards protobus errors onward to an
+     * untrusted client. A gateway should map errors deliberately rather than
+     * relaying them, but this makes the safe behaviour available in one
+     * setting. Callers then get a generic message plus the correlationId, and
+     * the real error still goes to the service's own log.
+     *
+     * `HandledError` is unaffected either way: raising one is an explicit
+     * decision to tell the caller something, so its message always crosses.
+     */
+    static get exposeInternalErrors() {
+        return envBool('PROTOBUS_EXPOSE_INTERNAL_ERRORS', true);
+    }
+
     static get busExchangeName() {
         return process.env.BUS_EXCHANGE_NAME || 'proto.bus';
     }
 
     static get callbacksExchangeName() {
         return process.env.CALLBACKS_EXCHANGE_NAME || 'proto.bus.callback';
+    }
+
+    /**
+     * Fanout exchange carrying stream-cancellation notices.
+     *
+     * Fanout, not topic: a cancel has to reach the one process holding that
+     * correlationId, and the caller has no way to know which replica that is.
+     * Every service instance binds its own exclusive queue, hears every cancel,
+     * and ignores the ones it does not own. Cancels are rare, so the broadcast
+     * costs nothing worth measuring.
+     */
+    static get cancelExchangeName() {
+        return process.env.CANCEL_EXCHANGE_NAME || 'proto.bus.cancel';
     }
 
     static get eventsExchangeName() {
@@ -82,6 +137,48 @@ export default class Config {
      */
     static get defaultPrefetch() {
         return envInt('DEFAULT_PREFETCH', 1);
+    }
+
+    /**
+     * How long a publish waits for its broker confirm before rejecting with
+     * PublishConfirmTimeoutError.
+     *
+     * A confirm timeout is an AMBIGUOUS outcome, not a failure: the broker may
+     * have stored the message and lost only the confirm. Retrying can
+     * duplicate, which is why publishes carry a stable messageId.
+     */
+    static get publishConfirmTimeoutMs() {
+        return envInt('PUBLISH_CONFIRM_TIMEOUT_MS', 30000);
+    }
+
+    /**
+     * Maximum publishes awaiting a broker confirm on one channel at a time.
+     * Further publishes park until a slot frees, which is what stops a fast
+     * producer from queueing unbounded unconfirmed work in memory.
+     */
+    static get maxOutstandingConfirms() {
+        return envInt('MAX_OUTSTANDING_CONFIRMS', 256);
+    }
+
+    /**
+     * Upper bound on chunks buffered for a single streaming call that the
+     * caller has not consumed yet.
+     *
+     * The dispatcher buffers whatever the server publishes, so a producer
+     * faster than its consumer would grow this array without limit. Exceeding
+     * the bound fails the stream with StreamBackpressureError.
+     */
+    static get streamMaxBufferedChunks() {
+        return envInt('STREAM_MAX_BUFFERED_CHUNKS', 1024);
+    }
+
+    /**
+     * Upper bound on total buffered bytes for a single streaming call. Chunk
+     * count alone is a poor proxy for memory when chunk sizes vary widely.
+     * Defaults to 64 MiB.
+     */
+    static get streamMaxBufferedBytes() {
+        return envInt('STREAM_MAX_BUFFERED_BYTES', 64 * 1024 * 1024);
     }
 
     // Headers used by the streaming wire protocol. See docs/advanced/streaming.md.

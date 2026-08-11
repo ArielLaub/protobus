@@ -1,4 +1,5 @@
 import { IContext } from './context';
+import { StreamOptions } from './message_dispatcher';
 import { Logger } from './logger';
 
 export class InvalidServiceNameError extends Error {}
@@ -45,8 +46,16 @@ export default class ServiceProxy {
             // as functions returning AsyncIterable<chunk>; unary methods are
             // exposed as async functions returning a single decoded result.
             if (this.context.factory.isStreamingMethod(methodFullName)) {
-                (<any>this)[TMethod.name] = (requestMessage: any, actor?: string, idleTimeoutMs?: number) =>
-                    this._buildStreamingCall(methodFullName, TMethod.requestType, requestMessage, actor, idleTimeoutMs);
+                // `options` is appended last so every existing call signature
+                // keeps working unchanged.
+                (<any>this)[TMethod.name] = (
+                    requestMessage: any,
+                    actor?: string,
+                    idleTimeoutMs?: number,
+                    options?: StreamOptions,
+                ) => this._buildStreamingCall(
+                    methodFullName, TMethod.requestType, requestMessage, actor, idleTimeoutMs, options,
+                );
             } else {
                 (<any>this)[TMethod.name] = async (requestMessage: any, actor?: string, rpc?: boolean, timeoutMs?: number) => {
                     let buffer;
@@ -106,6 +115,7 @@ export default class ServiceProxy {
         requestMessage: any,
         actor: string | undefined,
         idleTimeoutMs: number | undefined,
+        options?: StreamOptions,
     ): AsyncIterable<any> {
         const factory = this.context.factory;
         const context = this.context;
@@ -114,7 +124,12 @@ export default class ServiceProxy {
         try {
             buffer = factory.buildRequest(methodFullName, requestMessage, actor);
         } catch (error) {
-            Logger.error(`failed building streaming request '${requestType}' from ${JSON.stringify(requestMessage)}\n${error}`);
+            // Type and error only — the request object is application data and
+            // must not reach the log.
+            Logger.error(
+                `failed building streaming request '${requestType}' for ${methodFullName}: ` +
+                `${(error as any)?.message ?? error}`,
+            );
             // Return an iterable whose first iteration throws — surfaces the
             // request-build error inside the caller's try/catch around `for await`.
             return {
@@ -132,6 +147,7 @@ export default class ServiceProxy {
             buffer,
             `REQUEST.${methodFullName}`,
             idleTimeoutMs,
+            options,
         );
 
         return (async function* (): AsyncIterable<any> {
