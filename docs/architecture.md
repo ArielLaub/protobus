@@ -7,13 +7,14 @@ Protobus is a TypeScript microservices framework that enables services to commun
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Application Layer                        │
-├─────────────────┬──────────────────┬────────────────────────┤
-│    Services     │     Clients      │    Cluster Manager     │
-│ (MessageService)│  (ServiceProxy)  │   (ServiceCluster)     │
-└────────┬────────┴────────┬─────────┴───────────┬────────────┘
-         │                 │                     │
-         └─────────────────┼─────────────────────┘
-                           ▼
+├───────────────────────────┬─────────────────────────────────┤
+│         Services          │            Clients              │
+│  (MessageService /        │         (ServiceProxy)          │
+│   RunnableService)        │                                 │
+└─────────────┬─────────────┴────────────────┬────────────────┘
+              │                              │
+              └──────────────┬───────────────┘
+                             ▼
          ┌─────────────────────────────────────┐
          │          Message Factory            │
          │   (Protobuf Encode/Decode)          │
@@ -96,15 +97,19 @@ Dynamic proxy for calling remote services.
 
 **File:** `lib/service_proxy.ts`
 
-### ServiceCluster
-Container for running multiple services in a single process.
+### RunnableService
+A MessageService with process lifecycle management.
 
 **Responsibilities:**
-- Initialize multiple services with shared context
-- Support multiple listeners per service for scaling
-- Optional HTTP routing aggregation
+- Convention-based proto file resolution from the service name
+- Graceful shutdown on SIGINT/SIGTERM, non-zero exit on startup failure
+- `start()` bootstrap helper
 
-**File:** `lib/service_cluster.ts`
+**File:** `lib/runnable_service.ts`
+
+> Scale by running more processes, not by co-locating services. Node is
+> single-threaded, so one process per service keeps failure domains and
+> deploys independent; `maxConcurrent` bounds in-flight messages per process.
 
 ## RabbitMQ Exchanges
 

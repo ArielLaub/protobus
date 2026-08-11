@@ -1,4 +1,4 @@
-import MessageDispatcher from './message_dispatcher';
+import MessageDispatcher, { StreamOptions } from './message_dispatcher';
 import EventDispatcher from './event_dispatcher';
 import Connection, { ReconnectionOptions } from './connection';
 import MessageFactory from './message_factory';
@@ -10,12 +10,12 @@ export interface ContextOptions {
 
 export interface IContext {
     init(amqpConnectionString: string, protoLocations: string[], options?: ContextOptions): Promise<void>;
-    publishMessage(content: any, routingKey: string, rpc?: boolean): Promise<Buffer>;
+    publishMessage(content: any, routingKey: string, rpc?: boolean, timeoutMs?: number): Promise<Buffer>;
     /**
      * Publish a request expecting a streaming reply. See
      * `docs/advanced/streaming.md` and `ServiceProxy` for the high-level API.
      */
-    publishStreamingMessage(content: Buffer, routingKey: string, idleTimeoutMs?: number): AsyncIterable<Buffer>;
+    publishStreamingMessage(content: Buffer, routingKey: string, idleTimeoutMs?: number, options?: StreamOptions): AsyncIterable<Buffer>;
     publishEvent(type: string, content: any, topic: string): Promise<void>;
 
     factory: MessageFactory;
@@ -68,12 +68,12 @@ export default class Context implements IContext {
         return this._connection.isReconnecting;
     }
 
-    async publishMessage(content: any, routingKey: string, rpc?: boolean): Promise<Buffer> {
-        return this.messageDispatcher.publish(content, routingKey, rpc !== false);
+    async publishMessage(content: any, routingKey: string, rpc?: boolean, timeoutMs?: number): Promise<Buffer> {
+        return this.messageDispatcher.publish(content, routingKey, rpc !== false, timeoutMs);
     }
 
-    publishStreamingMessage(content: Buffer, routingKey: string, idleTimeoutMs?: number): AsyncIterable<Buffer> {
-        return this.messageDispatcher.publishStreaming(content, routingKey, idleTimeoutMs);
+    publishStreamingMessage(content: Buffer, routingKey: string, idleTimeoutMs?: number, options?: StreamOptions): AsyncIterable<Buffer> {
+        return this.messageDispatcher.publishStreaming(content, routingKey, idleTimeoutMs, options);
     }
 
     async publishEvent(type: string, content: any, topic: string): Promise<void> {

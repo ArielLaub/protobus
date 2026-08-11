@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "amqplib": "^0.10.9",
-    "protobufjs": "^7.5.4",
+    "protobufjs": "^8.7.2",
     "source-map-support": "^0.5.21"
   },
   "description": "The Protobus micro-services framework",
@@ -19,11 +19,14 @@
     "@types/supertest": "^6.0.3",
     "eslint": "^9.39.1",
     "jest": "^30.2.0",
-    "protobufjs-cli": "^2.0.0",
+    "protobufjs-cli": "^2.6.2",
     "supertest": "^7.1.4",
     "ts-jest": "^29.4.5",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.48.0"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "files": [
     "dist",
@@ -70,5 +73,5 @@
     "watch": "tsc -w"
   },
   "types": "dist/index.d.ts",
-  "version": "1.4.2"
+  "version": "2.0.0"
 }

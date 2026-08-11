@@ -1,0 +1,180 @@
+name: CI
+
+# The release gate. Until this existed, `publish.yml` ran only lint, typecheck
+# and build — the unit suite and the Docker-gated integration suite never ran
+# against a commit before it shipped to npm.
+#
+# Third-party actions are pinned to full commit SHAs: a tag is mutable and can
+# be repointed at arbitrary code, and this workflow handles the repository that
+# publishes to npm.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  # Lets publish.yml require this exact workflow against the release commit.
+  workflow_call:
+
+# A newer push to the same ref makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: Lint and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit -p tsconfig.json
+
+  build:
+    name: Build distributable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          # The version publish.yml runs on, so the artifact that ships is
+          # compiled by the same toolchain everywhere.
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The single build of the release. Every downstream job — the unit matrix
+      # that inspects the packed tarball, and publish.yml — consumes this exact
+      # output, so what npm receives is the artifact the tests ran against
+      # rather than a second, unverified compile.
+      #
+      # dist/ is uploaded whole, including dist/test; package.json "files"
+      # excludes it from the tarball.
+      - name: Upload dist
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist
+          # Only consumed by jobs in this same run; a short window keeps
+          # release builds from accumulating in repository storage.
+          retention-days: 7
+          if-no-files-found: error
+
+  unit:
+    name: Unit tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lower bound is the oldest runtime we claim to support; upper bound is
+        # the version the publish job uses.
+        node: ["20", "22", "24"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      # packaging.test.ts packs the working tree, so dist/ must exist — and it
+      # has to be the artifact that will ship, not a local rebuild, for the
+      # tarball assertions to say anything about the published package.
+      - name: Download dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist
+      - run: npm test
+
+  integration:
+    name: Integration tests (RabbitMQ)
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:3-management-alpine
+        ports:
+          - 5672:5672
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 12
+          --health-start-period 10s
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      # cross-language.test.ts requires a sibling protobus-py checkout with a
+      # built venv and throws without one, so it stays a local-only suite.
+      # Restoring it to CI means checking out protobus-py here first.
+      - name: Run integration suite
+        run: npx jest --config jest.integration.config.js --testPathIgnorePatterns "cross-language"
+
+  smoke:
+    name: Sample smoke test (combat game)
+    runs-on: ubuntu-latest
+    # A full game is ~100 RPC round trips and finishes in seconds; this cap
+    # turns a hang (a message that never routes, a shutdown that never
+    # resolves) into a failure instead of a job that burns its default hour.
+    timeout-minutes: 10
+    services:
+      rabbitmq:
+        image: rabbitmq:3-management-alpine
+        ports:
+          - 5672:5672
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 12
+          --health-start-period 10s
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      # Exercises the framework the way a consumer uses it — decorators, protos
+      # loaded from disk, RPC and pub/sub between six services in one process —
+      # and asserts the game ends with exactly one survivor. The script compiles
+      # the sample itself; it does not consume the dist artifact.
+      - name: Run combat game sample
+        run: ./scripts/run-combat-sample.sh
+        env:
+          AMQP_URL: amqp://guest:guest@localhost:5672/
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      # Runtime dependencies are what consumers actually install; a finding
+      # here blocks the release. Dev-only advisories are reported but do not
+      # fail the build, since they never reach a consumer's node_modules.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=low
+      - name: Report dev advisories (non-blocking)
+        run: npm audit || true

@@ -4,7 +4,23 @@ import { IConnection, Channel, PublishOptions } from './connection';
 import Config from './config';
 import { Logger } from './logger';
 import CallbackListener from './callback_listener';
-import { StreamTimeoutError } from './errors';
+import {
+    StreamTimeoutError,
+    RpcTimeoutError,
+    StreamBackpressureError,
+    StreamSequenceError,
+} from './errors';
+
+/** Per-call streaming options. */
+export interface StreamOptions {
+    /**
+     * Cancels the stream when aborted, from anywhere — a Stop button handler,
+     * an HTTP request's own `signal` when the client disconnects, a timeout.
+     * Breaking out of the `for await` cancels too, but only once the next chunk
+     * arrives to resume the loop; a signal takes effect immediately.
+     */
+    signal?: AbortSignal;
+}
 
 export class NotConnectedError extends Error {}
 export class DisconnectedError extends Error {
@@ -16,6 +32,7 @@ export class DisconnectedError extends Error {
 interface CallbackEntry {
     resolve: (result: any) => void;
     reject: (error: Error) => void;
+    timer?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -25,6 +42,13 @@ interface CallbackEntry {
  */
 interface StreamEntry {
     chunks: Buffer[];
+    /** Running total of `chunks`, so the byte bound is O(1) to check. */
+    bufferedBytes: number;
+    /**
+     * Highest x-protobus-seq accepted so far, or -1 before the first chunk.
+     * Undefined stays undefined for peers that send no sequence header.
+     */
+    lastSeq?: number;
     resolveNext?: () => void;
     rejectNext?: (err: Error) => void;
     ended: boolean;
@@ -35,7 +59,20 @@ export interface IMessageDispatcher {
     isInitialized: boolean;
     init(): Promise<any>;
     publish(content: any, routingKey: string, rpc: boolean): Promise<any>;
-    publishStreaming(content: Buffer, routingKey: string, idleTimeoutMs?: number): AsyncIterable<Buffer>;
+    publishStreaming(content: Buffer, routingKey: string, idleTimeoutMs?: number, options?: StreamOptions): AsyncIterable<Buffer>;
+}
+
+/**
+ * Read x-protobus-seq, tolerating the same encodings as the final header.
+ * Returns undefined when absent or unparseable, which disables validation
+ * rather than manufacturing a violation.
+ */
+function parseSeqHeader(headers: Record<string, any> | undefined): number | undefined {
+    if (!headers) return undefined;
+    const v = headers[Config.HEADER_SEQ];
+    if (v === undefined || v === null) return undefined;
+    const n = typeof v === 'number' ? v : Number(Buffer.isBuffer(v) ? v.toString('utf8') : v);
+    return Number.isInteger(n) && n >= 0 ? n : undefined;
 }
 
 /** Tolerantly read the x-protobus-final header across AMQP encodings. */
@@ -91,6 +128,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
         // Reject all pending RPC callbacks
         const error = new DisconnectedError();
         for (const [_id, callback] of this.callbacks) {
+            if (callback.timer) { clearTimeout(callback.timer); }
             callback.reject(error);
         }
         this.callbacks.clear();
@@ -135,11 +173,80 @@ export default class MessageDispatcher implements IMessageDispatcher {
             const stream = this.pendingStreams.get(id)!;
             const isFinal = parseFinalHeader(headers);
 
+            // Sequence validation catches a lost chunk, which would otherwise
+            // present as a silently truncated stream. An absent header disables
+            // validation: peers that send none are behaving correctly, and a
+            // violation must not be inferred from missing information.
+            const seq = parseSeqHeader(headers);
+            if (seq !== undefined) {
+                const expected = stream.lastSeq === undefined ? 0 : stream.lastSeq + 1;
+
+                if (seq < expected) {
+                    // Already seen — a broker redelivery, not new data. Dropping
+                    // is safe and keeps the stream idempotent.
+                    Logger.debug(`stream ${id}: dropping duplicate chunk seq=${seq} (expected ${expected})`);
+                    if (isFinal) stream.ended = true;
+                    if (stream.resolveNext) {
+                        const wake = stream.resolveNext;
+                        stream.resolveNext = undefined;
+                        stream.rejectNext = undefined;
+                        wake();
+                    }
+                    return;
+                }
+
+                if (seq > expected) {
+                    stream.error = new StreamSequenceError(
+                        `stream ${id} lost at least one chunk: got seq=${seq}, expected ${expected}`,
+                    );
+                    stream.ended = true;
+                    stream.chunks.length = 0;
+                    stream.bufferedBytes = 0;
+                    if (stream.resolveNext) {
+                        const wake = stream.resolveNext;
+                        stream.resolveNext = undefined;
+                        stream.rejectNext = undefined;
+                        wake();
+                    }
+                    return;
+                }
+
+                stream.lastSeq = seq;
+            }
+
             // Empty body on a final-only marker is "end of stream, no extra data" —
             // we don't push it as a chunk, just signal completion.
             const body = content as Buffer;
             if (body && body.length > 0) {
+                // Bound the buffer. A server that produces faster than the
+                // caller iterates would otherwise grow this array until the
+                // process died; failing the stream is recoverable, OOM is not.
+                const maxChunks = Config.streamMaxBufferedChunks;
+                const maxBytes = Config.streamMaxBufferedBytes;
+                const wouldBeBytes = stream.bufferedBytes + body.length;
+
+                if (stream.chunks.length + 1 > maxChunks || wouldBeBytes > maxBytes) {
+                    stream.error = new StreamBackpressureError(
+                        `stream ${id} exceeded its buffer limit ` +
+                        `(${stream.chunks.length + 1} chunks / ${wouldBeBytes} bytes; ` +
+                        `limits are ${maxChunks} chunks / ${maxBytes} bytes) — ` +
+                        'the consumer is not keeping up with the producer',
+                    );
+                    stream.ended = true;
+                    // Drop the buffer now; the iterator only needs the error.
+                    stream.chunks.length = 0;
+                    stream.bufferedBytes = 0;
+                    if (stream.resolveNext) {
+                        const wake = stream.resolveNext;
+                        stream.resolveNext = undefined;
+                        stream.rejectNext = undefined;
+                        wake();
+                    }
+                    return;
+                }
+
                 stream.chunks.push(body);
+                stream.bufferedBytes = wouldBeBytes;
             }
             if (isFinal) {
                 stream.ended = true;
@@ -157,7 +264,8 @@ export default class MessageDispatcher implements IMessageDispatcher {
         if (this.callbacks.has(id)) {
             const callback = this.callbacks.get(id);
             this.callbacks.delete(id);
-            await callback.resolve(content);
+            if (callback.timer) { clearTimeout(callback.timer); }
+            callback.resolve(content);
         }
     }
 
@@ -169,7 +277,12 @@ export default class MessageDispatcher implements IMessageDispatcher {
         this._isInitialized = true;
     }
 
-    async publish(content: any, routingKey: string, rpc: boolean): Promise<Buffer> {
+    /**
+     * @param timeoutMs - How long to wait for a reply before rejecting with
+     *   RpcTimeoutError. Defaults to Config.rpcCallTimeoutMs. Ignored when
+     *   `rpc` is false, since there is nothing to wait for.
+     */
+    async publish(content: any, routingKey: string, rpc: boolean, timeoutMs?: number): Promise<Buffer> {
         if (!this.connection.isConnected) throw new NotConnectedError();
 
         if (rpc !== false) {
@@ -182,16 +295,61 @@ export default class MessageDispatcher implements IMessageDispatcher {
             correlationId: id,
             replyTo: rpc ? this.callbackListener.callbackQueue : undefined,
             deliveryMode: 2, // persistent
+            // An RPC request that routes nowhere means no service is bound to
+            // this key — a definite error, and one worth learning immediately
+            // as UnroutableError rather than after a full RPC timeout.
+            //
+            // Deliberately NOT set for events: an event with no subscribers is
+            // normal, and making that an error would break fan-out publishing.
+            mandatory: rpc,
         };
-        // this is called syncronously and _onResult resolves/rejects it later
+        if (!rpc) {
+            // Nothing to wait for beyond the broker confirming receipt.
+            await this.connection.publish(
+                this.channel, Config.busExchangeName, routingKey, content, properties,
+            );
+            return;
+        }
 
-        await this.connection.publish(this.channel, Config.busExchangeName, routingKey, content, properties);
+        const limit = timeoutMs ?? Config.rpcCallTimeoutMs;
 
-        if (!rpc) return; // we are not expecting any result so resolve
+        // Arm the reply callback BEFORE publishing. Publishing waits for a
+        // broker confirm, and a fast service can reply while that confirm is
+        // still in flight; registering afterwards would let _onResult find no
+        // entry for the correlationId and drop the reply.
+        const replyPromise = new Promise<Buffer>((resolve: any, reject: any) => {
+            // Bound the wait. Without this, a request nothing is listening for
+            // leaves this promise pending forever and its map entry leaks.
+            const timer = setTimeout(() => {
+                if (this.callbacks.get(id)?.timer === timer) {
+                    this.callbacks.delete(id);
+                    reject(new RpcTimeoutError(
+                        `no reply for ${routingKey} (correlationId ${id}) within ${limit}ms`,
+                    ));
+                }
+            }, limit);
+            if (timer.unref) { timer.unref(); }
 
-        return new Promise<Buffer>((resolve: any, reject: any) => {
-            this.callbacks.set(id, { resolve, reject } );
+            this.callbacks.set(id, { resolve, reject, timer });
         });
+
+        try {
+            await this.connection.publish(
+                this.channel, Config.busExchangeName, routingKey, content, properties,
+            );
+        } catch (err) {
+            // The request never made it (nack, unroutable, closed channel), so
+            // no reply is coming. Release the slot now rather than leaving it
+            // to expire, and surface the publish failure to the caller.
+            const pending = this.callbacks.get(id);
+            if (pending) {
+                clearTimeout(pending.timer);
+                this.callbacks.delete(id);
+            }
+            throw err;
+        }
+
+        return replyPromise;
     }
 
     /**
@@ -207,17 +365,58 @@ export default class MessageDispatcher implements IMessageDispatcher {
      *
      * See `docs/advanced/streaming.md` for the full protocol.
      */
-    publishStreaming(content: Buffer, routingKey: string, idleTimeoutMs?: number): AsyncIterable<Buffer> {
+    publishStreaming(
+        content: Buffer,
+        routingKey: string,
+        idleTimeoutMs?: number,
+        options?: StreamOptions,
+    ): AsyncIterable<Buffer> {
         if (!this.connection.isConnected) throw new NotConnectedError();
 
         const id = randomUUID();
-        const stream: StreamEntry = { chunks: [], ended: false };
+        const stream: StreamEntry = { chunks: [], bufferedBytes: 0, ended: false };
         this.pendingStreams.set(id, stream);
 
         // Capture only what the iterator needs to release on cleanup —
         // no `this` alias (lints clean under @typescript-eslint/no-this-alias).
         const pendingStreams = this.pendingStreams;
         const timeoutMs = idleTimeoutMs ?? Config.streamIdleTimeoutMs;
+
+        // Cancellation is BEST EFFORT and delivered at most once. The notice is
+        // an ordinary message: if it is lost, the producer never hears it and
+        // runs to completion, which is the same outcome as never cancelling.
+        // A caller that must be certain the producer stopped should observe
+        // that chunks are still arriving and cancel again. See
+        // docs/advanced/streaming.md.
+        let cancelled = false;
+
+        const cancel = () => {
+            if (cancelled) return;
+            cancelled = true;
+            pendingStreams.delete(id);
+            stream.chunks.length = 0;
+            stream.bufferedBytes = 0;
+            stream.ended = true;
+
+            Logger.debug(`cancelling stream ${id}`);
+            // Fire-and-forget: the caller has already stopped waiting, so there
+            // is nothing useful to do with a failure here beyond recording it.
+            this.connection.publish(this.channel, Config.cancelExchangeName, '', Buffer.alloc(0), {
+                correlationId: id,
+                contentType: 'application/octet-stream',
+            }).catch((err) => {
+                Logger.debug(`failed to publish cancel for stream ${id}: ${err?.message || err}`);
+            });
+        };
+
+        if (options?.signal) {
+            if (options.signal.aborted) {
+                // Already aborted before we started: nothing to stream.
+                stream.ended = true;
+            } else {
+                options.signal.addEventListener('abort', cancel, { once: true });
+            }
+        }
 
         const properties: PublishOptions = {
             contentType: 'application/octet-stream',
@@ -257,6 +456,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
                             }
                             if (stream.chunks.length > 0) {
                                 const value = stream.chunks.shift()!;
+                                stream.bufferedBytes -= value.length;
                                 return { value, done: false };
                             }
                             if (stream.ended) {
@@ -265,29 +465,43 @@ export default class MessageDispatcher implements IMessageDispatcher {
                             }
                             // Park on the next chunk arrival.
                             await new Promise<void>((resolve, reject) => {
-                                stream.resolveNext = resolve;
-                                stream.rejectNext = reject;
                                 const timer = setTimeout(() => {
-                                    if (stream.resolveNext === resolve) {
-                                        stream.resolveNext = undefined;
-                                        stream.rejectNext = undefined;
-                                        reject(new StreamTimeoutError(`No streaming chunk received within ${timeoutMs}ms`));
-                                    }
+                                    if (stream.resolveNext !== wake) return;
+                                    stream.resolveNext = undefined;
+                                    stream.rejectNext = undefined;
+                                    // Release the slot here: a rejecting next() does not
+                                    // cause the runtime to call return()/throw() on the
+                                    // iterator.
+                                    stream.chunks.length = 0;
+                                    stream.bufferedBytes = 0;
+                                    stream.ended = true;
+                                    pendingStreams.delete(id);
+                                    reject(new StreamTimeoutError(`No streaming chunk received within ${timeoutMs}ms`));
                                 }, timeoutMs);
                                 // Don't let an idle timer hold the event loop.
                                 if ((timer as any).unref) (timer as any).unref();
+
+                                // Clear the timer as soon as the event it was
+                                // waiting for happens, rather than letting a
+                                // dead timer sit until it fires. _onResult
+                                // calls these, so they own the cleanup.
+                                const wake = () => { clearTimeout(timer); resolve(); };
+                                const fail = (err: Error) => { clearTimeout(timer); reject(err); };
+                                stream.resolveNext = wake;
+                                stream.rejectNext = fail;
                             });
                         }
                     },
 
                     async return(): Promise<IteratorResult<Buffer>> {
-                        // Caller broke out of the for-await; release the slot.
-                        pendingStreams.delete(id);
+                        // Caller broke out of the for-await: stop the producer,
+                        // not just our own buffering.
+                        cancel();
                         return { value: undefined as any, done: true };
                     },
 
                     async throw(err): Promise<IteratorResult<Buffer>> {
-                        pendingStreams.delete(id);
+                        cancel();
                         throw err;
                     },
                 };

@@ -1,0 +1,28 @@
+syntax = "proto3";
+package Chat;
+
+message GenerateRequest {
+    string prompt = 1;
+    // Milliseconds between tokens, so the demo streams at a readable pace.
+    int32 token_delay_ms = 2;
+}
+
+message Token {
+    int32 index = 1;
+    string text = 2;
+}
+
+message StatsRequest {}
+
+message StatsResponse {
+    int32 tokens_generated = 1;
+    bool stopped_early = 2;
+}
+
+service Assistant {
+    // Server-streaming: the client receives tokens as they are produced.
+    rpc generate (Chat.GenerateRequest) returns (stream Chat.Token);
+
+    // How much the server actually produced — the point of the demo.
+    rpc stats (Chat.StatsRequest) returns (Chat.StatsResponse);
+}

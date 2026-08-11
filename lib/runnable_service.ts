@@ -64,10 +64,49 @@ export default abstract class RunnableService extends MessageService {
         postInit?: (service: T) => Promise<void>
     ): Promise<T> {
         let service: T | null = null;
+        let shuttingDown = false;
 
-        const shutdown = async (signal?: string) => {
+        /**
+         * @param exitCode - 0 for a signal-initiated shutdown, non-zero when we
+         *   are bailing out of a failed startup. Exiting 0 on a startup failure
+         *   told Kubernetes and systemd the process had succeeded, so a service
+         *   that could not start was never restarted.
+         */
+        const shutdown = async (signal?: string, exitCode: number = 0) => {
+            if (shuttingDown) { return; }
+            shuttingDown = true;
             Logger.info(`Shutdown initiated${signal ? ` (signal: ${signal})` : ''}`);
 
+            // 1. Stop taking new work, keeping channels open. The cleanup
+            //    hook must not run while consumers are still delivering, or a
+            //    request can arrive after the user has closed its resources.
+            if (service) {
+                try {
+                    await service.stopConsuming();
+                    Logger.info('Stopped accepting new messages');
+                } catch (error) {
+                    Logger.error(`Failed to stop consumers: ${error}`);
+                }
+            }
+
+            // 2. Let work already in hand finish — including the reply, retry
+            //    or DLQ publish that settles it — before anything is torn down.
+            try {
+                const budget = Number(process.env.SHUTDOWN_DRAIN_TIMEOUT_MS) || 30000;
+                const inFlight = context.connection.inFlightDeliveries;
+                if (inFlight > 0) {
+                    Logger.info(`Draining ${inFlight} in-flight message(s), up to ${budget}ms`);
+                    const drained = await context.connection.drainInFlight(budget);
+                    Logger.info(drained
+                        ? 'In-flight messages drained'
+                        : `Drain deadline reached with ${context.connection.inFlightDeliveries} still running; ` +
+                          'they stay unacknowledged and will be redelivered');
+                }
+            } catch (error) {
+                Logger.error(`Drain failed: ${error}`);
+            }
+
+            // 3. Only now is it safe to release the user's resources.
             if (service) {
                 try {
                     await service.cleanup();
@@ -84,12 +123,26 @@ export default abstract class RunnableService extends MessageService {
                 Logger.error(`Connection close failed: ${error}`);
             }
 
-            process.exit(0);
+            // 4. Set the status and let the event loop drain naturally, so
+            //    pending stdout writes are not truncated. The bounded backstop
+            //    still guarantees the process leaves if something else keeps
+            //    the loop alive past the grace period.
+            process.exitCode = exitCode;
+            const grace = Number(process.env.SHUTDOWN_EXIT_GRACE_MS) || 5000;
+            const backstop = setTimeout(() => {
+                Logger.warn(`Event loop still active ${grace}ms after shutdown; forcing exit`);
+                process.exit(exitCode);
+            }, grace);
+            if (backstop.unref) { backstop.unref(); }
         };
 
-        // Setup signal handlers
-        process.on('SIGINT', () => shutdown('SIGINT'));
-        process.on('SIGTERM', () => shutdown('SIGTERM'));
+        // Setup signal handlers. `once`, not `on`: calling start() more than
+        // once per process otherwise stacked duplicate handlers that each ran a
+        // full shutdown.
+        const onSigint = () => { void shutdown('SIGINT'); };
+        const onSigterm = () => { void shutdown('SIGTERM'); };
+        process.once('SIGINT', onSigint);
+        process.once('SIGTERM', onSigterm);
 
         try {
             service = new ServiceClass(context, options);
@@ -106,7 +159,9 @@ export default abstract class RunnableService extends MessageService {
 
         } catch (error) {
             Logger.error(`Service startup failed: ${error}`);
-            await shutdown();
+            process.removeListener('SIGINT', onSigint);
+            process.removeListener('SIGTERM', onSigterm);
+            await shutdown(undefined, 1);
             throw error;
         }
     }

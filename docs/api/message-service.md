@@ -163,7 +163,7 @@ RPC handler methods receive up to three parameters:
 ```typescript
 async methodName(
     request: RequestType,    // Decoded request message
-    actor?: string,          // Optional actor identifier from client
+    actor?: string,          // Caller-supplied metadata - NOT authenticated
     correlationId?: string   // Request correlation ID
 ): Promise<ResponseType>
 ```
@@ -197,6 +197,13 @@ async processOrder(request: { orderId: string }): Promise<{ success: boolean }> 
 ```
 
 ## Complete Example
+
+> **`actor` is not authentication.** It is set by the caller and forwarded
+> verbatim — nothing signs or verifies it, and any process that can publish to
+> the bus can publish any value. Use it for tracing and audit logging, never to
+> decide whether an operation is permitted. See
+> [Security model](../advanced/security.md) for how to enforce identity with
+> per-service broker credentials and permissions.
 
 ```typescript
 import { MessageService, IContext } from 'protobus';

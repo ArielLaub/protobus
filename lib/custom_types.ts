@@ -140,9 +140,17 @@ export function getCustomTypeNames(): string[] {
 // Built-in Custom Types
 // ============================================================================
 
+/** Largest value representable in the 32-byte unsigned wire format. */
+export const BIGINT_MAX = 2n ** 256n - 1n;
+
 /**
  * BigInt type - 32 bytes fixed size, big-endian (uint256 compatible)
  * Supports Web3/crypto applications with large integers.
+ *
+ * The wire format is **unsigned**. Values outside [0, 2^256-1] are rejected
+ * with a RangeError rather than coerced — neither taking the absolute value
+ * nor truncating mod 2^256. For financial and on-chain amounts, failing
+ * loudly is the only safe behaviour.
  */
 export const BigIntType: ICustomType<bigint> = {
     name: 'bigint',
@@ -159,8 +167,19 @@ export const BigIntType: ICustomType<bigint> = {
             bi = BigInt(value);
         }
 
+        if (bi < 0n) {
+            throw new RangeError(
+                `bigint value ${bi} is negative; the protobus bigint wire format is unsigned (0 .. 2^256-1)`,
+            );
+        }
+        if (bi > BIGINT_MAX) {
+            throw new RangeError(
+                `bigint value ${bi} exceeds the maximum representable value 2^256-1`,
+            );
+        }
+
         const bytes = new Uint8Array(32);
-        let temp = bi < 0n ? -bi : bi;
+        let temp = bi;
 
         for (let i = 31; i >= 0 && temp > 0n; i--) {
             bytes[i] = Number(temp & 0xffn);

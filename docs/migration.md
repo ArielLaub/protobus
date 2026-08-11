@@ -6,6 +6,8 @@ Guide for upgrading between Protobus versions.
 
 | Protobus | Node.js | RabbitMQ | TypeScript |
 |----------|---------|----------|------------|
+| 2.x | 20+ | 3.8+ | 5.0+ |
+| 1.x | 18+ | 3.8+ | 4.5+ |
 | 0.9.x | 14+ | 3.8+ | 4.0+ |
 | 0.8.x | 12+ | 3.6+ | 3.7+ |
 

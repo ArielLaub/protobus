@@ -19,7 +19,6 @@ A TypeScript microservices framework using RabbitMQ and Protocol Buffers.
 - [MessageService](./api/message-service.md) - Base service class
 - [RunnableService](./api/runnable-service.md) - Service with lifecycle management
 - [ServiceProxy](./api/service-proxy.md) - Client proxy
-- [ServiceCluster](./api/service-cluster.md) - Multi-service orchestration
 - [Events](./api/events.md) - Pub/sub system
 
 ### Advanced Topics
@@ -28,6 +27,9 @@ A TypeScript microservices framework using RabbitMQ and Protocol Buffers.
 - [Error Handling](./advanced/error-handling.md) - Exception patterns
 - [HTTP Routing](./advanced/http-routing.md) - Express integration (experimental)
 - [Custom Logger](./advanced/custom-logger.md) - Logging integration
+- [Structured Logging](./advanced/structured-logging.md) - Opt-in log records and payload diagnostics
+- [Security Model](./advanced/security.md) - What `actor` does and does not prove, redaction, delivery guarantees
+- [Queue Migration](./advanced/queue-migration.md) - Changing `retryDelayMs` or `messageTtlMs` on queues that already exist
 
 ### Operations
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions

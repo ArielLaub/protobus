@@ -21,20 +21,37 @@ export default class EventListener extends BaseListener {
         this.lateAck = true;
         this.allHandler = undefined;
         this.messageFactory = messageFactory;
-        this.defaultHandler = (async (encodedEvent: Buffer) => {
+        this.defaultHandler = (async (
+            encodedEvent: Buffer,
+            _correlationId?: string,
+            _headers?: Record<string, any>,
+            context?: { routingKey?: string },
+        ) => {
             const event = this.messageFactory.decodeEvent(encodedEvent);
             if (this.allHandler) {
                 await this.allHandler(event.data, event.type, event.topic);
             }
-            if (event && event.topic) {
-                const handlers = this.router.match(event.topic);
+            // Prefer the routing key the broker actually delivered on over the
+            // topic carried in the body. They agree for anything published by
+            // EventDispatcher, but the body is publisher-controlled, so trusting
+            // it would let a publisher target handlers its routing key was never
+            // permitted to reach. Falls back to the body topic when no routing
+            // key is available (older connection layers, direct handler calls).
+            const matchTopic = context?.routingKey || event.topic;
+            if (event && matchTopic) {
+                const handlers = this.router.match(matchTopic);
                 if (handlers && handlers.length > 0) {
                     for (const handler of handlers) {
                         await handler(event.data, event.type, event.topic);
                     }
                 }
             } else {
-                Logger.warn(`ignoring unhandled event ${JSON.stringify(event)}`);
+                // Type only — `event.data` is application payload and must not
+                // reach the log. The type is what tells an operator which
+                // publisher is emitting events nothing is subscribed to.
+                Logger.warn(
+                    `ignoring unhandled event of type '${event?.type ?? 'unknown'}' (no topic to route on)`,
+                );
             }
         });
     }

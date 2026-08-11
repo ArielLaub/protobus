@@ -67,12 +67,14 @@ async function runGame() {
     console.log('='.repeat(60));
     console.log();
 
-    // Start the game - tell each player the order and their position
-    for (let i = 0; i < players.length; i++) {
-        const player = players[i];
-        // Call initiateGame on each player to set up their game state
-        // Player at index 0 will take the first turn
-        await (player as any).initiateGame({ playerOrder, myIndex: i });
+    // Start the game - tell each player the order and their position.
+    //
+    // Index 0 is initiated LAST because its initiateGame takes the first turn
+    // inline, and that turn ends by publishing TurnComplete. Every other player
+    // must already know the turn order by then, or the one whose turn is next
+    // cannot find itself in `playerOrder` and the chain stops after one turn.
+    for (let i = players.length - 1; i >= 0; i--) {
+        await (players[i] as any).initiateGame({ playerOrder, myIndex: i });
     }
 
     // Wait for game to complete (check for winner)

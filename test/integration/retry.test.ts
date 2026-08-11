@@ -89,8 +89,7 @@ describe('Retry and DLQ tests', () => {
         await context.init(AMQP_CONNECTION_STRING, []);
 
         // Load proto
-        (protobuf.parse as any).filename = 'retry.proto';
-        (context.factory as any).root = protobuf.parse(proto).root;
+        (context.factory as any).root = protobuf.parse(proto, { keepCase: true }).root;
 
         // Create service with retry enabled (3 retries, 100ms delay)
         service = new RetryTestService(context, 3, 100);

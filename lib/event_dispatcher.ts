@@ -73,7 +73,9 @@ export default class EventDispatcher {
         try {
             event = this.messageFactory.buildEvent(type, content, topic);
         } catch (error) {
-            console.error(`failed building event '${type}' from ${JSON.stringify(content)}\n${error}`);
+            // Via Logger (not console) so it honours the level and any custom
+            // sink, and without the payload — events carry PII too.
+            Logger.error(`failed building event '${type}': ${(error as any)?.message ?? error}`);
             throw new InvalidMessageError();
         }
         return this.connection.publish(this.channel, Config.eventsExchangeName, topic,

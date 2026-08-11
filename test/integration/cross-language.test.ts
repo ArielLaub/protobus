@@ -115,8 +115,8 @@ describe('Cross-language: TS client → Python server', () => {
         // resolves the same way it does on the Python side.
         context = new Context();
         await context.init(AMQP_URL, []);
-        (protobuf.parse as any).filename = 'streaming_test.proto';
-        const root = protobuf.loadSync(PROTO_FILE);
+        const root = new protobuf.Root();
+        root.loadSync(PROTO_FILE, { keepCase: true });
         (context.factory as any).root = root;
 
         proxy = new ServiceProxy(context, 'streaming_test.Counter');

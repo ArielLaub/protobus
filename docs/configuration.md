@@ -177,20 +177,6 @@ class MyService extends MessageService {
 }
 ```
 
-### ServiceCluster Configuration
-
-```typescript
-const cluster = new ServiceCluster(context);
-
-// Add service with listener count
-cluster.use(MyService, 3);  // 3 concurrent listeners
-
-// Optional: HTTP base path for routing
-cluster.use(MyService, 1, '/api/myservice');
-
-await cluster.init();
-```
-
 ## Queue Configuration
 
 Protobus creates queues with the following defaults:

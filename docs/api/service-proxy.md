@@ -279,4 +279,4 @@ class OrderService extends MessageService {
 
 ---
 
-Next: [ServiceCluster](./service-cluster.md) | [Events](./events.md)
+Next: [Events](./events.md)

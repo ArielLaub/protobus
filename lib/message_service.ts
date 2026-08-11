@@ -2,10 +2,20 @@ import { Logger } from './logger';
 import { IContext } from './context';
 import MessageListener from './message_listener';
 import EventListener, { EventHandler } from './event_listener';
-import { isHandledError } from './errors';
+import CancelListener from './cancel_listener';
+import { isHandledError, sanitizeErrorForClient } from './errors';
 // HandledError is re-exported for users, isHandledError is used by MessageListener
 export { HandledError, isHandledError } from './errors';
 import * as fs from 'fs';
+
+/**
+ * The final dot-separated segment — the bare method name in both
+ * `Combat.Player.shoot` and `REQUEST.Combat.Player.player6.shoot`.
+ */
+function lastSegment(value: string): string {
+    const i = value.lastIndexOf('.');
+    return i === -1 ? value : value.slice(i + 1);
+}
 
 export class InvalidResultError extends Error {}
 export class InvalidMethodError extends Error {}
@@ -40,6 +50,17 @@ export const DEFAULT_RETRY_OPTIONS: Required<Omit<RetryOptions, 'messageTtlMs'>>
 export interface IMessageServiceOptions {
     maxConcurrent?: number;
     retry?: RetryOptions;
+    /**
+     * Ack after the handler completes (default) rather than on delivery.
+     *
+     * Defaults to true. Acking on delivery disables the retry / DLQ /
+     * error-reply path in the connection layer entirely: the message is
+     * dropped and the caller waits for a reply that never comes. Set this to
+     * false only for genuine at-most-once delivery with no error reporting.
+     */
+    lateAck?: boolean;
+    /** Per-message processing timeout. Defaults to Config.messageProcessingTimeout. */
+    processingTimeoutMs?: number;
 }
 
 export default abstract class MessageService implements IMessageService {
@@ -47,6 +68,7 @@ export default abstract class MessageService implements IMessageService {
 
     private listener: MessageListener;
     private eventListener: EventListener;
+    private cancelListener: CancelListener;
     private retryOptions: Required<Omit<RetryOptions, 'messageTtlMs'>> & Pick<RetryOptions, 'messageTtlMs'>;
 
     constructor (context: IContext, options: IMessageServiceOptions = {}) {
@@ -57,11 +79,13 @@ export default abstract class MessageService implements IMessageService {
         };
         this.listener = new MessageListener(
             context.connection,
-            !!options.maxConcurrent,
+            options.lateAck ?? true,
             options.maxConcurrent,
-            this.retryOptions
+            this.retryOptions,
+            options.processingTimeoutMs,
         );
         this.eventListener = new EventListener(context.connection, context.factory);
+        this.cancelListener = new CancelListener(context.connection);
     }
 
     public abstract get ServiceName(): string;
@@ -84,24 +108,104 @@ export default abstract class MessageService implements IMessageService {
         return this.eventListener.subscribe(type, handler, topic);
     }
 
+    /**
+     * Make sure this service's schema is in the factory's root.
+     *
+     * Registering here makes a service self-sufficient rather than relying on
+     * the schema arriving via Context.init(protoLocations). Skipped when the
+     * schema is already present, so passing a proto directory as well still
+     * works.
+     */
+    private registerSchema(): void {
+        if (this.context.factory.hasService(this.ServiceName)) {
+            return;
+        }
+        this.context.factory.parse(this.Proto, this.ServiceName);
+    }
+
     public async init(): Promise<void> {
         try {
+            this.registerSchema();
             await this.listener.init(this._onMessage.bind(this), this.ServiceName);
             await this.eventListener.init(undefined, `${this.ServiceName}.Events`);
             await this.listener.subscribe(`REQUEST.${this.ServiceName}.*`);
             await this.listener.start();
             await this.eventListener.start();
+            // Started last: it only matters once requests can arrive.
+            await this.cancelListener.start();
         } catch (err) {
             Logger.error(`error initializing service ${this.ServiceName} - ${err}\n${err.stack}`);
             throw err;
         }
     }
 
+    /**
+     * Stop accepting new requests and events, leaving channels open so work
+     * already in hand can finish. The first step of a graceful shutdown; pair
+     * it with `connection.drainInFlight()` before closing anything.
+     */
+    public async stopConsuming(): Promise<void> {
+        await Promise.all([
+            this.listener.stopConsuming(),
+            this.eventListener.stopConsuming(),
+            // Closed with the rest: a drained service has no stream left to cancel.
+            this.cancelListener.close(),
+        ]);
+    }
+
     // core handler for incoming RPC requests made to REQUEST.<service name>.*
-    private async _onMessage(data: any, id: string, _headers?: Record<string, any>) {
+    private async _onMessage(
+        data: any,
+        id: string,
+        _headers?: Record<string, any>,
+        context?: { routingKey?: string } | string,
+    ) {
         const request = this.context.factory.decodeRequest(data);
-        const method = request.method.split('.')[2]; // <package>.<service>.<method>
+        const method = lastSegment(request.method); // <package>.<service>.<method>
         Logger.debug(`received request ${request.method} (${id})`);
+
+        // The method to run comes from the message body, so it must be checked
+        // against what the broker actually routed and against this service's
+        // own name. Without this, a client that can publish to the bus picks the
+        // method regardless of the routing key — which makes RabbitMQ topic
+        // permissions unenforceable and lets one service's request schema be
+        // paired with another service's handler.
+        const routingKey = typeof context === 'string' ? context : context?.routingKey;
+        // Passed on to the service method as a 4th argument. A streaming
+        // handler watches `signal` to stop producing when the caller cancels;
+        // it also fires on the processing timeout.
+        const handlerContext = typeof context === 'string' ? undefined : context;
+        const rejectDispatch = (reason: string) => {
+            const error = new InvalidMethodError(reason);
+            Logger.error(reason);
+            return this.context.factory.buildResponse(request.method, error);
+        };
+
+        // Both checks are expressed against the routing key rather than the
+        // service name, so they hold when a service's runtime name differs
+        // from the name declared in its .proto — several instances may share
+        // one schema, with the proto method `Combat.Player.shoot` addressed by
+        // routing key `REQUEST.Combat.Player.player6.shoot`.
+        //
+        //   1. The delivery belongs to THIS service — checked against the
+        //      routing key the broker used, not against the body, since the
+        //      body is publisher-controlled.
+        //   2. The method the body asks for is the method the routing key
+        //      names, so a client that can publish cannot route to one method
+        //      and have another executed. This is what keeps RabbitMQ topic
+        //      permissions meaningful.
+        if (routingKey !== undefined) {
+            if (!routingKey.startsWith(`REQUEST.${this.ServiceName}.`)) {
+                return rejectDispatch(
+                    `routing key ${routingKey} does not belong to service ${this.ServiceName}`,
+                );
+            }
+            if (lastSegment(routingKey) !== lastSegment(request.method)) {
+                return rejectDispatch(
+                    `request method ${request.method} contradicts routing key ${routingKey}`,
+                );
+            }
+        }
 
         const handler = (<any>this)[method];
         if (!handler || typeof handler !== 'function') {
@@ -116,7 +220,7 @@ export default abstract class MessageService implements IMessageService {
         // in a ResponseContainer; the connection layer publishes them with
         // x-protobus-final headers. See docs/advanced/streaming.md.
         if (this.context.factory.isStreamingMethod(request.method)) {
-            const iter = handler.call(this, request.data, request.actor, id);
+            const iter = handler.call(this, request.data, request.actor, id, handlerContext);
             if (!iter || typeof iter[Symbol.asyncIterator] !== 'function') {
                 const error = new InvalidResultError(
                     `streaming method ${method} must return an AsyncIterable`,
@@ -129,7 +233,7 @@ export default abstract class MessageService implements IMessageService {
         // Unary path
         let p: any;
         try {
-            p = handler.call(this, request.data, request.actor, id);
+            p = handler.call(this, request.data, request.actor, id, handlerContext);
         } catch (error) {
             // Synchronous throw from the handler — handled-vs-unhandled split below.
             return this.handleUnaryError(request.method, error);
@@ -139,7 +243,8 @@ export default abstract class MessageService implements IMessageService {
         }
         try {
             const result = await p;
-            Logger.debug(`sending result ${request.method} (${JSON.stringify(result)})`);
+            // No payload in the log line — responses carry secrets and PII.
+            Logger.debug(`sending result ${request.method} (${id})`);
             return this.context.factory.buildResponse(request.method, result);
         } catch (error) {
             return this.handleUnaryError(request.method, error);
@@ -171,7 +276,12 @@ export default abstract class MessageService implements IMessageService {
         // error via a well-known symbol — see __PROTOBUS_RESPONSE_BUFFER below.
         if (error && typeof error === 'object') {
             try {
-                (error as any).__PROTOBUS_RESPONSE_BUFFER = this.context.factory.buildResponse(method, error);
+                // What the CALLER sees is sanitized; what we log below is the
+                // real error. An unhandled exception's message is written for
+                // this service's operators, not for another service.
+                (error as any).__PROTOBUS_RESPONSE_BUFFER = this.context.factory.buildResponse(
+                    method, sanitizeErrorForClient(error),
+                );
             } catch (encodeErr) {
                 // If we can't encode the error, fall back to throwing without
                 // a buffer. The client will time out — better than crashing here.
@@ -202,7 +312,9 @@ export default abstract class MessageService implements IMessageService {
             if (error) {
                 Logger.error((error as any).stack || (error as any).message || String(error));
             }
-            yield this.context.factory.buildResponse(method, error);
+            // Same boundary as the unary path: the stream's terminal error is
+            // published to the caller, so it gets the sanitized form.
+            yield this.context.factory.buildResponse(method, sanitizeErrorForClient(error));
         }
     }
 }

@@ -32,6 +32,7 @@ message TickRequest {
     int32 count = 1;
     int32 fail_at = 2;
     bool emit_nothing = 3;
+    int32 delay_ms = 4;
 }
 
 message Tick {
@@ -61,18 +62,34 @@ class CounterService extends MessageService {
      * proto. The framework auto-detects this via the responseStream flag on
      * the method descriptor and routes each yielded value as a chunk.
      */
-    public async *tick(request: any): AsyncIterable<any> {
+    /** Observable state for the cancellation tests. */
+    public produced = 0;
+    public sawAbort = false;
+    public finished = false;
+
+    public async *tick(request: any, _actor?: string, _id?: string, context?: any): AsyncIterable<any> {
         const count: number = request.count || 0;
         const failAt: number = request.fail_at || 0;
         const emitNothing: boolean = request.emit_nothing === true;
 
         if (emitNothing) return;
 
-        for (let i = 0; i < count; i++) {
-            if (failAt && i >= failAt) {
-                throw new HandledError(`deliberate failure at chunk ${i}`, 'TEST_FAIL');
+        this.finished = false;
+        try {
+            for (let i = 0; i < count; i++) {
+                if (failAt && i >= failAt) {
+                    throw new HandledError(`deliberate failure at chunk ${i}`, 'TEST_FAIL');
+                }
+                // A long stream stops here when the caller cancels.
+                if (context?.signal?.aborted) { this.sawAbort = true; return; }
+                this.produced = i + 1;
+                yield { seq: i, payload: `chunk-${i}` };
+                if (request.delay_ms) {
+                    await new Promise((r) => setTimeout(r, request.delay_ms));
+                }
             }
-            yield { seq: i, payload: `chunk-${i}` };
+        } finally {
+            this.finished = true;
         }
     }
 }
@@ -88,8 +105,7 @@ describe('Streaming RPC integration', () => {
         context = new Context();
         await context.init(AMQP_CONNECTION_STRING, []);
         // Inline proto parse — matches the existing message_service.test.ts pattern.
-        (protobuf.parse as any).filename = 'streaming_test.proto';
-        (context.factory as any).root = protobuf.parse(proto).root;
+        (context.factory as any).root = protobuf.parse(proto, { keepCase: true }).root;
 
         svc = new CounterService(context);
         await svc.init();
@@ -116,6 +132,64 @@ describe('Streaming RPC integration', () => {
         it('returns false (no throw) for unknown methods', () => {
             expect(context.factory.isStreamingMethod('streaming_test.Counter.nope')).toBe(false);
         });
+    });
+
+    describe('cancellation', () => {
+        it('stops the producer when the caller breaks out of the loop', async () => {
+            svc.produced = 0;
+            const received: any[] = [];
+
+            for await (const tick of client.tick({ count: 200, delay_ms: 20 })) {
+                received.push(tick);
+                if (received.length === 3) break;
+            }
+
+            expect(received).toHaveLength(3);
+
+            // Give the cancel time to reach the service and take effect.
+            const producedAtBreak = svc.produced;
+            await new Promise((r) => setTimeout(r, 300));
+            expect(svc.sawAbort).toBe(true);
+            // An endless generator ticking every 10ms would have produced ~30
+            // more by now had nothing stopped it.
+            expect(svc.produced).toBeLessThan(producedAtBreak + 10);
+            expect(svc.finished).toBe(true);
+        }, 20000);
+
+        it('stops the producer when an AbortSignal fires outside the loop', async () => {
+            svc.produced = 0;
+            const stop = new AbortController();
+            const received: any[] = [];
+
+            // The shape a Stop button takes: aborted from elsewhere, not from
+            // inside the consuming loop.
+            setTimeout(() => stop.abort(), 120);
+
+            try {
+                for await (const tick of client.tick({ count: 200, delay_ms: 20 }, undefined, 10000, { signal: stop.signal })) {
+                    received.push(tick);
+                }
+            } catch {
+                // Ending an abandoned stream may surface as a throw; either way
+                // the loop is over, which is what matters here.
+            }
+
+            expect(received.length).toBeGreaterThan(0);
+
+            const producedAtStop = svc.produced;
+            await new Promise((r) => setTimeout(r, 300));
+
+            expect(svc.sawAbort).toBe(true);
+            expect(svc.produced).toBeLessThan(producedAtStop + 10);
+        }, 20000);
+
+        it('leaves an uncancelled stream completely unaffected', async () => {
+            const ticks: any[] = [];
+            for await (const tick of client.tick({ count: 4 })) {
+                ticks.push(tick);
+            }
+            expect(ticks.map((t) => t.payload)).toEqual(['chunk-0', 'chunk-1', 'chunk-2', 'chunk-3']);
+        }, 20000);
     });
 
     describe('backward compat', () => {

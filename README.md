@@ -200,7 +200,6 @@ See [CLI Documentation](docs/cli.md) for details.
 | [MessageService](docs/api/message-service.md) | Base class for implementing services |
 | [RunnableService](docs/api/runnable-service.md) | MessageService with lifecycle management |
 | [ServiceProxy](docs/api/service-proxy.md) | Client for calling remote services |
-| [ServiceCluster](docs/api/service-cluster.md) | Managing multiple service instances |
 | [Events](docs/api/events.md) | Pub/sub event system |
 | [Custom Types](docs/api/custom-types.md) | Extending Protobuf with custom serialization |
 | [CLI](docs/cli.md) | Type generation and service scaffolding |
@@ -224,7 +223,7 @@ See [CLI Documentation](docs/cli.md) for details.
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+ (enforced by the `engines` field; CI tests 20, 22 and 24)
 - RabbitMQ 3.8+
 
 ## Running Tests
