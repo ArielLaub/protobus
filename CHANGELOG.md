@@ -11,9 +11,15 @@ each asynchronous boundary **truthful**: a publish completes on a broker
 confirm, routing failures are observable, and acknowledgements happen only
 after a durable handoff.
 
-This is a major release because the delivery contract changed. Source-level APIs
-are unchanged — but timing and failure modes are not, so read
-**Changed behaviour** before upgrading.
+**Upgrading from 1.4.1.** Versions 1.4.2 and 1.5.0 were never published to npm;
+their fixes are included here, so the real upgrade path is 1.4.1 → 2.0.0.
+
+This is a major release because the delivery contract changed. Most source-level
+APIs are unchanged, but four things are genuinely breaking — protobufjs 8, proto3
+zero values decoding as `0` rather than `undefined`, the new cancellation
+exchange, and Node >= 20. Read **Breaking changes** and **Changed behaviour**
+before upgrading; the proto3 one can alter which branch your code takes without
+raising an error.
 
 ### Changed behaviour — delivery semantics
 
@@ -232,7 +238,10 @@ are unchanged — but timing and failure modes are not, so read
   been revoked. A test now fails the build if anything outside the allowlist —
   or matching a secret pattern — would be published.
 
-## [1.5.0] — 2026-08-03
+## [1.5.0] — 2026-08-03 (never published)
+
+Released as part of 2.0.0 rather than to npm. Recorded here because the commits
+exist and 2.0.0 contains this work.
 
 Audit follow-up: bug fixes, no new features. Every new parameter is optional and
 no existing signature changed incompatibly.
@@ -363,7 +372,7 @@ behaviour was silently wrong; see **Changed behaviour**.
   machinery previously had no unit tests at all, which is why the defects above
   survived.
 
-## [1.4.2] — 2026-08-03
+## [1.4.2] — 2026-08-03 (never published)
 
 ### Security
 
