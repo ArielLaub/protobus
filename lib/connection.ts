@@ -61,6 +61,16 @@ export type MessageHandlerResult = Buffer | void | AsyncIterable<Buffer>;
 export interface MessageHandlerContext {
     signal: AbortSignal;
     routingKey: string;
+    /**
+     * Stable across every redelivery and every retry hop of the same logical
+     * message, which is what makes deduplication possible: an ambiguous
+     * publish outcome can leave two copies on the bus, and this is the only
+     * thing that identifies them as one. Undefined only for a message
+     * published by something that did not set it.
+     */
+    messageId?: string;
+    /** The broker has delivered this message before. */
+    redelivered: boolean;
 }
 
 export type MessageHandler = (
@@ -522,6 +532,8 @@ export default class Connection extends EventEmitter implements IConnection {
                     messageHandler(msg.content, correlationId, headers, {
                         signal: controller.signal,
                         routingKey: msg.fields.routingKey,
+                        messageId: msg.properties.messageId,
+                        redelivered: msg.fields.redelivered === true,
                     }),
                     expiry,
                 ]);
@@ -619,6 +631,12 @@ export default class Connection extends EventEmitter implements IConnection {
                                     {
                                         persistent: true,
                                         correlationId,
+                                        // Carried through so the retried copy
+                                        // is recognisable as the same logical
+                                        // message. Omitting it minted a fresh
+                                        // id per hop, which is precisely when
+                                        // a consumer needs the old one.
+                                        messageId: msg.properties.messageId,
                                         replyTo,
                                         headers: retryHeaders,
                                     },
@@ -630,6 +648,7 @@ export default class Connection extends EventEmitter implements IConnection {
                                 await this.publishToQueue(channel, retryOptions.retryQueueName, msg.content, {
                                     persistent: true,
                                     correlationId,
+                                    messageId: msg.properties.messageId,
                                     replyTo,
                                     headers: retryHeaders,
                                 });
@@ -657,6 +676,7 @@ export default class Connection extends EventEmitter implements IConnection {
                             await this.publishToQueue(channel, retryOptions.dlqName, msg.content, {
                                 persistent: true,
                                 correlationId,
+                                messageId: msg.properties.messageId,
                                 headers: dlqHeaders,
                             });
                             await this.ack(channel, msg);
