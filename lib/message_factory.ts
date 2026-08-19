@@ -15,6 +15,10 @@ import {
 
 export class MessageTypeRequiredError extends Error {}
 export class NotInitializedError extends Error {}
+/** A name that is not of the form `<package>.<Service>.<method>`. */
+export class InvalidMethodNameError extends Error {}
+/** A well-formed name whose method is not declared by the named service. */
+export class UnknownMethodError extends Error {}
 
 /**
  * Every parse this module performs passes `keepCase: true` explicitly — the
@@ -277,12 +281,37 @@ export default class MessageFactory {
     constructor() {
     }
 
+    /**
+     * Split a fully-qualified method name into its service and method halves.
+     *
+     * Parsed from the RIGHT: the method is the final segment and the service is
+     * everything before it. Counting segments from the left instead assumes a
+     * single-segment package, so `com.example.Calc.add` looked for a service
+     * named `com.example`. It also left the trailing segments unexamined, which
+     * is what let a name carry a fourth segment past the method.
+     */
+    public static splitMethodName(fullName: string): { serviceName: string; methodName: string } {
+        const i = typeof fullName === 'string' ? fullName.lastIndexOf('.') : -1;
+        if (i <= 0 || i === fullName.length - 1) {
+            throw new InvalidMethodNameError(
+                `'${fullName}' is not a fully-qualified method name (<package>.<Service>.<method>)`,
+            );
+        }
+        return { serviceName: fullName.slice(0, i), methodName: fullName.slice(i + 1) };
+    }
+
     private getMethodType(fullName: string): protoBuf.Method  {
-        const nameParts = fullName.split('.');
-        const serviceName = `${nameParts[0]}.${nameParts[1]}`;
-        const methodName = nameParts[2];
+        const { serviceName, methodName } = MessageFactory.splitMethodName(fullName);
         const TService = this.root.lookupService(serviceName);
-        return TService.methods[methodName];
+        const method = TService.methods[methodName];
+        if (!method) {
+            // Returning undefined made the caller fail on a property access
+            // several frames away, naming neither the method nor the service.
+            throw new UnknownMethodError(
+                `service '${serviceName}' declares no method '${methodName}'`,
+            );
+        }
+        return method;
     }
 
     /**
