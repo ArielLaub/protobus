@@ -66,11 +66,16 @@ export default class ServiceProxy {
                         Logger.error(`failed building message '${TMethod.requestType}': ${(error as any)?.message ?? error}`);
                         throw new InvalidRequestError('failed parsing message');
                     }
+                    // The delivery error is raised as it stands. Collapsing
+                    // everything into one PublishMessageError threw away the
+                    // distinction the whole publish path exists to report:
+                    // UnroutableError and PublishNackedError are definite
+                    // failures a caller may safely retry, while
+                    // PublishConfirmTimeoutError and ChannelClosedError are
+                    // ambiguous and retrying either can duplicate. The
+                    // messageId that makes deduplication possible rides on the
+                    // error too. See docs/advanced/security.md.
                     return this.context.publishMessage(buffer, `REQUEST.${methodFullName}`, rpc, timeoutMs)
-                        .catch((error) => {
-                            Logger.error(error);
-                            throw new PublishMessageError(`failed dispatching request to ${methodFullName}`);
-                        })
                         .then((responseData) => {
                             if (rpc === false) {
                                 Logger.debug('recieved non rpc result sending back empty answer');
