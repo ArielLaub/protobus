@@ -239,8 +239,12 @@ export const TimestampType: ICustomType<Date> = {
     decode(data: number | bigint | { low: number; high: number }): Date {
         // Handle Long type from protobufjs
         if (typeof data === 'object' && data !== null && 'low' in data && 'high' in data) {
-            // Convert Long to number (safe for timestamps until year 275760)
-            const num = (data.high >>> 0) * 0x100000000 + (data.low >>> 0);
+            // The high word is SIGNED: every instant before 1970 has its sign
+            // bit set, and coercing that away with `>>> 0` turns the whole
+            // value into a large positive one — far enough out of range that
+            // the Date is Invalid rather than merely wrong. Only the low word
+            // is unsigned, being the bottom 32 bits of the magnitude.
+            const num = data.high * 0x100000000 + (data.low >>> 0);
             return new Date(num);
         }
         return new Date(Number(data));
