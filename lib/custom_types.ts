@@ -140,6 +140,9 @@ export function getCustomTypeNames(): string[] {
 // Built-in Custom Types
 // ============================================================================
 
+/** Width of the bigint wire format, in bytes. */
+export const BIGINT_BYTES = 32;
+
 /** Largest value representable in the 32-byte unsigned wire format. */
 export const BIGINT_MAX = 2n ** 256n - 1n;
 
@@ -178,10 +181,10 @@ export const BigIntType: ICustomType<bigint> = {
             );
         }
 
-        const bytes = new Uint8Array(32);
+        const bytes = new Uint8Array(BIGINT_BYTES);
         let temp = bi;
 
-        for (let i = 31; i >= 0 && temp > 0n; i--) {
+        for (let i = BIGINT_BYTES - 1; i >= 0 && temp > 0n; i--) {
             bytes[i] = Number(temp & 0xffn);
             temp >>= 8n;
         }
@@ -192,6 +195,18 @@ export const BigIntType: ICustomType<bigint> = {
     decode(data: Buffer | Uint8Array): bigint {
         if (!data || data.length === 0) {
             return 0n;
+        }
+
+        // The accumulator below shifts a growing bigint once per byte, so its
+        // cost is quadratic in the input length. The encoder never emits more
+        // than BIGINT_BYTES, so anything longer is malformed and there is no
+        // reason to spend the time finding out what it decodes to: a 1 MiB
+        // value takes over a minute, on the event loop, before a handler runs.
+        if (data.length > BIGINT_BYTES) {
+            throw new RangeError(
+                `bigint wire value is ${data.length} bytes; the protobus bigint ` +
+                `wire format is at most ${BIGINT_BYTES}`,
+            );
         }
 
         let result = 0n;
