@@ -532,24 +532,49 @@ export default class MessageFactory {
         }
     }
 
-    public decodeRequest(data: Buffer): IRequestContainer {
+    /** Method names declared by a service, in declaration order. */
+    public getServiceMethodNames(serviceFullName: string): string[] {
+        return Object.keys(this.root.lookupService(serviceFullName).methods);
+    }
+
+    /**
+     * Decode the request envelope only, leaving `data` as the undecoded payload.
+     *
+     * Separate from the payload decode so a caller can check which method the
+     * envelope names *before* interpreting the bytes. Decoding first means
+     * choosing the schema from a publisher-controlled field, which is how one
+     * service's payload ends up parsed as another's.
+     */
+    public decodeRequestEnvelope(data: Buffer): IRequestContainer {
         const request = RequestContainer.decode(data);
-        const TMethod = this.getMethodType(request.method);
         const result = request.toJSON();
+        return { method: result.method, actor: result.actor, data: request.data };
+    }
+
+    /** Decode a request payload against the declared request type of `methodFullName`. */
+    public decodeRequestPayload(methodFullName: string, payload: Buffer): any {
+        const TMethod = this.getMethodType(methodFullName);
+        return this.decodeMessage(TMethod.requestType, payload);
+    }
+
+    public decodeRequest(data: Buffer): IRequestContainer {
+        const envelope = this.decodeRequestEnvelope(data);
         return {
-            method: result.method,
-            data: this.decodeMessage(TMethod.requestType, request.data),
-            actor: result.actor
+            method: envelope.method,
+            data: this.decodeRequestPayload(envelope.method, envelope.data),
+            actor: envelope.actor,
         };
     }
 
     public buildResponse(methodFullName: string, obj: any): Buffer {
         if (!this.isInitialized) throw new NotInitializedError('message factory not initialized');
         let response = undefined;
-        const TMethod = this.getMethodType(methodFullName);
-        const messageType = TMethod.responseType;
 
         if (obj instanceof Error) {
+            // No method lookup on this path: an error response carries the
+            // method only as a label, and resolving it would make a failure
+            // that is *about* an unknown method impossible to report — leaving
+            // the caller to wait out its whole RPC timeout instead.
             response = ResponseContainer.create({
                 error: ResponseError.create({
                     method: methodFullName,
@@ -558,6 +583,7 @@ export default class MessageFactory {
                 }),
             });
         } else {
+            const messageType = this.getMethodType(methodFullName).responseType;
             const Message = this.root.lookupType(messageType);
             try {
                 // OPTIMIZATION: Skip preprocessing if message has no custom types
