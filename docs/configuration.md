@@ -41,7 +41,7 @@ budget deliberately rather than leaving both at the default.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEFAULT_PREFETCH` | `1` | Unacked messages a late-ack consumer will hold when `maxConcurrent` is unset |
+| `DEFAULT_PREFETCH` | `1` | Unacked messages a late-ack consumer will hold when `maxConcurrent` is unset. See [Concurrency](#concurrency) |
 | `MAX_OUTSTANDING_CONFIRMS` | `256` | Publishes awaiting a confirm on one channel before further publishes park |
 | `STREAM_MAX_BUFFERED_CHUNKS` | `1024` | Chunks buffered for one unconsumed streaming call |
 | `STREAM_MAX_BUFFERED_BYTES` | `67108864` | Bytes buffered for one unconsumed streaming call (64 MiB) |
@@ -52,6 +52,26 @@ budget deliberately rather than leaving both at the default.
 |----------|---------|-------------|
 | `PROTOBUS_EXPOSE_INTERNAL_ERRORS` | `true` | Send an unhandled error's message back to the caller. See [Security](./advanced/security.md) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, or `silent` |
+
+### Concurrency
+
+`maxConcurrent` is the consumer prefetch, and it defaults to **1**: a replica
+handles one request at a time, holding the slot until the handler returns and
+its reply is away.
+
+For unary handlers that is a deliberate, conservative default. **For streaming
+it is usually wrong.** A streaming handler keeps its slot for the entire life
+of the stream, so a service answering minute-long token streams with the
+default serves exactly one caller per replica and queues everyone else:
+
+```typescript
+// A streaming service almost always wants this set.
+const service = new AssistantService(context, { maxConcurrent: 8 });
+```
+
+Raise it to the number of concurrent messages one replica should be working on.
+It bounds memory as well as throughput — with late ack, the broker will push up
+to this many unacknowledged messages into the process.
 
 ### Heartbeats
 
@@ -234,12 +254,10 @@ class MyService extends MessageService {
     public get ProtoFileName(): string {
         return __dirname + '/service.proto';
     }
-
-    // Optional: Maximum concurrent messages (default: unlimited)
-    public get maxConcurrent(): number {
-        return 10;
-    }
 }
+
+// Concurrency is a constructor option, not an override. Default 1.
+const service = new MyService(context, { maxConcurrent: 10 });
 ```
 
 ## Queue Configuration

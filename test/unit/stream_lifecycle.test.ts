@@ -75,6 +75,23 @@ describe('streaming call lifetime', () => {
         expect(cancels).toHaveLength(1);
     });
 
+    it('wakes a consumer parked on the next chunk when the caller aborts', async () => {
+        const d = dispatcher(fakeConnection());
+        const ac = new AbortController();
+        // A long idle allowance, so only the abort can end this.
+        const iter = d.publishStreaming(Buffer.alloc(0), 'REQUEST.X.Y.z', 60000, { signal: ac.signal });
+        const it = iter[Symbol.asyncIterator]();
+
+        const pending = it.next();
+        await flush();
+        ac.abort();
+
+        await expect(Promise.race([
+            pending,
+            new Promise((_r, reject) => setTimeout(() => reject(new Error('parked forever')), 500)),
+        ])).resolves.toMatchObject({ done: true });
+    });
+
     it('publishes nothing for a call whose signal is already aborted', async () => {
         const conn = fakeConnection();
         const d = dispatcher(conn);

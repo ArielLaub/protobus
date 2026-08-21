@@ -492,6 +492,15 @@ export default class MessageDispatcher implements IMessageDispatcher {
             stream.bufferedBytes = 0;
             if (!opts.notifyOnly) {
                 stream.ended = true;
+                // Wake a consumer parked on the next chunk so it observes the
+                // end. Cancelling also stands the idle deadline down, so
+                // without this there is nothing left to release the caller and
+                // its `for await` waits for a chunk nobody will ever send.
+                // The idle path passes notifyOnly and raises its own error.
+                const wake = stream.resolveNext;
+                stream.resolveNext = undefined;
+                stream.rejectNext = undefined;
+                if (wake) { wake(); }
             }
 
             Logger.debug(`cancelling stream ${id}`);

@@ -66,7 +66,7 @@
     "test:unit": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:integration": "docker compose up -d --wait && jest --config jest.integration.config.js; docker compose down",
+    "test:integration": "docker compose up -d --wait && { jest --config jest.integration.config.js; status=$?; docker compose down; exit $status; }",
     "test:integration:watch": "jest --config jest.integration.config.js --watch",
     "docker:up": "docker compose up -d --wait",
     "docker:down": "docker compose down",

@@ -77,8 +77,19 @@ function createMessageClass(customType: ICustomType): typeof Message {
 }
 
 /**
- * Register a custom type globally.
- * This registers the protobufjs wrapper and stores the type definition.
+ * Register a custom type, process-wide.
+ *
+ * Two pieces of shared state are written: `protoBuf.wrappers`, which is
+ * protobufjs's own module-level table and is therefore shared with every other
+ * consumer of protobufjs in the process, and `customTypeRegistry` below. Names
+ * are global as a result — the last registration of a name wins, and every
+ * MessageFactory sees it.
+ *
+ * Note this is the module-level state that message_factory.ts deliberately
+ * avoids writing for parse options. The difference is not principle but
+ * mechanism: protobufjs resolves a wrapper by fully-qualified type name at
+ * encode and decode time with no per-root table to put it in, so there is
+ * nowhere else for it to live.
  */
 export function registerCustomType(customType: ICustomType): typeof Message {
     const MessageClass = createMessageClass(customType);

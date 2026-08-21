@@ -324,8 +324,8 @@ TypeError: proxy.myMethod is not a function
 
 1. **Unbounded message accumulation**
    ```typescript
-   // Limit concurrent processing
-   get maxConcurrent() { return 10; }
+   // Bound how many unacked messages the broker pushes at this replica.
+   const service = new MyService(context, { maxConcurrent: 10 });
    ```
 
 2. **Large messages**

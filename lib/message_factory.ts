@@ -339,8 +339,18 @@ export default class MessageFactory {
     }
 
     /**
-     * Register a custom type with this MessageFactory instance.
-     * The type will be available for use in .proto files.
+     * Register a custom type and add it to this factory's root.
+     *
+     * **The registration is process-wide, not per instance.** The type's
+     * codec goes into protobufjs's module-level `wrappers` table and into a
+     * module-level registry, both shared by everything in the process — so a
+     * type registered through one factory is visible to
+     * `isCustomType`/`getCustomType` everywhere, and two factories cannot hold
+     * different definitions of the same name. Only the addition to `root` is
+     * per instance.
+     *
+     * The built-in `bigint` and `timestamp` are registered the same way, at
+     * import time, before any factory exists.
      *
      * @param customType - The custom type definition
      * @returns The generated Message class for the type
