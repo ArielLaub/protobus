@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 
-import { IConnection, Channel, PublishOptions } from './connection';
+import { IConnection, Channel, PublishOptions, attachRestorer } from './connection';
 import Config from './config';
 import { Logger } from './logger';
 import CallbackListener from './callback_listener';
@@ -101,7 +101,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
 
     private _isInitialized: boolean = false;
     public get isInitialized() { return this._isInitialized; }
-    private _boundOnReconnected: () => void;
+    private _detachRestorer: () => void;
     private _boundOnDisconnected: () => void;
 
     constructor(connection: IConnection) {
@@ -111,11 +111,13 @@ export default class MessageDispatcher implements IMessageDispatcher {
         this.pendingStreams = new Map<string, StreamEntry>();
         this.callbackListener = new CallbackListener(this.connection);
 
-        // Listen for connection events (store bound refs for proper cleanup)
-        this._boundOnReconnected = this._onReconnected.bind(this);
+        // The channel is restored under the connection's coordination, so a
+        // caller reacting to 'reconnected' by publishing finds one waiting.
         this._boundOnDisconnected = this._onDisconnected.bind(this);
         this.connection.on('disconnected', this._boundOnDisconnected);
-        this.connection.on('reconnected', this._boundOnReconnected);
+        this._detachRestorer = attachRestorer(
+            this.connection, () => this._restore(), 'MessageDispatcher',
+        );
     }
 
     /**
@@ -149,20 +151,19 @@ export default class MessageDispatcher implements IMessageDispatcher {
     }
 
     /**
-     * Called when connection is re-established
+     * Reopen the publishing channel.
+     *
+     * A failure propagates: a dispatcher with no channel cannot publish, so
+     * the connection is not usable and the generation should be retried rather
+     * than announced. The CallbackListener restores itself, registered
+     * separately through BaseListener.
      */
-    private async _onReconnected(): Promise<void> {
+    private async _restore(): Promise<void> {
         if (!this._isInitialized) return;
 
         Logger.info('MessageDispatcher: reconnected, re-initializing channel');
-
-        try {
-            this.channel = await this.connection.openChannel();
-            // CallbackListener handles its own reconnection via BaseListener
-            Logger.info('MessageDispatcher: successfully re-initialized after reconnection');
-        } catch (err) {
-            Logger.error(`MessageDispatcher: failed to re-initialize after reconnection: ${err.message}`);
-        }
+        this.channel = await this.connection.openChannel();
+        Logger.info('MessageDispatcher: successfully re-initialized after reconnection');
     }
 
     async _onResult(content: any, id: string, headers?: Record<string, any>) {
@@ -269,6 +270,22 @@ export default class MessageDispatcher implements IMessageDispatcher {
         }
     }
 
+    /**
+     * Hold a publish until the connection can carry it.
+     *
+     * A reconnection in progress is something to wait through rather than fail
+     * on: the channel is being replaced and will be there shortly, and the
+     * alternative is rejecting work for the length of a broker restart.
+     * Anything else with no connection is a caller error and is reported at
+     * once. An IConnection without whenReady() keeps the old behaviour.
+     */
+    private async _awaitPublishable(): Promise<void> {
+        if (!this.connection.isConnected && !this.connection.isReconnecting) {
+            throw new NotConnectedError();
+        }
+        await this.connection.whenReady?.();
+    }
+
     async init(): Promise<any> {
         if (this.isInitialized) return;
         this.channel = await this.connection.openChannel();
@@ -283,7 +300,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
      *   `rpc` is false, since there is nothing to wait for.
      */
     async publish(content: any, routingKey: string, rpc: boolean, timeoutMs?: number): Promise<Buffer> {
-        if (!this.connection.isConnected) throw new NotConnectedError();
+        await this._awaitPublishable();
 
         if (rpc !== false) {
             rpc = true;
@@ -371,7 +388,9 @@ export default class MessageDispatcher implements IMessageDispatcher {
         idleTimeoutMs?: number,
         options?: StreamOptions,
     ): AsyncIterable<Buffer> {
-        if (!this.connection.isConnected) throw new NotConnectedError();
+        if (!this.connection.isConnected && !this.connection.isReconnecting) {
+            throw new NotConnectedError();
+        }
 
         const id = randomUUID();
         const stream: StreamEntry = { chunks: [], bufferedBytes: 0, ended: false };
@@ -428,18 +447,25 @@ export default class MessageDispatcher implements IMessageDispatcher {
         // Fire-and-forget the publish; chunks are routed back by _onResult.
         // If the publish fails we still expose the iterator and let it
         // surface the error on first iteration.
-        const publishPromise = this.connection.publish(
-            this.channel, Config.busExchangeName, routingKey, content, properties,
-        ).catch((err) => {
-            stream.error = err;
-            stream.ended = true;
-            if (stream.rejectNext) {
-                const r = stream.rejectNext;
-                stream.resolveNext = undefined;
-                stream.rejectNext = undefined;
-                r(err);
-            }
-        });
+        //
+        // The channel is read after readiness, not before: a reconnection
+        // replaces it, and capturing the old one here would publish onto a
+        // channel that is already gone.
+        const publishPromise = Promise.resolve()
+            .then(() => this.connection.whenReady?.())
+            .then(() => this.connection.publish(
+                this.channel, Config.busExchangeName, routingKey, content, properties,
+            ))
+            .catch((err) => {
+                stream.error = err;
+                stream.ended = true;
+                if (stream.rejectNext) {
+                    const r = stream.rejectNext;
+                    stream.resolveNext = undefined;
+                    stream.rejectNext = undefined;
+                    r(err);
+                }
+            });
 
         // Return a real AsyncIterable whose `return()` cleans up on `break`.
         return {
@@ -511,9 +537,8 @@ export default class MessageDispatcher implements IMessageDispatcher {
 
     async close(): Promise<void> {
         this.connection.removeListener('disconnected', this._boundOnDisconnected);
-        this.connection.removeListener('reconnected', this._boundOnReconnected);
+        this._detachRestorer();
         delete (this as any)._boundOnDisconnected;
-        delete (this as any)._boundOnReconnected;
         await this.callbackListener.close();
     }
 }

@@ -1,4 +1,4 @@
-import { IConnection, Channel } from './connection';
+import { IConnection, Channel, attachRestorer } from './connection';
 import Config from './config';
 import { Logger } from './logger';
 
@@ -23,12 +23,13 @@ export default class CancelListener {
     private channel: Channel | undefined;
     private queueName = '';
     private consumerTag = '';
-    private _boundOnReconnected: () => void;
+    private _detachRestorer: () => void;
 
     constructor(connection: IConnection) {
         this.connection = connection;
-        this._boundOnReconnected = this._onReconnected.bind(this);
-        this.connection.on('reconnected', this._boundOnReconnected);
+        this._detachRestorer = attachRestorer(
+            this.connection, () => this._restore(), 'CancelListener',
+        );
     }
 
     /**
@@ -79,18 +80,21 @@ export default class CancelListener {
         Logger.debug(`CancelListener: consuming cancellations on ${this.queueName}`);
     }
 
-    private async _onReconnected(): Promise<void> {
+    /**
+     * Re-establish the cancellation queue.
+     *
+     * Never rejects: start() is best effort by design, and cancellation is the
+     * one thing a deployment can run without. Failing the whole generation
+     * over it would trade a working bus for a missing convenience.
+     */
+    private async _restore(): Promise<void> {
         if (!this.channel && !this.queueName) return;
-        try {
-            await this.start();
-            Logger.debug('CancelListener: re-established after reconnection');
-        } catch (err: any) {
-            Logger.error(`CancelListener: failed to re-establish after reconnection: ${err?.message || err}`);
-        }
+        await this.start();
+        Logger.debug('CancelListener: re-established after reconnection');
     }
 
     async close(): Promise<void> {
-        this.connection.removeListener('reconnected', this._boundOnReconnected);
+        this._detachRestorer();
 
         if (this.channel && this.connection.isConnected) {
             try {

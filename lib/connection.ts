@@ -17,6 +17,26 @@ export class TimeoutError extends Error {}
 export class ReconnectionError extends Error {}
 
 /**
+ * The connection is not carrying traffic: it is reconnecting, has been closed,
+ * or has given up. Distinct from a publish failure — nothing was attempted.
+ */
+export class NotReadyError extends Error {
+    public readonly code = 'NOT_READY';
+
+    constructor(message: string) {
+        super(message);
+        this.name = 'NotReadyError';
+    }
+}
+
+/**
+ * Restores one component's topology after the socket comes back: its channel,
+ * queues, bindings and consumers. Receives the generation it is restoring, so
+ * a long restore can tell that it has been superseded.
+ */
+export type Restorer = (generation: number) => Promise<void>;
+
+/**
  * Publish bookkeeping for a single channel.
  *
  * `returned` holds messageIds the broker bounced back as unroutable; a
@@ -136,7 +156,57 @@ export interface IConnection extends EventEmitter {
      */
     cancelStream?(correlationId: string): boolean;
 
+    /**
+     * Register topology this connection must put back before it reports itself
+     * reconnected, returning a function that unregisters it again.
+     *
+     * Optional for the same reason as cancelStream(): a custom IConnection
+     * predating it still satisfies the interface. A component that finds it
+     * absent falls back to restoring on the 'reconnected' event, which cannot
+     * be coordinated but is what such a connection already does.
+     */
+    registerRestorer?(restore: Restorer): () => void;
+
+    /** True when the socket is up AND every restorer has finished. */
+    isReady?: boolean;
+
+    /**
+     * Resolves once the connection is carrying traffic again, or rejects with
+     * NotReadyError if it is closed or gives up first. Optional alongside
+     * registerRestorer.
+     */
+    whenReady?(timeoutMs?: number): Promise<void>;
+
     // Events: 'reconnecting', 'reconnected', 'disconnected', 'error'
+}
+
+/**
+ * Wire a component's restoration to a connection, returning a detach function.
+ *
+ * Prefers the coordinated path, where the connection holds back its
+ * 'reconnected' announcement until the restore has finished and treats a
+ * failure as a failed reconnection attempt. Falls back to restoring on the
+ * event for an IConnection that predates registerRestorer — uncoordinated, so
+ * a failure there can only be logged, which is all such a connection ever did.
+ */
+export function attachRestorer(
+    connection: IConnection,
+    restore: Restorer,
+    describe: string,
+): () => void {
+    if (connection.registerRestorer) {
+        return connection.registerRestorer(restore);
+    }
+
+    const onReconnected = () => {
+        restore(0).catch((err: any) => {
+            Logger.error(
+                `${describe}: failed to re-initialize after reconnection: ${err?.message || err}`,
+            );
+        });
+    };
+    connection.on('reconnected', onReconnected);
+    return () => { connection.removeListener('reconnected', onReconnected); };
 }
 
 export default class Connection extends EventEmitter implements IConnection {
@@ -170,6 +240,148 @@ export default class Connection extends EventEmitter implements IConnection {
     private _isReconnecting: boolean = false;
     public get isReconnecting() {
         return this._isReconnecting;
+    }
+
+    /**
+     * Components whose topology has to be back before traffic can flow, in
+     * registration order.
+     */
+    private restorers: Restorer[] = [];
+    private _isReady: boolean = false;
+    private readyWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+
+    /**
+     * True when the socket is up AND every registered restorer has finished.
+     *
+     * `isConnected` says only that a socket exists. Between the two there is a
+     * window where channels are gone and queues are not yet re-declared, so
+     * this is the flag a publisher wants.
+     */
+    public get isReady() {
+        return this._isReady;
+    }
+
+    /**
+     * Register topology to restore on reconnection.
+     *
+     * Restorers run in registration order and the connection reports itself
+     * reconnected only once they have all resolved. One that rejects makes the
+     * whole generation unusable, which is treated as a failed reconnection
+     * attempt rather than a problem for the component to report on its own —
+     * a half-restored listener beside a connection claiming to be healthy is
+     * the worst of both.
+     *
+     * @returns a function that unregisters the restorer again.
+     */
+    public registerRestorer(restore: Restorer): () => void {
+        this.restorers.push(restore);
+        return () => {
+            const i = this.restorers.indexOf(restore);
+            if (i >= 0) { this.restorers.splice(i, 1); }
+        };
+    }
+
+    /**
+     * Wait until the connection is carrying traffic again.
+     *
+     * Resolves at once when already ready. Rejects with NotReadyError if the
+     * connection is closed or abandons reconnection while waiting, and if the
+     * wait exceeds `timeoutMs` — a publisher parked here must eventually be
+     * told rather than held forever.
+     */
+    public whenReady(timeoutMs: number = Config.connectionReadyTimeoutMs): Promise<void> {
+        if (this._isReady) return Promise.resolve();
+        if (this.manualDisconnect) {
+            return Promise.reject(new NotReadyError('the connection has been closed'));
+        }
+
+        return new Promise<void>((resolve, reject) => {
+            const entry = {
+                resolve: () => { clearTimeout(timer); settle(); resolve(); },
+                reject: (err: Error) => { clearTimeout(timer); settle(); reject(err); },
+            };
+            const settle = () => {
+                const i = this.readyWaiters.indexOf(entry);
+                if (i >= 0) { this.readyWaiters.splice(i, 1); }
+            };
+            const timer = setTimeout(() => {
+                settle();
+                reject(new NotReadyError(
+                    `the connection did not become ready within ${timeoutMs}ms`,
+                ));
+            }, timeoutMs);
+            if (timer.unref) { timer.unref(); }
+
+            this.readyWaiters.push(entry);
+        });
+    }
+
+    /** Traffic can flow: release anything parked on readiness. */
+    private _markReady(): void {
+        this._isReady = true;
+        const waiting = this.readyWaiters;
+        this.readyWaiters = [];
+        waiting.forEach((w) => w.resolve());
+    }
+
+    /**
+     * Traffic cannot flow for now. Waiters stay parked, because a reconnection
+     * is what they are waiting through.
+     */
+    private _markNotReady(): void {
+        this._isReady = false;
+    }
+
+    /** Traffic will not flow again: fail anything parked rather than hang it. */
+    private _abandonReady(err: Error): void {
+        this._isReady = false;
+        const waiting = this.readyWaiters;
+        this.readyWaiters = [];
+        waiting.forEach((w) => w.reject(err));
+    }
+
+    /**
+     * Put every component's topology back, in registration order.
+     *
+     * Sequential rather than concurrent: one component's restore declares the
+     * exchange another one binds to, and doing them at once makes that
+     * ordering a race that only shows up under load.
+     */
+    private async _runRestorers(generation: number): Promise<void> {
+        for (const restore of [...this.restorers]) {
+            if (generation !== this.generation) {
+                throw new ReconnectionError('connection was torn down while restoring');
+            }
+            await restore(generation);
+        }
+        if (generation !== this.generation) {
+            throw new ReconnectionError('connection was torn down while restoring');
+        }
+    }
+
+    /**
+     * Discard a generation that connected but could not be restored.
+     *
+     * The close handlers come off before the socket is closed: leaving them on
+     * would re-enter the unexpected-close path and schedule a second
+     * reconnection alongside the one this failure already triggers.
+     */
+    private async _discardGeneration(): Promise<void> {
+        this.generation++;
+        this._markNotReady();
+        this._isConnected = false;
+
+        const handle = this.handle;
+        this.handle = undefined;
+        if (!handle) return;
+
+        try {
+            handle.removeAllListeners('close');
+            handle.removeAllListeners('error');
+            await handle.close();
+        } catch (err: any) {
+            Logger.debug(`failed closing an unrestorable connection: ${err?.message || err}`);
+        }
     }
 
     /**
@@ -263,7 +475,11 @@ export default class Connection extends EventEmitter implements IConnection {
         this.reconnectionOptions = { ...DEFAULT_RECONNECTION_OPTIONS, ...reconnectionOptions };
         this.manualDisconnect = false;
 
-        return this._connect();
+        const handle = await this._connect();
+        // Nothing to restore on a first connect — components initialise
+        // themselves against it — so the socket coming up is readiness.
+        this._markReady();
+        return handle;
     }
 
     /**
@@ -329,6 +545,7 @@ export default class Connection extends EventEmitter implements IConnection {
 
                 Logger.warn('connection closed unexpectedly');
                 this._isConnected = false;
+                this._markNotReady();
                 this.emit('disconnected');
                 this._scheduleReconnect();
             });
@@ -351,6 +568,7 @@ export default class Connection extends EventEmitter implements IConnection {
         if (maxRetries > 0 && this.reconnectAttempts >= maxRetries) {
             const error = new ReconnectionError(`max reconnection attempts (${maxRetries}) exceeded`);
             Logger.error(error.message);
+            this._abandonReady(new NotReadyError(error.message));
             this.emit('error', error);
             return;
         }
@@ -375,6 +593,13 @@ export default class Connection extends EventEmitter implements IConnection {
             const attempt = this.reconnectAttempts;
             try {
                 await this._connect();
+                // Restoration is part of reconnecting, not something that
+                // happens afterwards. Until every listener has its channel,
+                // queue, bindings and consumer back, the socket is up but the
+                // application cannot use it — and code reacting to
+                // 'reconnected' by publishing would find no channel there.
+                await this._runRestorers(this.generation);
+                this._markReady();
                 Logger.info(`reconnection successful after ${attempt} attempts`);
                 this.emit('reconnected');
             } catch (err) {
@@ -385,6 +610,13 @@ export default class Connection extends EventEmitter implements IConnection {
                     return;
                 }
                 Logger.error(`reconnection attempt ${attempt} failed: ${err.message}`);
+                // A generation that connected but could not be restored is
+                // worse than no connection: it looks healthy and serves
+                // nothing. Drop it and let the backoff try again.
+                await this._discardGeneration();
+                // _doConnect zeroed the counter on the way through, so put the
+                // attempt back or the retry budget never runs out.
+                this.reconnectAttempts = attempt;
                 this._isReconnecting = false;
                 this._scheduleReconnect();
             }
@@ -406,6 +638,7 @@ export default class Connection extends EventEmitter implements IConnection {
             this.reconnectTimer = undefined;
         }
         this._isReconnecting = false;
+        this._abandonReady(new NotReadyError('the connection has been closed'));
 
         if (this.handle) {
             await this.handle.close();

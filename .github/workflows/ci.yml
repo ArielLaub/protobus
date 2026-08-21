@@ -102,6 +102,10 @@ jobs:
         image: rabbitmq:3-management-alpine
         ports:
           - 5672:5672
+          # reconnect_recovery.test.ts severs its connection from the broker
+          # side through the management API, which is the only way to produce
+          # a real disconnect that the client actually observes.
+          - 15672:15672
         env:
           RABBITMQ_DEFAULT_USER: guest
           RABBITMQ_DEFAULT_PASS: guest

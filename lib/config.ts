@@ -152,6 +152,17 @@ export default class Config {
     }
 
     /**
+     * How long a publisher parked on a reconnection waits for the connection to
+     * carry traffic again before giving up with NotReadyError.
+     *
+     * Bounded because the alternative is holding the caller for as long as the
+     * broker stays away, which for an unreachable broker is forever.
+     */
+    static get connectionReadyTimeoutMs() {
+        return envInt('CONNECTION_READY_TIMEOUT_MS', 30000);
+    }
+
+    /**
      * Maximum publishes awaiting a broker confirm on one channel at a time.
      * Further publishes park until a slot frees, which is what stops a fast
      * producer from queueing unbounded unconfirmed work in memory.

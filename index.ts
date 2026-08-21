@@ -22,6 +22,12 @@ export {
     formatLogRecord,
 } from './lib/logger';
 export { ReconnectionOptions, ReconnectionError } from './lib/connection';
+
+// Reconnection coordination. A publish issued while the connection is being
+// restored waits for it rather than failing, and rejects with NotReadyError if
+// the connection is closed or gives up first. Restorer is the hook a custom
+// IConnection implements to take part in that coordination.
+export { NotReadyError, Restorer } from './lib/connection';
 export { DisconnectedError } from './lib/message_dispatcher';
 export { RetryQueueMismatchError } from './lib/message_listener';
 
