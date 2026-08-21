@@ -209,6 +209,18 @@ export default class Config {
         return envInt('STREAM_MAX_BUFFERED_BYTES', 64 * 1024 * 1024);
     }
 
+    /**
+     * Upper bound on buffered bytes across **all** streaming calls on one
+     * dispatcher.
+     *
+     * The per-call bound says nothing about a process holding many calls at
+     * once: at the defaults, five concurrent streams are within their limits
+     * and 320 MiB into the heap. Defaults to 256 MiB.
+     */
+    static get streamMaxTotalBufferedBytes() {
+        return envInt('STREAM_MAX_TOTAL_BUFFERED_BYTES', 256 * 1024 * 1024);
+    }
+
     // Headers used by the streaming wire protocol. See docs/advanced/streaming.md.
     static readonly HEADER_FINAL = 'x-protobus-final';
     static readonly HEADER_SEQ = 'x-protobus-seq';

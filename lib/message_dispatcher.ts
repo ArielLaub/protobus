@@ -104,6 +104,8 @@ export default class MessageDispatcher implements IMessageDispatcher {
     private pendingStreams: Map<string, StreamEntry>;
     private callbackListener: CallbackListener;
     private channel: Channel;
+    /** Bytes buffered across every pending stream; bounds the process, not one call. */
+    private totalBufferedBytes: number = 0;
 
     private _isInitialized: boolean = false;
     public get isInitialized() { return this._isInitialized; }
@@ -154,6 +156,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
             }
         }
         this.pendingStreams.clear();
+        this.totalBufferedBytes = 0;
     }
 
     /**
@@ -208,6 +211,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
                     );
                     stream.ended = true;
                     stream.chunks.length = 0;
+                    this.totalBufferedBytes -= stream.bufferedBytes;
                     stream.bufferedBytes = 0;
                     if (stream.resolveNext) {
                         const wake = stream.resolveNext;
@@ -230,18 +234,24 @@ export default class MessageDispatcher implements IMessageDispatcher {
                 // process died; failing the stream is recoverable, OOM is not.
                 const maxChunks = Config.streamMaxBufferedChunks;
                 const maxBytes = Config.streamMaxBufferedBytes;
+                const maxTotal = Config.streamMaxTotalBufferedBytes;
                 const wouldBeBytes = stream.bufferedBytes + body.length;
+                const wouldBeTotal = this.totalBufferedBytes + body.length;
 
-                if (stream.chunks.length + 1 > maxChunks || wouldBeBytes > maxBytes) {
+                if (stream.chunks.length + 1 > maxChunks
+                    || wouldBeBytes > maxBytes
+                    || wouldBeTotal > maxTotal) {
                     stream.error = new StreamBackpressureError(
-                        `stream ${id} exceeded its buffer limit ` +
-                        `(${stream.chunks.length + 1} chunks / ${wouldBeBytes} bytes; ` +
-                        `limits are ${maxChunks} chunks / ${maxBytes} bytes) — ` +
+                        `stream ${id} exceeded a buffer limit ` +
+                        `(${stream.chunks.length + 1} chunks / ${wouldBeBytes} bytes for this call, ` +
+                        `${wouldBeTotal} bytes across all calls; limits are ${maxChunks} chunks / ` +
+                        `${maxBytes} bytes / ${maxTotal} bytes total) — ` +
                         'the consumer is not keeping up with the producer',
                     );
                     stream.ended = true;
                     // Drop the buffer now; the iterator only needs the error.
                     stream.chunks.length = 0;
+                    this.totalBufferedBytes -= stream.bufferedBytes;
                     stream.bufferedBytes = 0;
                     if (stream.resolveNext) {
                         const wake = stream.resolveNext;
@@ -254,6 +264,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
 
                 stream.chunks.push(body);
                 stream.bufferedBytes = wouldBeBytes;
+                this.totalBufferedBytes = wouldBeTotal;
                 stream.touch?.();
             }
             if (isFinal) {
@@ -407,6 +418,9 @@ export default class MessageDispatcher implements IMessageDispatcher {
         // no `this` alias (lints clean under @typescript-eslint/no-this-alias).
         const pendingStreams = this.pendingStreams;
         const timeoutMs = idleTimeoutMs ?? Config.streamIdleTimeoutMs;
+        const releaseBytes = (n: number) => {
+            this.totalBufferedBytes = Math.max(0, this.totalBufferedBytes - n);
+        };
 
         /**
          * Idle deadline for the whole call, armed here rather than on the
@@ -448,6 +462,9 @@ export default class MessageDispatcher implements IMessageDispatcher {
             clearIdle();
             releaseSignal();
             pendingStreams.delete(id);
+            releaseBytes(stream.bufferedBytes);
+            stream.bufferedBytes = 0;
+            stream.chunks.length = 0;
         };
 
         // Cancellation is BEST EFFORT and delivered at most once. The notice is
@@ -470,9 +487,10 @@ export default class MessageDispatcher implements IMessageDispatcher {
             clearIdle();
             releaseSignal();
             pendingStreams.delete(id);
+            releaseBytes(stream.bufferedBytes);
+            stream.chunks.length = 0;
+            stream.bufferedBytes = 0;
             if (!opts.notifyOnly) {
-                stream.chunks.length = 0;
-                stream.bufferedBytes = 0;
                 stream.ended = true;
             }
 
@@ -559,6 +577,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
                             if (stream.chunks.length > 0) {
                                 const value = stream.chunks.shift()!;
                                 stream.bufferedBytes -= value.length;
+                                releaseBytes(value.length);
                                 armIdle();
                                 return { value, done: false };
                             }

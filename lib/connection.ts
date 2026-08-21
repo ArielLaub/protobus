@@ -45,6 +45,8 @@ export type Restorer = (generation: number) => Promise<void>;
  */
 interface ChannelPublishState {
     returned: Set<string>;
+    /** messageIds with a publish currently awaiting a confirm. */
+    awaiting: Set<string>;
     /** Reject callbacks for publishes still awaiting a confirm. */
     pending: Set<(err: Error) => void>;
     inFlight: number;
@@ -439,11 +441,22 @@ export default class Connection extends EventEmitter implements IConnection {
 
     /** Deliveries whose handler has not finished settling. */
     private _inFlightDeliveries: number = 0;
+    /**
+     * Handlers still executing, including ones whose delivery has already been
+     * abandoned on the processing timeout.
+     *
+     * Counted separately because the two come apart: the timeout settles the
+     * delivery, but JavaScript cannot preempt the handler, so it runs on. A
+     * drain that watched deliveries alone reported success while user code was
+     * still mid-transaction, and shutdown went on to close the resources it
+     * was using.
+     */
+    private _runningHandlers: number = 0;
     private _drainWaiters: Array<() => void> = [];
 
     /** How many messages are currently being handled. */
     public get inFlightDeliveries() {
-        return this._inFlightDeliveries;
+        return Math.max(this._inFlightDeliveries, this._runningHandlers);
     }
 
     /**
@@ -455,7 +468,7 @@ export default class Connection extends EventEmitter implements IConnection {
      * stuck handler.
      */
     public drainInFlight(timeoutMs: number): Promise<boolean> {
-        if (this._inFlightDeliveries === 0) return Promise.resolve(true);
+        if (this.inFlightDeliveries === 0) return Promise.resolve(true);
 
         return new Promise<boolean>((resolve) => {
             let done = false;
@@ -482,12 +495,26 @@ export default class Connection extends EventEmitter implements IConnection {
 
     private _deliveryFinished(): void {
         this._inFlightDeliveries--;
-        if (this._inFlightDeliveries <= 0) {
-            this._inFlightDeliveries = 0;
-            const waiters = this._drainWaiters;
-            this._drainWaiters = [];
-            waiters.forEach((wake) => wake());
-        }
+        if (this._inFlightDeliveries < 0) { this._inFlightDeliveries = 0; }
+        this._maybeDrained();
+    }
+
+    private _handlerStarted(): void {
+        this._runningHandlers++;
+    }
+
+    private _handlerFinished(): void {
+        this._runningHandlers--;
+        if (this._runningHandlers < 0) { this._runningHandlers = 0; }
+        this._maybeDrained();
+    }
+
+    /** Release drain waiters once nothing is outstanding on either count. */
+    private _maybeDrained(): void {
+        if (this.inFlightDeliveries > 0) return;
+        const waiters = this._drainWaiters;
+        this._drainWaiters = [];
+        waiters.forEach((wake) => wake());
     }
 
     async connect(url: string, reconnectionOptions?: ReconnectionOptions): Promise<amqplib.ChannelModel> {
@@ -783,15 +810,24 @@ export default class Connection extends EventEmitter implements IConnection {
                 }
                 group.add(delivery);
 
-                const result = await Promise.race([
+                // Tracked around the race rather than around the await, so a
+                // handler that outlives its own timeout is still counted as
+                // running until it actually returns.
+                this._handlerStarted();
+                const running = Promise.resolve(
                     messageHandler(msg.content, correlationId, headers, {
                         signal: controller.signal,
                         routingKey: msg.fields.routingKey,
                         messageId: msg.properties.messageId,
                         redelivered: msg.fields.redelivered === true,
                     }),
-                    expiry,
-                ]);
+                );
+                running.then(
+                    () => this._handlerFinished(),
+                    () => this._handlerFinished(),
+                );
+
+                const result = await Promise.race([running, expiry]);
                 clearTimeout(timeout);
 
                 // The reply is published before the request is settled, so
@@ -1015,6 +1051,7 @@ export default class Connection extends EventEmitter implements IConnection {
 
         const state: ChannelPublishState = {
             returned: new Set<string>(),
+            awaiting: new Set<string>(),
             pending: new Set<(err: Error) => void>(),
             inFlight: 0,
             waiters: [],
@@ -1028,7 +1065,12 @@ export default class Connection extends EventEmitter implements IConnection {
             // confirm callback to consult it.
             emitter.on('return', (msg: any) => {
                 const id = msg?.properties?.messageId;
-                if (id) state.returned.add(id);
+                // Only while a publish is actually waiting on that id. A
+                // return arriving after its own publish gave up would
+                // otherwise sit in the set forever and be read as the verdict
+                // on the next publish reusing the id — which is exactly what
+                // a stable messageId across retries makes routine.
+                if (id && state.awaiting.has(id)) { state.returned.add(id); }
             });
 
             // A channel closing with confirms outstanding leaves those
@@ -1038,8 +1080,10 @@ export default class Connection extends EventEmitter implements IConnection {
                 state.pending.clear();
                 waiting.forEach((rejectFn) => rejectFn(new ChannelClosedError(reason)));
                 // Release anyone parked on the in-flight bound, or they hang
-                // forever waiting for slots that will never free.
-                state.inFlight = 0;
+                // forever waiting for slots that will never free. The counter
+                // is left alone: each publish still runs its own finally and
+                // decrements itself, and zeroing here as well drove it
+                // negative by however many were outstanding.
                 const parked = state.waiters;
                 state.waiters = [];
                 parked.forEach((wake) => wake());
@@ -1132,6 +1176,7 @@ export default class Connection extends EventEmitter implements IConnection {
                     clearTimeout(timer);
                     state.pending.delete(onClosed);
                     state.returned.delete(messageId);
+                    state.awaiting.delete(messageId);
                     if (err) { reject(err); } else { resolve(); }
                 };
 
@@ -1143,6 +1188,7 @@ export default class Connection extends EventEmitter implements IConnection {
 
                 const onClosed = (err: Error) => finish(err);
                 state.pending.add(onClosed);
+                state.awaiting.add(messageId);
 
                 const onConfirm = (err: any) => {
                     if (err) {
@@ -1172,9 +1218,26 @@ export default class Connection extends EventEmitter implements IConnection {
                     }
                     if (accepted === false) {
                         // Confirmed, but the local write buffer is still full.
+                        // Waiting for it to drain is a courtesy to the caller,
+                        // not part of the delivery guarantee — the broker has
+                        // the message either way. So the confirm deadline is
+                        // stood down first: leaving it running reported a
+                        // publish that demonstrably succeeded as an UNKNOWN
+                        // outcome, which invites a retry that duplicates it.
                         const emitter = channel as unknown as EventEmitter;
                         if (typeof emitter.once === 'function') {
-                            emitter.once('drain', () => finish());
+                            clearTimeout(timer);
+                            let done = false;
+                            const proceed = () => { if (!done) { done = true; finish(); } };
+                            const drainCap = setTimeout(() => {
+                                Logger.debug(
+                                    `${describe} was confirmed but its channel buffer did not drain ` +
+                                    `within ${Config.publishConfirmTimeoutMs}ms`,
+                                );
+                                proceed();
+                            }, Config.publishConfirmTimeoutMs);
+                            if (drainCap.unref) { drainCap.unref(); }
+                            emitter.once('drain', () => { clearTimeout(drainCap); proceed(); });
                             return;
                         }
                     }

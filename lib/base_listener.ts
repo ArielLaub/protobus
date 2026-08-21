@@ -257,6 +257,9 @@ export abstract class BaseListener extends EventEmitter {
 
         const tag = this.consumerTag;
         this.consumerTag = '';
+        // Cleared too, or a reconnection landing mid-drain restores the
+        // consumer and the shutdown starts taking new work again.
+        this._wasStarted = false;
 
         if (!this.connection.isConnected || !this.channel) return;
 
