@@ -31,6 +31,11 @@ export { NotReadyError, Restorer } from './lib/connection';
 export { DisconnectedError } from './lib/message_dispatcher';
 export { RetryQueueMismatchError } from './lib/message_listener';
 
+// A message this service could not understand — it did not decode, or it named
+// something the service does not serve. A HandledError, so it is answered
+// rather than retried: the same bytes fail the same way on every redelivery.
+export { ProtocolError, InternalServiceError } from './lib/errors';
+
 // Streaming error types (server-streaming RPC — see docs/advanced/streaming.md).
 // Missing from the 1.4.0 top-level export by mistake; restored here in 1.4.1.
 export {
@@ -38,6 +43,7 @@ export {
     StreamTimeoutError,
     StreamBackpressureError,
     StreamClosedError,
+    StreamSequenceError,
     RpcTimeoutError,
 } from './lib/errors';
 

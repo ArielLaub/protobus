@@ -4,7 +4,7 @@ import MessageFactory from './message_factory';
 import MessageListener from './message_listener';
 import EventListener, { EventHandler } from './event_listener';
 import CancelListener from './cancel_listener';
-import { isHandledError, sanitizeErrorForClient } from './errors';
+import { isHandledError, sanitizeErrorForClient, ProtocolError } from './errors';
 // HandledError is re-exported for users, isHandledError is used by MessageListener
 export { HandledError, isHandledError } from './errors';
 import * as fs from 'fs';
@@ -18,8 +18,18 @@ function lastSegment(value: string): string {
     return i === -1 ? value : value.slice(i + 1);
 }
 
+/** The routing key the broker delivered on, when the caller passed one. */
+function routingKeyOf(context?: { routingKey?: string } | string): string | undefined {
+    return typeof context === 'string' ? context : context?.routingKey;
+}
+
 export class InvalidResultError extends Error {}
-export class InvalidMethodError extends Error {}
+/**
+ * The request named a method this service does not serve. A ProtocolError so
+ * the connection layer answers the caller instead of retrying: the same body
+ * names the same absent method on every redelivery.
+ */
+export class InvalidMethodError extends ProtocolError {}
 export class MissingProto extends Error {}
 
 export interface IContextConstructable {
@@ -236,7 +246,18 @@ export default abstract class MessageService implements IMessageService {
         // be checked against this service's contract before the bytes are
         // interpreted, or a publisher picks which schema its payload is parsed
         // as and hands one service's request to another service's handler.
-        const envelope = factory.decodeRequestEnvelope(data);
+        let envelope: { method: string; actor: string; data: any };
+        try {
+            envelope = factory.decodeRequestEnvelope(data);
+        } catch {
+            // Undecodable bytes are not an infrastructure failure and must not
+            // reach the retry ladder. Nothing here is publisher-supplied text:
+            // the reply says only that the envelope did not parse.
+            Logger.error(
+                `unparseable request envelope on ${this.ServiceName} (${data?.length ?? 0} bytes, ${id})`,
+            );
+            return this._protocolError(routingKeyOf(context), 'request envelope did not decode');
+        }
         Logger.debug(`received request ${envelope.method} (${id})`);
 
         // The method to run comes from the message body, so it must be checked
@@ -245,7 +266,7 @@ export default abstract class MessageService implements IMessageService {
         // method regardless of the routing key — which makes RabbitMQ topic
         // permissions unenforceable and lets one service's request schema be
         // paired with another service's handler.
-        const routingKey = typeof context === 'string' ? context : context?.routingKey;
+        const routingKey = routingKeyOf(context);
         // Passed on to the service method as a 4th argument. A streaming
         // handler watches `signal` to stop producing when the caller cancels;
         // it also fires on the processing timeout.
@@ -322,11 +343,24 @@ export default abstract class MessageService implements IMessageService {
         }
 
         // Validated: the payload can now be read against the contract's schema.
-        const request = {
-            method: envelope.method,
-            actor: envelope.actor,
-            data: factory.decodeRequestPayload(envelope.method, envelope.data),
-        };
+        let request: { method: string; actor: string; data: any };
+        try {
+            request = {
+                method: envelope.method,
+                actor: envelope.actor,
+                data: factory.decodeRequestPayload(envelope.method, envelope.data),
+            };
+        } catch {
+            // Type name and size only — a payload that failed to decode is
+            // still a payload, and may be one byte away from readable.
+            Logger.error(
+                `unparseable request payload for ${envelope.method} ` +
+                `(${envelope.data?.length ?? 0} bytes, ${id})`,
+            );
+            return this._protocolError(
+                envelope.method, `payload did not decode as the request type of ${envelope.method}`,
+            );
+        }
 
         // Streaming path: if the .proto declares this method as
         // server-streaming, the handler is expected to return an
@@ -363,6 +397,17 @@ export default abstract class MessageService implements IMessageService {
         } catch (error) {
             return this.handleUnaryError(request.method, error);
         }
+    }
+
+    /**
+     * Answer a message this service could not understand.
+     *
+     * A ProtocolError, so the connection layer replies to the caller and
+     * rejects the delivery instead of running the retry ladder over bytes that
+     * will fail to decode identically every time.
+     */
+    private _protocolError(label: string | undefined, reason: string): Buffer {
+        return this.context.factory.buildResponse(label || 'unknown', new ProtocolError(reason));
     }
 
     /**
