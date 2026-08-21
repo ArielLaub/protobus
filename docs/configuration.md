@@ -4,12 +4,77 @@ Protobus is configured through environment variables, constructor parameters, an
 
 ## Environment Variables
 
+### Exchanges
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BUS_EXCHANGE_NAME` | `proto.bus` | Main exchange for RPC requests |
 | `CALLBACKS_EXCHANGE_NAME` | `proto.bus.callback` | Exchange for RPC responses |
 | `EVENTS_EXCHANGE_NAME` | `proto.bus.events` | Exchange for pub/sub events |
-| `MESSAGE_PROCESSING_TIMEOUT` | `600000` | RPC timeout in milliseconds (10 minutes) |
+| `CANCEL_EXCHANGE_NAME` | `proto.bus.cancel` | Fanout exchange carrying stream-cancellation notices |
+
+### Connection
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AMQP_HEARTBEAT_SECONDS` | `30` | AMQP heartbeat interval. See [Heartbeats](#heartbeats) below |
+| `CONNECTION_READY_TIMEOUT_MS` | `30000` | How long a publish parked on a reconnection waits before failing with `NotReadyError` |
+
+### Timeouts
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MESSAGE_PROCESSING_TIMEOUT` | `600000` | How long a **server** handler may run before the delivery is abandoned (10 minutes) |
+| `RPC_CALL_TIMEOUT_MS` | `600000` | How long a **caller** waits for a reply before `RpcTimeoutError` (10 minutes) |
+| `STREAM_IDLE_TIMEOUT_MS` | `60000` | Longest gap between streaming chunks before `StreamTimeoutError` |
+| `PUBLISH_CONFIRM_TIMEOUT_MS` | `30000` | How long a publish waits for its broker confirm |
+| `SHUTDOWN_DRAIN_TIMEOUT_MS` | `30000` | How long a graceful shutdown waits for in-flight messages |
+| `SHUTDOWN_EXIT_GRACE_MS` | `5000` | How long after shutdown before the process is forced to exit |
+
+The two 10-minute defaults are separate settings for separate roles, and they
+are not the same clock. A caller gives up after `RPC_CALL_TIMEOUT_MS`, while a
+server may still be retrying the same request for
+`maxRetries × (MESSAGE_PROCESSING_TIMEOUT + retryDelayMs)`. Set the caller's
+budget deliberately rather than leaving both at the default.
+
+### Throughput and bounds
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEFAULT_PREFETCH` | `1` | Unacked messages a late-ack consumer will hold when `maxConcurrent` is unset |
+| `MAX_OUTSTANDING_CONFIRMS` | `256` | Publishes awaiting a confirm on one channel before further publishes park |
+| `STREAM_MAX_BUFFERED_CHUNKS` | `1024` | Chunks buffered for one unconsumed streaming call |
+| `STREAM_MAX_BUFFERED_BYTES` | `67108864` | Bytes buffered for one unconsumed streaming call (64 MiB) |
+
+### Errors and logging
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROTOBUS_EXPOSE_INTERNAL_ERRORS` | `true` | Send an unhandled error's message back to the caller. See [Security](./advanced/security.md) |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, or `silent` |
+
+### Heartbeats
+
+amqplib closes a connection after two missed heartbeats, so the interval is
+half the worst-case time to notice a peer that vanished without closing its
+socket — a crashed broker, a network partition, a NAT that dropped the flow.
+At the default of 30 seconds that is about a minute.
+
+Left to the broker to propose, RabbitMQ asks for 60 seconds, which is two
+minutes of publishing into a dead socket while the connection still reports
+itself healthy. That is why protobus sets one rather than accepting the
+proposal.
+
+A heartbeat already present in the connection URL is treated as deliberate and
+left alone, which is also how you turn heartbeats off:
+
+```
+amqp://guest:guest@localhost:5672/?heartbeat=0
+```
+
+Shortening the interval detects failure sooner at the cost of a few extra
+frames per minute per connection. Raising it above the broker's own
+`heartbeat` setting has no effect — the lower of the two is negotiated.
 
 ## Reconnection Options
 
@@ -242,7 +307,9 @@ Recommended RabbitMQ settings for production:
 ```ini
 # rabbitmq.conf
 
-# Increase heartbeat interval for cloud environments
+# Upper bound on the heartbeat interval. The lower of this and the client's
+# AMQP_HEARTBEAT_SECONDS is what gets negotiated, so raising this alone does
+# not slow protobus's heartbeats down.
 heartbeat = 60
 
 # Memory high watermark

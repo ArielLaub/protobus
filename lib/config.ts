@@ -152,6 +152,23 @@ export default class Config {
     }
 
     /**
+     * AMQP heartbeat interval, in seconds.
+     *
+     * amqplib closes a connection after two missed intervals, so this is half
+     * the worst-case time to notice a peer that vanished without closing its
+     * socket — a crashed broker, a partition, a NAT that dropped the flow.
+     * Left unset, the interval is whatever the broker proposes, and RabbitMQ
+     * proposes 60, which is two minutes of publishing into a dead socket while
+     * the connection still reports itself healthy.
+     *
+     * A caller-supplied URL that already carries `?heartbeat=` wins, which is
+     * also how heartbeats are turned off: `?heartbeat=0`.
+     */
+    static get heartbeatSeconds() {
+        return envInt('AMQP_HEARTBEAT_SECONDS', 30);
+    }
+
+    /**
      * How long a publisher parked on a reconnection waits for the connection to
      * carry traffic again before giving up with NotReadyError.
      *

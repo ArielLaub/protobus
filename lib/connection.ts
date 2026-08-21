@@ -209,6 +209,28 @@ export function attachRestorer(
     return () => { connection.removeListener('reconnected', onReconnected); };
 }
 
+/**
+ * Put the configured heartbeat on a broker URL.
+ *
+ * A heartbeat already in the URL is the caller being explicit and is left
+ * alone, `heartbeat=0` included — that is how they are disabled. Everything
+ * else about the URL is preserved: the vhost is routinely percent-encoded
+ * (`/%2f`), and re-encoding it would connect to the wrong one or fail outright.
+ *
+ * A URL that does not parse is handed to amqplib untouched, so it reports the
+ * problem rather than this function masking it.
+ */
+export function applyHeartbeat(url: string): string {
+    try {
+        const parsed = new URL(url);
+        if (parsed.searchParams.has('heartbeat')) return url;
+        parsed.searchParams.set('heartbeat', String(Config.heartbeatSeconds));
+        return parsed.toString();
+    } catch {
+        return url;
+    }
+}
+
 export default class Connection extends EventEmitter implements IConnection {
     private handle: amqplib.ChannelModel;
     private url: string;
@@ -511,7 +533,7 @@ export default class Connection extends EventEmitter implements IConnection {
         const generation = this.generation;
 
         try {
-            const handle = await amqplib.connect(this.url);
+            const handle = await amqplib.connect(applyHeartbeat(this.url));
 
             if (generation !== this.generation || this.manualDisconnect) {
                 // Torn down while this attempt was in flight. Clearing the

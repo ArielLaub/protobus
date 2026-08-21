@@ -85,6 +85,42 @@ async function killOwnConnections(): Promise<number> {
     return mine.length;
 }
 
+describe('the configured heartbeat reaches the broker', () => {
+    jest.setTimeout(120000);
+
+    it('is what the connection negotiates', async () => {
+        if (!(await managementAvailable())) {
+            console.warn(`skipping: RabbitMQ management API not reachable at ${origin}`);
+            return;
+        }
+        await createVhost();
+        process.env.AMQP_HEARTBEAT_SECONDS = '11';
+        const ctx = new Context();
+        const url = `amqp://${base.username}:${base.password}@${base.hostname}:5672/${encodeURIComponent(VHOST)}`;
+        try {
+            await ctx.init(url, []);
+
+            // The broker reports the negotiated interval as `timeout`. Polled
+            // because the management plugin publishes connections on its
+            // statistics interval.
+            let mine: any[] = [];
+            const deadline = Date.now() + 30000;
+            for (;;) {
+                const list: any[] = await api('/api/connections').then(r => r.json() as any);
+                mine = list.filter((c) => c.vhost === VHOST);
+                if (mine.length > 0 || Date.now() > deadline) break;
+                await sleep(500);
+            }
+            expect(mine).toHaveLength(1);
+            expect(mine[0].timeout).toBe(11);
+        } finally {
+            delete process.env.AMQP_HEARTBEAT_SECONDS;
+            await ctx.connection.disconnect().catch(() => undefined);
+            await deleteVhost();
+        }
+    });
+});
+
 describe('recovery across a real broker restart', () => {
     jest.setTimeout(180000);
 
