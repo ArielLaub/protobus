@@ -4,6 +4,199 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] — 2026-08-22
+
+A second security and performance audit, and its remediation. Two independent
+reviews of 2.0.0 were run and reconciled; every finding below was reproduced
+with a failing test before it was fixed, and the tests are in the suite.
+
+**Versioning.** Five of these changes are breaking under a strict reading of
+semver, and are marked as such below. This is a minor release because 2.0.0 has
+no adopters — the upgrade path is 1.4.1 → 2.1.0, and **Breaking changes** is
+the migration list for it.
+
+### Fixed — security
+
+- **A `bigint` field wider than its wire format is rejected instead of
+  decoded.** `BigIntType.decode()` accumulated with one bigint shift per byte,
+  making it quadratic in the input length while the encoder only ever produces
+  32 bytes. Decoding runs inside `decodeRequest()`, ahead of the routing-key
+  check and any handler, so a peer holding nothing more than the ordinary right
+  to call a service could stall the whole process with a single message: 256
+  KiB blocked the event loop for 5.4 seconds, 1 MiB for 84. **Breaking:** a
+  bigint carrying more than 32 bytes now raises `RangeError`. Nothing this
+  library encodes can produce one.
+- **Request dispatch is bound to the service's own contract.** The handler was
+  chosen with `this[lastSegment(request.method)]` while the schema was resolved
+  positionally from the same name. The two disagreed, and neither was checked
+  against the methods the service declares, so a publisher could append a
+  segment to reach an inherited framework member, name another loaded service's
+  method to have its payload parsed under a foreign schema, or reach a
+  framework member through a declared-but-unimplemented rpc. The envelope is
+  now validated before the payload is interpreted, and dispatch resolves only
+  against what the subclass itself implements. **Breaking:** a body method that
+  is not a declared method of the receiving contract is answered with
+  `InvalidMethodError` rather than dispatched.
+
+### Fixed — delivery contract
+
+- **`ServiceProxy` raises delivery errors as they stand.** Every failure was
+  replaced with a generic `PublishMessageError`, discarding the distinction the
+  publish path exists to report — `UnroutableError` and `PublishNackedError`
+  are definite and safe to retry, `PublishConfirmTimeoutError` and
+  `ChannelClosedError` are ambiguous and retrying either can duplicate. The
+  catch covered the reply wait too, so `RpcTimeoutError` and
+  `DisconnectedError` went the same way, along with the `messageId` that makes
+  deduplication possible. Since `ServiceProxy` is the API most callers use, the
+  typed errors and the retry guidance in `docs/advanced/security.md` were both
+  unreachable in practice. **Breaking:** match on `PublishError` or a specific
+  subclass instead of `PublishMessageError`.
+- **`messageId` survives retry and DLQ hops.** 2.0.0 told consumers to
+  deduplicate on it, but the retry and DLQ publishes passed none, so a fresh
+  UUID was minted at every hop — absent from precisely the path that produces
+  the duplicates it was meant to resolve. It is also now on
+  `MessageHandlerContext`, alongside `redelivered`, so a handler can read it.
+
+### Fixed — resource lifetime
+
+- **A streaming call has one deadline that owns its cleanup.** The pending
+  entry was created by `publishStreaming()` but the idle timer was only armed
+  inside `next()`, so a call that was never iterated held its entry and
+  everything the server sent into it for the life of the process. The abort
+  listener was attached with `once` and never removed, so a signal reused
+  across calls — a per-session `AbortController` — accumulated one listener per
+  completed call, each keeping its buffer reachable. And the idle path cleared
+  local state without sending a cancel, unlike `return()` and `throw()`,
+  leaving the producer generating for a caller that had stopped listening. A
+  signal already aborted when the call is made now publishes nothing at all.
+- **`STREAM_MAX_TOTAL_BUFFERED_BYTES`** (default 256 MiB) bounds buffered bytes
+  across all streaming calls on a dispatcher. The per-call limit said nothing
+  about a process holding many at once, where five streams inside their own
+  limits are 320 MiB into the heap.
+
+### Fixed — reliability
+
+- **Reconnection announces itself only once the topology is back.**
+  `reconnected` fired the moment the socket returned while every component
+  restored itself in an async listener nobody awaited, so `isConnected` read
+  true with channels gone and queues neither re-declared nor re-bound. A
+  restore that failed reported through an `error` event with no subscriber,
+  producing an unhandled rejection and a half-restored listener beside a
+  connection that believed it was fine. Components now register a `Restorer`;
+  the connection runs them in order and announces itself only once they all
+  resolve, and discards a generation it cannot restore. **Breaking:**
+  `reconnected` now fires after restoration, and a publish issued during a
+  reconnection waits for it — bounded by `CONNECTION_READY_TIMEOUT_MS` — rather
+  than throwing `NotConnectedError`, and may reject with `NotReadyError`.
+- **An AMQP heartbeat is set rather than left to the broker.** `connect()`
+  passed no options, so the interval was whatever RabbitMQ proposed — 60
+  seconds, and amqplib closes after two missed ones, putting worst-case
+  detection of a peer that vanished without closing its socket at about two
+  minutes. **Breaking:** connections negotiate a 30-second heartbeat unless the
+  URL already carries one; `?heartbeat=0` opts out.
+- **The event router keeps every pattern registered on it.** A trie node held a
+  single value that was never overwritten, so a second subscriber to the same
+  topic was silently discarded; the same slot was written along the whole path,
+  so "is this a registered pattern" was approximated as "has no children" —
+  meaning subscribing to `EVENT.Order.Shipped` silently stopped `EVENT.Order`
+  matching anything. Both were silent, with the binding still in place and the
+  broker still delivering.
+
+- **A drain waits for handlers, not just deliveries.** The processing timeout
+  settles a delivery while leaving its handler running, because JavaScript
+  cannot preempt one. Shutdown therefore reported "in-flight messages drained"
+  and went on to run the cleanup hook and close the connection while user code
+  was still mid-transaction against the resources being torn down.
+- **`stopConsuming()` survives a reconnection.** It cleared the consumer tag
+  but not the started flag, so a reconnection landing mid-drain restored the
+  consumer and the shutdown began taking new work again.
+- **A message that cannot be understood is answered, not retried.**
+  `decodeRequest()` ran outside any try, so an undecodable body threw, was
+  classified as infrastructure failure, and went through three redeliveries and
+  a DLQ publish — five broker operations and a DLQ entry for bytes that fail
+  identically every time, while the caller waited out its RPC timeout. New
+  `ProtocolError` (a `HandledError`) is raised instead and answered
+  immediately; `InvalidMethodError` is now one too.
+
+### Fixed — correctness
+
+- **Fully-qualified method names are parsed from the right.** The service was
+  taken from the first two dot-separated segments, which assumes a
+  single-segment package: `package com.example.billing` made every call resolve
+  the service as `com.example`. Leaving the trailing segments unexamined is
+  also what let a name carry extra ones unnoticed.
+- **Timestamps before 1970 round-trip.** The `Long` high word was read as
+  unsigned, so every pre-epoch instant reconstructed far enough out of range to
+  produce an `Invalid Date`, which then propagated silently into application
+  data.
+- **`buildResponse()` no longer resolves the method when encoding an error.**
+  The lookup was unnecessary on that path — the method is only a label — and it
+  made a failure that is *about* an unknown method impossible to report,
+  leaving the caller to wait out its full RPC timeout.
+- **A channel teardown no longer drives the outstanding-confirm counter
+  negative.** Closing zeroed it while each publish still ran its own
+  decrement, leaving the count negative by however many were in flight and the
+  bound ineffective afterwards.
+- **A stale `basic.return` cannot fail a later publish.** A return arriving
+  after its own publish gave up stayed in the returned set forever and was then
+  read as the verdict on the next publish reusing that `messageId` — which
+  carrying a stable id across retries makes routine rather than rare.
+- **A confirmed publish waiting on a full write buffer is not reported as
+  unconfirmed.** The confirm deadline kept running through the drain wait, so a
+  publish the broker demonstrably accepted could surface as
+  `PublishConfirmTimeoutError` — an ambiguous outcome, inviting the retry that
+  duplicates it.
+
+### Added
+
+- `AMQP_HEARTBEAT_SECONDS` (default 30), `CONNECTION_READY_TIMEOUT_MS`
+  (default 30000) and `STREAM_MAX_TOTAL_BUFFERED_BYTES` (default 256 MiB).
+- `ProtocolError`, exported from the package root, along with
+  `InternalServiceError` and `StreamSequenceError` — the latter thrown since
+  streaming shipped but never reachable for an `instanceof` check.
+- `NotReadyError`, and the `Restorer` hook a custom `IConnection` implements to
+  take part in restoration. `registerRestorer`, `isReady` and `whenReady()` are
+  optional on `IConnection`, as `cancelStream()` already was, so an
+  implementation predating them still satisfies the interface and falls back to
+  the event.
+- `messageId` and `redelivered` on `MessageHandlerContext`.
+- `MessageFactory.splitMethodName()`, `getServiceMethodNames()`,
+  `decodeRequestEnvelope()` and `decodeRequestPayload()`.
+
+### Documentation and tooling
+
+- The environment-variable reference listed 4 of the 21 settings actually read.
+  All of them are now documented, grouped, with the distinction between the
+  server-side `MESSAGE_PROCESSING_TIMEOUT` and the caller-side
+  `RPC_CALL_TIMEOUT_MS` spelled out — both default to 10 minutes, but a server
+  can keep retrying a request for roughly 40 while its caller has long given up.
+- `maxConcurrent` was documented in four places as an overridable getter
+  defaulting to "unlimited". It is a constructor option, it defaults to 1, and
+  unlimited is not available. The streaming implication is called out, and the
+  token-stream sample no longer ships on the default.
+- `registerType()` is documented as process-wide, which it has always been:
+  the codec goes into protobufjs's module-level wrapper table, shared by
+  everything in the process.
+- `known-issues.md` still described graceful shutdown as missing, two releases
+  after it shipped. The streaming notes still claimed no chunk deduplication.
+- `npm run test:integration` reported the exit status of `docker compose down`,
+  so a failing suite exited 0.
+- The publishing job no longer fetches an unpinned `npx semver` while holding
+  the OIDC identity — the one thing that workflow otherwise takes care never
+  to do.
+
+### Notes
+
+- 289 unit tests and 48 integration tests, from 213 and 46. The two new
+  integration tests exercise recovery against a real broker: the connection is
+  severed from the broker side, and the reconnection is verified to be
+  announced only once the topology is back, with a publish issued mid-outage
+  completing rather than failing.
+- CI publishes the RabbitMQ management port, which the recovery test needs to
+  produce a disconnect the client actually observes. Stopping the container is
+  not usable for this: Docker's port forwarder keeps the port accepting behind
+  a dead container, so the client socket never breaks.
+
 ## [2.0.0] — 2026-08-11
 
 Remediation of the 2026-08-11 security and stability audit. The theme is making
