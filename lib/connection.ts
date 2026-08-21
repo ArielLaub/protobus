@@ -527,6 +527,7 @@ export default class Connection extends EventEmitter implements IConnection {
         const handle = await this._connect();
         // Nothing to restore on a first connect — components initialise
         // themselves against it — so the socket coming up is readiness.
+        this._isReconnecting = false;
         this._markReady();
         return handle;
     }
@@ -577,8 +578,17 @@ export default class Connection extends EventEmitter implements IConnection {
 
             this.handle = handle;
             this._isConnected = true;
-            this._isReconnecting = false;
             this.reconnectAttempts = 0;
+            // _isReconnecting is deliberately NOT cleared here. On the
+            // reconnect path a socket is only half the job: restoration still
+            // has to run, and it is real network I/O. Clearing the flag on
+            // connect stood the re-entrancy guard in _scheduleReconnect down
+            // for that whole window, so a socket that died mid-restore
+            // scheduled a second lineage alongside the one the failure was
+            // about to schedule — two connections, both restored, both
+            // announced, the loser orphaned open with live consumers on it.
+            // Whoever set the flag clears it: connect() below, or the
+            // reconnect timer once restoration has actually finished.
 
             // Set up connection event handlers
             this.handle.on('error', (err) => {
@@ -595,6 +605,13 @@ export default class Connection extends EventEmitter implements IConnection {
                 Logger.warn('connection closed unexpectedly');
                 this._isConnected = false;
                 this._markNotReady();
+                // Retire this generation. A restoration in flight against it
+                // is now working on a dead socket, and its next generation
+                // check aborts it — which is what routes the failure into the
+                // single retry the catch below already performs. Without this
+                // a restoration could finish "successfully" against a closed
+                // connection and announce itself ready.
+                this.generation++;
                 this.emit('disconnected');
                 this._scheduleReconnect();
             });
@@ -648,6 +665,7 @@ export default class Connection extends EventEmitter implements IConnection {
                 // application cannot use it — and code reacting to
                 // 'reconnected' by publishing would find no channel there.
                 await this._runRestorers(this.generation);
+                this._isReconnecting = false;
                 this._markReady();
                 Logger.info(`reconnection successful after ${attempt} attempts`);
                 this.emit('reconnected');
@@ -814,14 +832,25 @@ export default class Connection extends EventEmitter implements IConnection {
                 // handler that outlives its own timeout is still counted as
                 // running until it actually returns.
                 this._handlerStarted();
-                const running = Promise.resolve(
-                    messageHandler(msg.content, correlationId, headers, {
-                        signal: controller.signal,
-                        routingKey: msg.fields.routingKey,
-                        messageId: msg.properties.messageId,
-                        redelivered: msg.fields.redelivered === true,
-                    }),
-                );
+                let running: Promise<MessageHandlerResult>;
+                try {
+                    running = Promise.resolve(
+                        messageHandler(msg.content, correlationId, headers, {
+                            signal: controller.signal,
+                            routingKey: msg.fields.routingKey,
+                            messageId: msg.properties.messageId,
+                            redelivered: msg.fields.redelivered === true,
+                        }),
+                    );
+                } catch (syncErr) {
+                    // A non-async handler can throw before any promise exists,
+                    // in which case nothing downstream would ever decrement the
+                    // counter — and one leaked handler makes every later
+                    // drainInFlight() wait out its full timeout and report
+                    // failure.
+                    this._handlerFinished();
+                    throw syncErr;
+                }
                 running.then(
                     () => this._handlerFinished(),
                     () => this._handlerFinished(),

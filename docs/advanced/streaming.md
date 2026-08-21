@@ -177,6 +177,19 @@ for await (const chunk of llm.completeStream(req, undefined, undefined, { signal
 
 It composes with signals you already have. Passing an HTTP request's own `signal` stops the stream when the user closes the tab, with no Stop button involved.
 
+An aborted stream **ends the loop rather than raising** — the same outcome as
+`break`, since both mean the caller asked to stop. That leaves "I cancelled"
+and "the server finished" looking identical from inside the loop, which matters
+when the signal belongs to someone else. Check the signal afterwards when you
+need to tell them apart:
+
+```typescript
+for await (const chunk of llm.completeStream(req, undefined, undefined, { signal: stop.signal })) {
+    send(chunk);
+}
+if (stop.signal.aborted) { /* stopped early — the response is partial */ }
+```
+
 On the server, watch `context.signal` — the fourth argument to your handler:
 
 ```typescript

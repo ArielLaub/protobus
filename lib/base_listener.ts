@@ -61,9 +61,12 @@ export abstract class BaseListener extends EventEmitter {
         // Restoration is coordinated by the connection, which waits for it
         // before reporting itself reconnected. Disconnection stays an event:
         // there is nothing to wait for when the socket has already gone.
-        this._detachRestorer = attachRestorer(
+        const detach = attachRestorer(
             this.connection, () => this._restore(), this.constructor.name,
         );
+        // Idempotent: both stopConsuming() and close() release it, and a
+        // graceful shutdown runs them in that order.
+        this._detachRestorer = () => { this._detachRestorer = () => undefined; detach(); };
         this._boundOnDisconnected = this._onDisconnected.bind(this);
         this.connection.on('disconnected', this._boundOnDisconnected);
     }
@@ -260,6 +263,10 @@ export abstract class BaseListener extends EventEmitter {
         // Cleared too, or a reconnection landing mid-drain restores the
         // consumer and the shutdown starts taking new work again.
         this._wasStarted = false;
+        // And stop taking part in restoration at all: a reconnection between
+        // here and close() would otherwise open a fresh channel for a listener
+        // that is being shut down.
+        this._detachRestorer();
 
         if (!this.connection.isConnected || !this.channel) return;
 

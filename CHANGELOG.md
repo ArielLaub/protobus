@@ -187,7 +187,18 @@ the migration list for it.
 
 ### Notes
 
-- 289 unit tests and 48 integration tests, from 213 and 46. The two new
+- Review of this branch found one regression it had introduced and two latent
+  faults, all fixed here: a socket dropping *during* reconnection could fork
+  into two live connections, because the re-entrancy guard was stood down when
+  the socket came up rather than when restoration finished — leaving the loser
+  orphaned open with live consumers on it, and announcing `reconnected` twice.
+  A non-async handler throwing synchronously leaked the new handler count, so
+  every later drain waited out its full timeout. And a listener stayed
+  available for restoration between `stopConsuming()` and `close()`.
+- An aborted stream ends its loop rather than raising, matching `break`. That
+  is deliberate, and now documented along with how to tell an early stop from a
+  clean finish.
+- 291 unit tests and 48 integration tests, from 213 and 46. The two new
   integration tests exercise recovery against a real broker: the connection is
   severed from the broker side, and the reconnection is verified to be
   announced only once the topology is back, with a publish issued mid-outage
