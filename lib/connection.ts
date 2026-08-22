@@ -17,6 +17,26 @@ export class TimeoutError extends Error {}
 export class ReconnectionError extends Error {}
 
 /**
+ * The connection is not carrying traffic: it is reconnecting, has been closed,
+ * or has given up. Distinct from a publish failure — nothing was attempted.
+ */
+export class NotReadyError extends Error {
+    public readonly code = 'NOT_READY';
+
+    constructor(message: string) {
+        super(message);
+        this.name = 'NotReadyError';
+    }
+}
+
+/**
+ * Restores one component's topology after the socket comes back: its channel,
+ * queues, bindings and consumers. Receives the generation it is restoring, so
+ * a long restore can tell that it has been superseded.
+ */
+export type Restorer = (generation: number) => Promise<void>;
+
+/**
  * Publish bookkeeping for a single channel.
  *
  * `returned` holds messageIds the broker bounced back as unroutable; a
@@ -25,6 +45,8 @@ export class ReconnectionError extends Error {}
  */
 interface ChannelPublishState {
     returned: Set<string>;
+    /** messageIds with a publish currently awaiting a confirm. */
+    awaiting: Set<string>;
     /** Reject callbacks for publishes still awaiting a confirm. */
     pending: Set<(err: Error) => void>;
     inFlight: number;
@@ -61,6 +83,16 @@ export type MessageHandlerResult = Buffer | void | AsyncIterable<Buffer>;
 export interface MessageHandlerContext {
     signal: AbortSignal;
     routingKey: string;
+    /**
+     * Stable across every redelivery and every retry hop of the same logical
+     * message, which is what makes deduplication possible: an ambiguous
+     * publish outcome can leave two copies on the bus, and this is the only
+     * thing that identifies them as one. Undefined only for a message
+     * published by something that did not set it.
+     */
+    messageId?: string;
+    /** The broker has delivered this message before. */
+    redelivered: boolean;
 }
 
 export type MessageHandler = (
@@ -126,7 +158,79 @@ export interface IConnection extends EventEmitter {
      */
     cancelStream?(correlationId: string): boolean;
 
+    /**
+     * Register topology this connection must put back before it reports itself
+     * reconnected, returning a function that unregisters it again.
+     *
+     * Optional for the same reason as cancelStream(): a custom IConnection
+     * predating it still satisfies the interface. A component that finds it
+     * absent falls back to restoring on the 'reconnected' event, which cannot
+     * be coordinated but is what such a connection already does.
+     */
+    registerRestorer?(restore: Restorer): () => void;
+
+    /** True when the socket is up AND every restorer has finished. */
+    isReady?: boolean;
+
+    /**
+     * Resolves once the connection is carrying traffic again, or rejects with
+     * NotReadyError if it is closed or gives up first. Optional alongside
+     * registerRestorer.
+     */
+    whenReady?(timeoutMs?: number): Promise<void>;
+
     // Events: 'reconnecting', 'reconnected', 'disconnected', 'error'
+}
+
+/**
+ * Wire a component's restoration to a connection, returning a detach function.
+ *
+ * Prefers the coordinated path, where the connection holds back its
+ * 'reconnected' announcement until the restore has finished and treats a
+ * failure as a failed reconnection attempt. Falls back to restoring on the
+ * event for an IConnection that predates registerRestorer — uncoordinated, so
+ * a failure there can only be logged, which is all such a connection ever did.
+ */
+export function attachRestorer(
+    connection: IConnection,
+    restore: Restorer,
+    describe: string,
+): () => void {
+    if (connection.registerRestorer) {
+        return connection.registerRestorer(restore);
+    }
+
+    const onReconnected = () => {
+        restore(0).catch((err: any) => {
+            Logger.error(
+                `${describe}: failed to re-initialize after reconnection: ${err?.message || err}`,
+            );
+        });
+    };
+    connection.on('reconnected', onReconnected);
+    return () => { connection.removeListener('reconnected', onReconnected); };
+}
+
+/**
+ * Put the configured heartbeat on a broker URL.
+ *
+ * A heartbeat already in the URL is the caller being explicit and is left
+ * alone, `heartbeat=0` included — that is how they are disabled. Everything
+ * else about the URL is preserved: the vhost is routinely percent-encoded
+ * (`/%2f`), and re-encoding it would connect to the wrong one or fail outright.
+ *
+ * A URL that does not parse is handed to amqplib untouched, so it reports the
+ * problem rather than this function masking it.
+ */
+export function applyHeartbeat(url: string): string {
+    try {
+        const parsed = new URL(url);
+        if (parsed.searchParams.has('heartbeat')) return url;
+        parsed.searchParams.set('heartbeat', String(Config.heartbeatSeconds));
+        return parsed.toString();
+    } catch {
+        return url;
+    }
 }
 
 export default class Connection extends EventEmitter implements IConnection {
@@ -163,6 +267,148 @@ export default class Connection extends EventEmitter implements IConnection {
     }
 
     /**
+     * Components whose topology has to be back before traffic can flow, in
+     * registration order.
+     */
+    private restorers: Restorer[] = [];
+    private _isReady: boolean = false;
+    private readyWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+
+    /**
+     * True when the socket is up AND every registered restorer has finished.
+     *
+     * `isConnected` says only that a socket exists. Between the two there is a
+     * window where channels are gone and queues are not yet re-declared, so
+     * this is the flag a publisher wants.
+     */
+    public get isReady() {
+        return this._isReady;
+    }
+
+    /**
+     * Register topology to restore on reconnection.
+     *
+     * Restorers run in registration order and the connection reports itself
+     * reconnected only once they have all resolved. One that rejects makes the
+     * whole generation unusable, which is treated as a failed reconnection
+     * attempt rather than a problem for the component to report on its own —
+     * a half-restored listener beside a connection claiming to be healthy is
+     * the worst of both.
+     *
+     * @returns a function that unregisters the restorer again.
+     */
+    public registerRestorer(restore: Restorer): () => void {
+        this.restorers.push(restore);
+        return () => {
+            const i = this.restorers.indexOf(restore);
+            if (i >= 0) { this.restorers.splice(i, 1); }
+        };
+    }
+
+    /**
+     * Wait until the connection is carrying traffic again.
+     *
+     * Resolves at once when already ready. Rejects with NotReadyError if the
+     * connection is closed or abandons reconnection while waiting, and if the
+     * wait exceeds `timeoutMs` — a publisher parked here must eventually be
+     * told rather than held forever.
+     */
+    public whenReady(timeoutMs: number = Config.connectionReadyTimeoutMs): Promise<void> {
+        if (this._isReady) return Promise.resolve();
+        if (this.manualDisconnect) {
+            return Promise.reject(new NotReadyError('the connection has been closed'));
+        }
+
+        return new Promise<void>((resolve, reject) => {
+            const entry = {
+                resolve: () => { clearTimeout(timer); settle(); resolve(); },
+                reject: (err: Error) => { clearTimeout(timer); settle(); reject(err); },
+            };
+            const settle = () => {
+                const i = this.readyWaiters.indexOf(entry);
+                if (i >= 0) { this.readyWaiters.splice(i, 1); }
+            };
+            const timer = setTimeout(() => {
+                settle();
+                reject(new NotReadyError(
+                    `the connection did not become ready within ${timeoutMs}ms`,
+                ));
+            }, timeoutMs);
+            if (timer.unref) { timer.unref(); }
+
+            this.readyWaiters.push(entry);
+        });
+    }
+
+    /** Traffic can flow: release anything parked on readiness. */
+    private _markReady(): void {
+        this._isReady = true;
+        const waiting = this.readyWaiters;
+        this.readyWaiters = [];
+        waiting.forEach((w) => w.resolve());
+    }
+
+    /**
+     * Traffic cannot flow for now. Waiters stay parked, because a reconnection
+     * is what they are waiting through.
+     */
+    private _markNotReady(): void {
+        this._isReady = false;
+    }
+
+    /** Traffic will not flow again: fail anything parked rather than hang it. */
+    private _abandonReady(err: Error): void {
+        this._isReady = false;
+        const waiting = this.readyWaiters;
+        this.readyWaiters = [];
+        waiting.forEach((w) => w.reject(err));
+    }
+
+    /**
+     * Put every component's topology back, in registration order.
+     *
+     * Sequential rather than concurrent: one component's restore declares the
+     * exchange another one binds to, and doing them at once makes that
+     * ordering a race that only shows up under load.
+     */
+    private async _runRestorers(generation: number): Promise<void> {
+        for (const restore of [...this.restorers]) {
+            if (generation !== this.generation) {
+                throw new ReconnectionError('connection was torn down while restoring');
+            }
+            await restore(generation);
+        }
+        if (generation !== this.generation) {
+            throw new ReconnectionError('connection was torn down while restoring');
+        }
+    }
+
+    /**
+     * Discard a generation that connected but could not be restored.
+     *
+     * The close handlers come off before the socket is closed: leaving them on
+     * would re-enter the unexpected-close path and schedule a second
+     * reconnection alongside the one this failure already triggers.
+     */
+    private async _discardGeneration(): Promise<void> {
+        this.generation++;
+        this._markNotReady();
+        this._isConnected = false;
+
+        const handle = this.handle;
+        this.handle = undefined;
+        if (!handle) return;
+
+        try {
+            handle.removeAllListeners('close');
+            handle.removeAllListeners('error');
+            await handle.close();
+        } catch (err: any) {
+            Logger.debug(`failed closing an unrestorable connection: ${err?.message || err}`);
+        }
+    }
+
+    /**
      * Deliveries currently being handled, keyed by correlationId, so a caller
      * that abandons a streaming reply can stop the producer.
      */
@@ -195,11 +441,22 @@ export default class Connection extends EventEmitter implements IConnection {
 
     /** Deliveries whose handler has not finished settling. */
     private _inFlightDeliveries: number = 0;
+    /**
+     * Handlers still executing, including ones whose delivery has already been
+     * abandoned on the processing timeout.
+     *
+     * Counted separately because the two come apart: the timeout settles the
+     * delivery, but JavaScript cannot preempt the handler, so it runs on. A
+     * drain that watched deliveries alone reported success while user code was
+     * still mid-transaction, and shutdown went on to close the resources it
+     * was using.
+     */
+    private _runningHandlers: number = 0;
     private _drainWaiters: Array<() => void> = [];
 
     /** How many messages are currently being handled. */
     public get inFlightDeliveries() {
-        return this._inFlightDeliveries;
+        return Math.max(this._inFlightDeliveries, this._runningHandlers);
     }
 
     /**
@@ -211,7 +468,7 @@ export default class Connection extends EventEmitter implements IConnection {
      * stuck handler.
      */
     public drainInFlight(timeoutMs: number): Promise<boolean> {
-        if (this._inFlightDeliveries === 0) return Promise.resolve(true);
+        if (this.inFlightDeliveries === 0) return Promise.resolve(true);
 
         return new Promise<boolean>((resolve) => {
             let done = false;
@@ -238,12 +495,26 @@ export default class Connection extends EventEmitter implements IConnection {
 
     private _deliveryFinished(): void {
         this._inFlightDeliveries--;
-        if (this._inFlightDeliveries <= 0) {
-            this._inFlightDeliveries = 0;
-            const waiters = this._drainWaiters;
-            this._drainWaiters = [];
-            waiters.forEach((wake) => wake());
-        }
+        if (this._inFlightDeliveries < 0) { this._inFlightDeliveries = 0; }
+        this._maybeDrained();
+    }
+
+    private _handlerStarted(): void {
+        this._runningHandlers++;
+    }
+
+    private _handlerFinished(): void {
+        this._runningHandlers--;
+        if (this._runningHandlers < 0) { this._runningHandlers = 0; }
+        this._maybeDrained();
+    }
+
+    /** Release drain waiters once nothing is outstanding on either count. */
+    private _maybeDrained(): void {
+        if (this.inFlightDeliveries > 0) return;
+        const waiters = this._drainWaiters;
+        this._drainWaiters = [];
+        waiters.forEach((wake) => wake());
     }
 
     async connect(url: string, reconnectionOptions?: ReconnectionOptions): Promise<amqplib.ChannelModel> {
@@ -253,7 +524,12 @@ export default class Connection extends EventEmitter implements IConnection {
         this.reconnectionOptions = { ...DEFAULT_RECONNECTION_OPTIONS, ...reconnectionOptions };
         this.manualDisconnect = false;
 
-        return this._connect();
+        const handle = await this._connect();
+        // Nothing to restore on a first connect — components initialise
+        // themselves against it — so the socket coming up is readiness.
+        this._isReconnecting = false;
+        this._markReady();
+        return handle;
     }
 
     /**
@@ -285,7 +561,7 @@ export default class Connection extends EventEmitter implements IConnection {
         const generation = this.generation;
 
         try {
-            const handle = await amqplib.connect(this.url);
+            const handle = await amqplib.connect(applyHeartbeat(this.url));
 
             if (generation !== this.generation || this.manualDisconnect) {
                 // Torn down while this attempt was in flight. Clearing the
@@ -302,8 +578,17 @@ export default class Connection extends EventEmitter implements IConnection {
 
             this.handle = handle;
             this._isConnected = true;
-            this._isReconnecting = false;
             this.reconnectAttempts = 0;
+            // _isReconnecting is deliberately NOT cleared here. On the
+            // reconnect path a socket is only half the job: restoration still
+            // has to run, and it is real network I/O. Clearing the flag on
+            // connect stood the re-entrancy guard in _scheduleReconnect down
+            // for that whole window, so a socket that died mid-restore
+            // scheduled a second lineage alongside the one the failure was
+            // about to schedule — two connections, both restored, both
+            // announced, the loser orphaned open with live consumers on it.
+            // Whoever set the flag clears it: connect() below, or the
+            // reconnect timer once restoration has actually finished.
 
             // Set up connection event handlers
             this.handle.on('error', (err) => {
@@ -319,6 +604,14 @@ export default class Connection extends EventEmitter implements IConnection {
 
                 Logger.warn('connection closed unexpectedly');
                 this._isConnected = false;
+                this._markNotReady();
+                // Retire this generation. A restoration in flight against it
+                // is now working on a dead socket, and its next generation
+                // check aborts it — which is what routes the failure into the
+                // single retry the catch below already performs. Without this
+                // a restoration could finish "successfully" against a closed
+                // connection and announce itself ready.
+                this.generation++;
                 this.emit('disconnected');
                 this._scheduleReconnect();
             });
@@ -341,6 +634,7 @@ export default class Connection extends EventEmitter implements IConnection {
         if (maxRetries > 0 && this.reconnectAttempts >= maxRetries) {
             const error = new ReconnectionError(`max reconnection attempts (${maxRetries}) exceeded`);
             Logger.error(error.message);
+            this._abandonReady(new NotReadyError(error.message));
             this.emit('error', error);
             return;
         }
@@ -365,6 +659,14 @@ export default class Connection extends EventEmitter implements IConnection {
             const attempt = this.reconnectAttempts;
             try {
                 await this._connect();
+                // Restoration is part of reconnecting, not something that
+                // happens afterwards. Until every listener has its channel,
+                // queue, bindings and consumer back, the socket is up but the
+                // application cannot use it — and code reacting to
+                // 'reconnected' by publishing would find no channel there.
+                await this._runRestorers(this.generation);
+                this._isReconnecting = false;
+                this._markReady();
                 Logger.info(`reconnection successful after ${attempt} attempts`);
                 this.emit('reconnected');
             } catch (err) {
@@ -375,6 +677,13 @@ export default class Connection extends EventEmitter implements IConnection {
                     return;
                 }
                 Logger.error(`reconnection attempt ${attempt} failed: ${err.message}`);
+                // A generation that connected but could not be restored is
+                // worse than no connection: it looks healthy and serves
+                // nothing. Drop it and let the backoff try again.
+                await this._discardGeneration();
+                // _doConnect zeroed the counter on the way through, so put the
+                // attempt back or the retry budget never runs out.
+                this.reconnectAttempts = attempt;
                 this._isReconnecting = false;
                 this._scheduleReconnect();
             }
@@ -396,6 +705,7 @@ export default class Connection extends EventEmitter implements IConnection {
             this.reconnectTimer = undefined;
         }
         this._isReconnecting = false;
+        this._abandonReady(new NotReadyError('the connection has been closed'));
 
         if (this.handle) {
             await this.handle.close();
@@ -518,13 +828,35 @@ export default class Connection extends EventEmitter implements IConnection {
                 }
                 group.add(delivery);
 
-                const result = await Promise.race([
-                    messageHandler(msg.content, correlationId, headers, {
-                        signal: controller.signal,
-                        routingKey: msg.fields.routingKey,
-                    }),
-                    expiry,
-                ]);
+                // Tracked around the race rather than around the await, so a
+                // handler that outlives its own timeout is still counted as
+                // running until it actually returns.
+                this._handlerStarted();
+                let running: Promise<MessageHandlerResult>;
+                try {
+                    running = Promise.resolve(
+                        messageHandler(msg.content, correlationId, headers, {
+                            signal: controller.signal,
+                            routingKey: msg.fields.routingKey,
+                            messageId: msg.properties.messageId,
+                            redelivered: msg.fields.redelivered === true,
+                        }),
+                    );
+                } catch (syncErr) {
+                    // A non-async handler can throw before any promise exists,
+                    // in which case nothing downstream would ever decrement the
+                    // counter — and one leaked handler makes every later
+                    // drainInFlight() wait out its full timeout and report
+                    // failure.
+                    this._handlerFinished();
+                    throw syncErr;
+                }
+                running.then(
+                    () => this._handlerFinished(),
+                    () => this._handlerFinished(),
+                );
+
+                const result = await Promise.race([running, expiry]);
                 clearTimeout(timeout);
 
                 // The reply is published before the request is settled, so
@@ -619,6 +951,12 @@ export default class Connection extends EventEmitter implements IConnection {
                                     {
                                         persistent: true,
                                         correlationId,
+                                        // Carried through so the retried copy
+                                        // is recognisable as the same logical
+                                        // message. Omitting it minted a fresh
+                                        // id per hop, which is precisely when
+                                        // a consumer needs the old one.
+                                        messageId: msg.properties.messageId,
                                         replyTo,
                                         headers: retryHeaders,
                                     },
@@ -630,6 +968,7 @@ export default class Connection extends EventEmitter implements IConnection {
                                 await this.publishToQueue(channel, retryOptions.retryQueueName, msg.content, {
                                     persistent: true,
                                     correlationId,
+                                    messageId: msg.properties.messageId,
                                     replyTo,
                                     headers: retryHeaders,
                                 });
@@ -657,6 +996,7 @@ export default class Connection extends EventEmitter implements IConnection {
                             await this.publishToQueue(channel, retryOptions.dlqName, msg.content, {
                                 persistent: true,
                                 correlationId,
+                                messageId: msg.properties.messageId,
                                 headers: dlqHeaders,
                             });
                             await this.ack(channel, msg);
@@ -740,6 +1080,7 @@ export default class Connection extends EventEmitter implements IConnection {
 
         const state: ChannelPublishState = {
             returned: new Set<string>(),
+            awaiting: new Set<string>(),
             pending: new Set<(err: Error) => void>(),
             inFlight: 0,
             waiters: [],
@@ -753,7 +1094,12 @@ export default class Connection extends EventEmitter implements IConnection {
             // confirm callback to consult it.
             emitter.on('return', (msg: any) => {
                 const id = msg?.properties?.messageId;
-                if (id) state.returned.add(id);
+                // Only while a publish is actually waiting on that id. A
+                // return arriving after its own publish gave up would
+                // otherwise sit in the set forever and be read as the verdict
+                // on the next publish reusing the id — which is exactly what
+                // a stable messageId across retries makes routine.
+                if (id && state.awaiting.has(id)) { state.returned.add(id); }
             });
 
             // A channel closing with confirms outstanding leaves those
@@ -763,8 +1109,10 @@ export default class Connection extends EventEmitter implements IConnection {
                 state.pending.clear();
                 waiting.forEach((rejectFn) => rejectFn(new ChannelClosedError(reason)));
                 // Release anyone parked on the in-flight bound, or they hang
-                // forever waiting for slots that will never free.
-                state.inFlight = 0;
+                // forever waiting for slots that will never free. The counter
+                // is left alone: each publish still runs its own finally and
+                // decrements itself, and zeroing here as well drove it
+                // negative by however many were outstanding.
                 const parked = state.waiters;
                 state.waiters = [];
                 parked.forEach((wake) => wake());
@@ -857,6 +1205,7 @@ export default class Connection extends EventEmitter implements IConnection {
                     clearTimeout(timer);
                     state.pending.delete(onClosed);
                     state.returned.delete(messageId);
+                    state.awaiting.delete(messageId);
                     if (err) { reject(err); } else { resolve(); }
                 };
 
@@ -868,6 +1217,7 @@ export default class Connection extends EventEmitter implements IConnection {
 
                 const onClosed = (err: Error) => finish(err);
                 state.pending.add(onClosed);
+                state.awaiting.add(messageId);
 
                 const onConfirm = (err: any) => {
                     if (err) {
@@ -897,9 +1247,26 @@ export default class Connection extends EventEmitter implements IConnection {
                     }
                     if (accepted === false) {
                         // Confirmed, but the local write buffer is still full.
+                        // Waiting for it to drain is a courtesy to the caller,
+                        // not part of the delivery guarantee — the broker has
+                        // the message either way. So the confirm deadline is
+                        // stood down first: leaving it running reported a
+                        // publish that demonstrably succeeded as an UNKNOWN
+                        // outcome, which invites a retry that duplicates it.
                         const emitter = channel as unknown as EventEmitter;
                         if (typeof emitter.once === 'function') {
-                            emitter.once('drain', () => finish());
+                            clearTimeout(timer);
+                            let done = false;
+                            const proceed = () => { if (!done) { done = true; finish(); } };
+                            const drainCap = setTimeout(() => {
+                                Logger.debug(
+                                    `${describe} was confirmed but its channel buffer did not drain ` +
+                                    `within ${Config.publishConfirmTimeoutMs}ms`,
+                                );
+                                proceed();
+                            }, Config.publishConfirmTimeoutMs);
+                            if (drainCap.unref) { drainCap.unref(); }
+                            emitter.once('drain', () => { clearTimeout(drainCap); proceed(); });
                             return;
                         }
                     }

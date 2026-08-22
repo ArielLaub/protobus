@@ -18,8 +18,8 @@ abstract class MessageService extends BaseListener implements IMessageService {
     abstract get ServiceName(): string;
     abstract get ProtoFileName(): string;
 
-    // Optional override
-    get maxConcurrent(): number;
+    // Concurrency, retry and timeouts are constructor options, not overrides:
+    //   new MyService(context, { maxConcurrent, retry, lateAck, processingTimeoutMs })
 
     // Lifecycle
     async init(): Promise<void>;
@@ -58,13 +58,21 @@ public get ProtoFileName(): string {
 
 ### maxConcurrent
 
-Maximum number of messages processed concurrently. Default: `undefined` (unlimited).
+How many messages this replica works on at once — the consumer prefetch.
+Passed as a constructor option, not declared as a property:
 
 ```typescript
-public get maxConcurrent(): number {
-    return 10;  // Process up to 10 messages at once
-}
+const service = new MyService(context, { maxConcurrent: 10 });
 ```
+
+**Default: `1`.** One message at a time, the slot held until the handler
+returns and its reply is away. There is no unlimited setting: with late ack,
+an unbounded prefetch lets the broker push a whole queue backlog into process
+memory before anything is acknowledged.
+
+A **streaming** handler holds its slot for the entire life of the stream, so a
+streaming service left on the default serves one caller per replica. Set it
+deliberately — see [Concurrency](../configuration.md#concurrency).
 
 ## Methods
 
@@ -223,10 +231,6 @@ class CalculatorService extends MessageService {
 
     public get ProtoFileName(): string {
         return __dirname + '/calculator.proto';
-    }
-
-    public get maxConcurrent(): number {
-        return 5;
     }
 
     async add(request: AddRequest, actor?: string): Promise<AddResponse> {

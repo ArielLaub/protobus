@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 
-import { IConnection, Channel, ConsumeOptions, ConsumeRetryOptions, MessageHandler } from './connection';
+import { IConnection, Channel, ConsumeOptions, ConsumeRetryOptions, MessageHandler, attachRestorer } from './connection';
 import Config from './config';
 import { Logger } from './logger';
 
@@ -30,7 +30,8 @@ export abstract class BaseListener extends EventEmitter {
     protected bindings: string[] = []; // Track bound routing keys for reconnection
     private _isInitialized: boolean = false;
     private _wasStarted: boolean = false;
-    private _boundOnReconnected: () => void;
+    private _detachRestorer: () => void = () => undefined;
+    private _restorerAttached: boolean = false;
     private _boundOnDisconnected: () => void;
 
     constructor(connection: IConnection) {
@@ -58,11 +59,36 @@ export abstract class BaseListener extends EventEmitter {
             );
         };
 
-        // Listen for reconnection events (store bound refs for proper cleanup)
-        this._boundOnReconnected = this._onReconnected.bind(this);
+        // Restoration is coordinated by the connection, which waits for it
+        // before reporting itself reconnected. Disconnection stays an event:
+        // there is nothing to wait for when the socket has already gone.
+        this._attachRestorer();
         this._boundOnDisconnected = this._onDisconnected.bind(this);
-        this.connection.on('reconnected', this._boundOnReconnected);
         this.connection.on('disconnected', this._boundOnDisconnected);
+    }
+
+    /**
+     * Take part in the connection's restoration.
+     *
+     * Paired with `_detachRestorer`, and both are idempotent, because the two
+     * are not called the same number of times: a listener attaches on
+     * construction and again on every `start()`, and detaches on
+     * `stopConsuming()` and on `close()`. Re-attaching in `start()` is what
+     * keeps stop/start reversible — a listener that resumed consuming but had
+     * been dropped from restoration would go quiet for good on the next
+     * reconnection, behind a connection reporting itself healthy.
+     */
+    private _attachRestorer(): void {
+        if (this._restorerAttached) return;
+        const detach = attachRestorer(
+            this.connection, () => this._restore(), this.constructor.name,
+        );
+        this._restorerAttached = true;
+        this._detachRestorer = () => {
+            if (!this._restorerAttached) return;
+            this._restorerAttached = false;
+            detach();
+        };
     }
 
     get isConnected() { return this.connection.isConnected; }
@@ -87,9 +113,16 @@ export abstract class BaseListener extends EventEmitter {
     }
 
     /**
-     * Called when connection is re-established - re-initializes the listener
+     * Put this listener's channel, queue, bindings and consumer back.
+     *
+     * A failure propagates to the connection, which treats the whole
+     * generation as unusable and retries. Reporting it here instead would
+     * leave a half-restored listener sitting beside a connection that believes
+     * it is healthy — and on an 'error' event nothing subscribes to, so the
+     * rejection would surface as an unhandled one rather than as anything an
+     * operator can act on.
      */
-    protected async _onReconnected(): Promise<void> {
+    protected async _restore(): Promise<void> {
         if (!this._isInitialized) {
             // Was never initialized, nothing to restore
             return;
@@ -97,27 +130,22 @@ export abstract class BaseListener extends EventEmitter {
 
         Logger.info(`${this.constructor.name}: reconnected, re-initializing...`);
 
-        try {
-            // Re-initialize channel and queues
-            await this._reinitialize();
+        // Re-initialize channel and queues
+        await this._reinitialize();
 
-            // Re-bind all routing keys
-            for (const routingKey of this.bindings) {
-                await this.connection.bindQueue(this.channel, this.queueName, this.exchangeName, routingKey, {});
-                Logger.debug(`${this.constructor.name}: re-bound ${routingKey}`);
-            }
-
-            // Restart consuming if we were consuming before
-            if (this._wasStarted) {
-                await this._startConsuming();
-            }
-
-            Logger.info(`${this.constructor.name}: successfully re-initialized after reconnection`);
-            this.emit('reconnected');
-        } catch (err) {
-            Logger.error(`${this.constructor.name}: failed to re-initialize after reconnection: ${err.message}`);
-            this.emit('error', err);
+        // Re-bind all routing keys
+        for (const routingKey of this.bindings) {
+            await this.connection.bindQueue(this.channel, this.queueName, this.exchangeName, routingKey, {});
+            Logger.debug(`${this.constructor.name}: re-bound ${routingKey}`);
         }
+
+        // Restart consuming if we were consuming before
+        if (this._wasStarted) {
+            await this._startConsuming();
+        }
+
+        Logger.info(`${this.constructor.name}: successfully re-initialized after reconnection`);
+        this.emit('reconnected');
     }
 
     /**
@@ -229,6 +257,10 @@ export abstract class BaseListener extends EventEmitter {
         if (this._wasStarted && this.consumerTag) throw new AlreadyStartedError();
         if (!this.connection.isConnected) throw new NotConnectedError();
 
+        // Restored again from here on: stopConsuming() drops out of
+        // restoration, and resuming has to undo that.
+        this._attachRestorer();
+
         // No try//catch for AlreadyStartedError here: it can only be thrown by
         // the guard above, which runs before this point.
         await this._startConsuming();
@@ -252,6 +284,13 @@ export abstract class BaseListener extends EventEmitter {
 
         const tag = this.consumerTag;
         this.consumerTag = '';
+        // Cleared too, or a reconnection landing mid-drain restores the
+        // consumer and the shutdown starts taking new work again.
+        this._wasStarted = false;
+        // And stop taking part in restoration at all: a reconnection between
+        // here and close() would otherwise open a fresh channel for a listener
+        // that is being shut down.
+        this._detachRestorer();
 
         if (!this.connection.isConnected || !this.channel) return;
 
@@ -270,7 +309,7 @@ export abstract class BaseListener extends EventEmitter {
         if (!this._isInitialized) throw new NotInitializedError();
 
         // Remove reconnection listeners
-        this.connection.removeListener('reconnected', this._boundOnReconnected);
+        this._detachRestorer();
         this.connection.removeListener('disconnected', this._boundOnDisconnected);
 
         if (this.connection.isConnected && this.channel) {

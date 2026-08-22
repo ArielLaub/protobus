@@ -43,11 +43,25 @@ jobs:
       - name: Verify toolchain supports trusted publishing
         # Fail loudly here rather than getting an opaque auth error from the
         # registry if the runner image ever ships an older npm.
+        #
+        # Compared with Node's own parser rather than `npx semver`: this job
+        # holds the OIDC identity, and fetching an unpinned package from the
+        # registry to run in it undoes the reason nothing else is installed
+        # here.
         run: |
           node --version
           npm --version
-          npx --yes semver -r ">=11.5.1" "$(npm --version)" >/dev/null \
-            || { echo "npm $(npm --version) is below the 11.5.1 required for trusted publishing"; exit 1; }
+          node -e '
+            const need = [11, 5, 1];
+            const got = process.argv[1].split(".").map(Number);
+            const ok = got[0] !== need[0] ? got[0] > need[0]
+              : got[1] !== need[1] ? got[1] > need[1]
+              : got[2] >= need[2];
+            if (!ok) {
+              console.error(`npm ${process.argv[1]} is below the 11.5.1 required for trusted publishing`);
+              process.exit(1);
+            }
+          ' "$(npm --version)"
 
       # The exact build the CI jobs ran against, produced once by ci.yml's
       # build job in this same workflow run. Publishing this instead of

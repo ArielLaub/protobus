@@ -152,6 +152,34 @@ export default class Config {
     }
 
     /**
+     * AMQP heartbeat interval, in seconds.
+     *
+     * amqplib closes a connection after two missed intervals, so this is half
+     * the worst-case time to notice a peer that vanished without closing its
+     * socket — a crashed broker, a partition, a NAT that dropped the flow.
+     * Left unset, the interval is whatever the broker proposes, and RabbitMQ
+     * proposes 60, which is two minutes of publishing into a dead socket while
+     * the connection still reports itself healthy.
+     *
+     * A caller-supplied URL that already carries `?heartbeat=` wins, which is
+     * also how heartbeats are turned off: `?heartbeat=0`.
+     */
+    static get heartbeatSeconds() {
+        return envInt('AMQP_HEARTBEAT_SECONDS', 30);
+    }
+
+    /**
+     * How long a publisher parked on a reconnection waits for the connection to
+     * carry traffic again before giving up with NotReadyError.
+     *
+     * Bounded because the alternative is holding the caller for as long as the
+     * broker stays away, which for an unreachable broker is forever.
+     */
+    static get connectionReadyTimeoutMs() {
+        return envInt('CONNECTION_READY_TIMEOUT_MS', 30000);
+    }
+
+    /**
      * Maximum publishes awaiting a broker confirm on one channel at a time.
      * Further publishes park until a slot frees, which is what stops a fast
      * producer from queueing unbounded unconfirmed work in memory.
@@ -179,6 +207,18 @@ export default class Config {
      */
     static get streamMaxBufferedBytes() {
         return envInt('STREAM_MAX_BUFFERED_BYTES', 64 * 1024 * 1024);
+    }
+
+    /**
+     * Upper bound on buffered bytes across **all** streaming calls on one
+     * dispatcher.
+     *
+     * The per-call bound says nothing about a process holding many calls at
+     * once: at the defaults, five concurrent streams are within their limits
+     * and 320 MiB into the heap. Defaults to 256 MiB.
+     */
+    static get streamMaxTotalBufferedBytes() {
+        return envInt('STREAM_MAX_TOTAL_BUFFERED_BYTES', 256 * 1024 * 1024);
     }
 
     // Headers used by the streaming wire protocol. See docs/advanced/streaming.md.

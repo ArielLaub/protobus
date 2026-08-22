@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import MessageFactory from './message_factory';
-import { IConnection, Channel, PublishOptions } from './connection';
+import { IConnection, Channel, PublishOptions, attachRestorer } from './connection';
 import { Logger } from './logger';
 import Config from './config';
 
@@ -14,18 +14,18 @@ export default class EventDispatcher {
 
     private _isInitialized: boolean = false;
     public get isInitialized() { return this._isInitialized; }
-    private _boundOnReconnected: () => void;
+    private _detachRestorer: () => void;
     private _boundOnDisconnected: () => void;
 
     constructor(connection: IConnection, messageFactory: MessageFactory) {
         this.connection = connection;
         this.messageFactory = messageFactory;
 
-        // Listen for connection events (store bound refs for proper cleanup)
-        this._boundOnReconnected = this._onReconnected.bind(this);
         this._boundOnDisconnected = this._onDisconnected.bind(this);
         this.connection.on('disconnected', this._boundOnDisconnected);
-        this.connection.on('reconnected', this._boundOnReconnected);
+        this._detachRestorer = attachRestorer(
+            this.connection, () => this._restore(), 'EventDispatcher',
+        );
     }
 
     /**
@@ -37,19 +37,18 @@ export default class EventDispatcher {
     }
 
     /**
-     * Called when connection is re-established
+     * Reopen the publishing channel.
+     *
+     * A failure propagates so the connection retries the generation: an event
+     * dispatcher with no channel silently drops every event published through
+     * it.
      */
-    private async _onReconnected(): Promise<void> {
+    private async _restore(): Promise<void> {
         if (!this._isInitialized) return;
 
         Logger.info('EventDispatcher: reconnected, re-initializing channel');
-
-        try {
-            this.channel = await this.connection.openChannel();
-            Logger.info('EventDispatcher: successfully re-initialized after reconnection');
-        } catch (err) {
-            Logger.error(`EventDispatcher: failed to re-initialize after reconnection: ${err.message}`);
-        }
+        this.channel = await this.connection.openChannel();
+        Logger.info('EventDispatcher: successfully re-initialized after reconnection');
     }
 
     public async init() {
@@ -59,7 +58,13 @@ export default class EventDispatcher {
     }
 
     public async publish(type: string, content: any, topic: string) {
-        if (!this.connection.isConnected) throw new NotConnectedError();
+        // A reconnection is waited through rather than failed on: the channel
+        // is being replaced and will be there shortly. Anything else with no
+        // connection is reported at once.
+        if (!this.connection.isConnected && !this.connection.isReconnecting) {
+            throw new NotConnectedError();
+        }
+        await this.connection.whenReady?.();
         if (!topic) {
             topic = `EVENT.${type}`;
         }
@@ -84,6 +89,6 @@ export default class EventDispatcher {
 
     async close(): Promise<void> {
         this.connection.removeListener('disconnected', this._boundOnDisconnected);
-        this.connection.removeListener('reconnected', this._boundOnReconnected);
+        this._detachRestorer();
     }
 }

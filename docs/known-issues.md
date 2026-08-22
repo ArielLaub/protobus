@@ -4,30 +4,36 @@ Current limitations and potential improvements for ProtoBus.
 
 ## Minor Issues
 
-### No Graceful Shutdown
+### Cancellation and shutdown are cooperative
 
 **Severity:** Low
 
 **Description:**
-There is no built-in mechanism to gracefully shut down services. For most applications, this is handled at the application level.
+Neither the processing timeout nor a stream cancellation can stop a handler
+that is already running — JavaScript cannot preempt one. Both abort the
+handler's `AbortSignal` and stop the framework acting on a late result; a
+handler that never checks its signal runs to completion regardless, and its
+output is simply discarded.
+
+A graceful shutdown waits for handlers to finish, so a handler that ignores its
+signal and runs long will hold shutdown until `SHUTDOWN_DRAIN_TIMEOUT_MS`
+elapses, at which point its messages stay unacknowledged and are redelivered.
 
 **Workaround:**
+Watch the signal in anything long-running:
+
 ```typescript
-async function gracefulShutdown(context: IContext) {
-    console.log('Shutting down...');
-
-    // Wait for in-flight messages to complete
-    await new Promise(r => setTimeout(r, 2000));
-
-    // Close connection
-    await context.connection.disconnect();
-
-    process.exit(0);
+async generateReport(request: Request, actor: string, id: string, ctx?: MessageHandlerContext) {
+    for (const chunk of workItems) {
+        if (ctx?.signal.aborted) { throw new Error('cancelled'); }
+        await process(chunk);
+    }
 }
-
-process.on('SIGTERM', () => gracefulShutdown(context));
-process.on('SIGINT', () => gracefulShutdown(context));
 ```
+
+Graceful shutdown itself is built in — `RunnableService.start()` installs signal
+handlers that stop consuming, drain in-flight work, run your `cleanup()` hook
+and then disconnect. See [RunnableService](./api/runnable-service.md).
 
 ---
 

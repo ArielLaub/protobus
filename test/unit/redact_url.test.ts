@@ -51,7 +51,13 @@ describe('Connection', () => {
         expect(lines.join('\n')).not.toContain('s3cret');
         expect(lines.some((l) => l.includes('amqp://user:***@rabbit:5672/vhost'))).toBe(true);
 
-        // The real URL still has to reach amqplib untouched.
-        expect(amqplib.connect).toHaveBeenCalledWith('amqp://user:s3cret@rabbit:5672/vhost');
+        // The redaction is for the log only: amqplib still has to receive the
+        // real credentials, host and vhost. The heartbeat is appended on the
+        // way through, so the assertion is on the parts rather than the whole.
+        const dialled = new URL((amqplib.connect as jest.Mock).mock.calls[0][0]);
+        expect(dialled.username).toBe('user');
+        expect(dialled.password).toBe('s3cret');
+        expect(dialled.host).toBe('rabbit:5672');
+        expect(dialled.pathname).toBe('/vhost');
     });
 });

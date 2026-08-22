@@ -177,6 +177,19 @@ for await (const chunk of llm.completeStream(req, undefined, undefined, { signal
 
 It composes with signals you already have. Passing an HTTP request's own `signal` stops the stream when the user closes the tab, with no Stop button involved.
 
+An aborted stream **ends the loop rather than raising** — the same outcome as
+`break`, since both mean the caller asked to stop. That leaves "I cancelled"
+and "the server finished" looking identical from inside the loop, which matters
+when the signal belongs to someone else. Check the signal afterwards when you
+need to tell them apart:
+
+```typescript
+for await (const chunk of llm.completeStream(req, undefined, undefined, { signal: stop.signal })) {
+    send(chunk);
+}
+if (stop.signal.aborted) { /* stopped early — the response is partial */ }
+```
+
 On the server, watch `context.signal` — the fourth argument to your handler:
 
 ```typescript
@@ -318,7 +331,15 @@ The biggest practical difference: gRPC streams ride on HTTP/2's multiplexed conn
 
 - **Server-streaming only.** Client-streaming and bidirectional streaming aren't supported.
 - **Cancellation is cooperative and best effort.** A handler that never checks `context.signal` runs to completion, and a lost cancellation notice is not retried. See [Cancellation](#cancellation).
-- **No exactly-once semantics.** If RabbitMQ requeues a chunk during failover, the client may see duplicates. The framework provides no dedup. For idempotent chunks (LLM deltas, log lines) this is fine; for non-idempotent chunks, the caller is responsible.
+- **No exactly-once semantics.** A chunk requeued during failover can be
+  redelivered. A redelivery carrying the sequence number of a chunk already
+  seen is dropped by the dispatcher, so the common case does not reach the
+  caller twice; a gap in the sequence fails the stream with
+  `StreamSequenceError` rather than handing over a short stream that looks
+  complete. Neither is exactly-once — a peer that sends no `x-protobus-seq`
+  header disables the check entirely, since a violation must not be inferred
+  from missing information. For idempotent chunks (LLM deltas, log lines) this
+  is comfortably enough; for non-idempotent chunks, the caller is responsible.
 - **No chunk-level retry/DLQ.** Standard retry/DLQ applies to the entire RPC, not to individual chunks.
 - **Single reply queue per client.** All in-flight streams to a single proxy share one reply queue. Very-high-concurrency callers may want multiple proxy instances.
 

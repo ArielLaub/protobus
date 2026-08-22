@@ -1,26 +1,38 @@
 class TrieNode<T> {
     private word: string;
-    private value: T;
+    /**
+     * Every value registered at this exact pattern.
+     *
+     * A list, not a single slot: two subscribers to one topic are ordinary,
+     * and holding one value meant the second silently replaced nothing and
+     * was dropped. Empty on a node that is only a step along the way to a
+     * longer pattern, which is what keeps partial matches from matching.
+     */
+    private values: T[];
     private children: Map<string, TrieNode<T>>;
     private isWildcard: boolean;
     private isSuperWildcard: boolean;
 
-    public get Value(): T { return this.value; }
+    public get Values(): readonly T[] { return this.values; }
 
-    constructor(word: string = '', value?: T) {
+    constructor(word: string = '') {
         this.children = new Map<string, TrieNode<T>>();
         this.word = word;
-        this.value = value;
+        this.values = [];
         this.isWildcard = word === '*' || word === '#'; // caching
         this.isSuperWildcard = word === '#'; // caching
     }
 
-    private addMatchDeep(match: string, value?: T, _tail?: string[]): TrieNode<T> {
+    public addValue(value: T): void {
+        this.values.push(value);
+    }
+
+    private addMatchDeep(match: string, _tail?: string[]): TrieNode<T> {
         const tail = _tail ? _tail : match.split('.');
         const word = tail.shift();
-        const child = this.ensureChild(word, value);
+        const child = this.ensureChild(word);
         if (tail.length > 0)
-            return child.addMatchDeep(match, value, tail);
+            return child.addMatchDeep(match, tail);
         else
             return child;
     }
@@ -46,17 +58,20 @@ class TrieNode<T> {
         }
 
         if (tail.length === 0) {
-            if (this.children.size === 0) {
-                return [this];
+            // A pattern ends here if anything was registered on this node —
+            // independently of whether longer patterns branch off it. Keying
+            // this on "has no children" instead meant adding `a.b.c` silently
+            // stopped `a.b` from matching.
+            if (this.values.length > 0) {
+                results.push(this);
             }
 
+            // '#' stands for zero or more words, so a pattern ending in one
+            // also ends here.
             if (this.children.has('#')) {
-                const results2 = this.children.get('#').matchTopicDeep(topic, _tail, false);
-                return results.concat(results2);
-            } else {
-                // only return word if this is a leaf. we only want full matches.
-                return  results;
+                return results.concat(this.children.get('#').matchTopicDeep(topic, _tail, false));
             }
+            return results;
         }
 
 
@@ -68,20 +83,23 @@ class TrieNode<T> {
         return results;
     }
 
-    private ensureChild(word: string, value?: T): TrieNode<T> {
+    private ensureChild(word: string): TrieNode<T> {
         if (this.children.has(word)) {
             return this.children.get(word);
         }
 
-        const child = new TrieNode(word, value);
+        const child = new TrieNode<T>(word);
         this.children.set(word, child);
-        // this.value = undefined;
 
         return child;
     }
 
     public addMatch(match: string, value: T): TrieNode<T> {
-        return this.addMatchDeep(match, value);
+        // Only the node the pattern ends on carries the value. Marking every
+        // node along the path made each one look like a registered pattern.
+        const node = this.addMatchDeep(match);
+        node.addValue(value);
+        return node;
     }
 
     public matchTopic(topic: string): T[] {
@@ -89,7 +107,7 @@ class TrieNode<T> {
         const processChild = (child: TrieNode<T>) => {
             const result = child.matchTopicDeep(topic);
             result.forEach((node: TrieNode<T>) => {
-                results.add(node.Value);
+                node.Values.forEach((value) => results.add(value));
             });
         };
         this.children.forEach(processChild);

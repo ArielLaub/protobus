@@ -66,12 +66,12 @@
     "test:unit": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:integration": "docker compose up -d --wait && jest --config jest.integration.config.js; docker compose down",
+    "test:integration": "docker compose up -d --wait && { jest --config jest.integration.config.js; status=$?; docker compose down; exit $status; }",
     "test:integration:watch": "jest --config jest.integration.config.js --watch",
     "docker:up": "docker compose up -d --wait",
     "docker:down": "docker compose down",
     "watch": "tsc -w"
   },
   "types": "dist/index.d.ts",
-  "version": "2.0.0"
+  "version": "2.1.0"
 }

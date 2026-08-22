@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 
-import { IConnection, Channel, PublishOptions } from './connection';
+import { IConnection, Channel, PublishOptions, attachRestorer } from './connection';
 import Config from './config';
 import { Logger } from './logger';
 import CallbackListener from './callback_listener';
@@ -53,6 +53,12 @@ interface StreamEntry {
     rejectNext?: (err: Error) => void;
     ended: boolean;
     error?: Error;
+    /**
+     * Restart the idle deadline. Called on progress from either side — a
+     * chunk arriving, or a chunk being handed to the consumer — so "idle"
+     * means the call is genuinely stalled rather than merely slow at one end.
+     */
+    touch?: () => void;
 }
 
 export interface IMessageDispatcher {
@@ -98,10 +104,12 @@ export default class MessageDispatcher implements IMessageDispatcher {
     private pendingStreams: Map<string, StreamEntry>;
     private callbackListener: CallbackListener;
     private channel: Channel;
+    /** Bytes buffered across every pending stream; bounds the process, not one call. */
+    private totalBufferedBytes: number = 0;
 
     private _isInitialized: boolean = false;
     public get isInitialized() { return this._isInitialized; }
-    private _boundOnReconnected: () => void;
+    private _detachRestorer: () => void;
     private _boundOnDisconnected: () => void;
 
     constructor(connection: IConnection) {
@@ -111,11 +119,13 @@ export default class MessageDispatcher implements IMessageDispatcher {
         this.pendingStreams = new Map<string, StreamEntry>();
         this.callbackListener = new CallbackListener(this.connection);
 
-        // Listen for connection events (store bound refs for proper cleanup)
-        this._boundOnReconnected = this._onReconnected.bind(this);
+        // The channel is restored under the connection's coordination, so a
+        // caller reacting to 'reconnected' by publishing finds one waiting.
         this._boundOnDisconnected = this._onDisconnected.bind(this);
         this.connection.on('disconnected', this._boundOnDisconnected);
-        this.connection.on('reconnected', this._boundOnReconnected);
+        this._detachRestorer = attachRestorer(
+            this.connection, () => this._restore(), 'MessageDispatcher',
+        );
     }
 
     /**
@@ -146,23 +156,23 @@ export default class MessageDispatcher implements IMessageDispatcher {
             }
         }
         this.pendingStreams.clear();
+        this.totalBufferedBytes = 0;
     }
 
     /**
-     * Called when connection is re-established
+     * Reopen the publishing channel.
+     *
+     * A failure propagates: a dispatcher with no channel cannot publish, so
+     * the connection is not usable and the generation should be retried rather
+     * than announced. The CallbackListener restores itself, registered
+     * separately through BaseListener.
      */
-    private async _onReconnected(): Promise<void> {
+    private async _restore(): Promise<void> {
         if (!this._isInitialized) return;
 
         Logger.info('MessageDispatcher: reconnected, re-initializing channel');
-
-        try {
-            this.channel = await this.connection.openChannel();
-            // CallbackListener handles its own reconnection via BaseListener
-            Logger.info('MessageDispatcher: successfully re-initialized after reconnection');
-        } catch (err) {
-            Logger.error(`MessageDispatcher: failed to re-initialize after reconnection: ${err.message}`);
-        }
+        this.channel = await this.connection.openChannel();
+        Logger.info('MessageDispatcher: successfully re-initialized after reconnection');
     }
 
     async _onResult(content: any, id: string, headers?: Record<string, any>) {
@@ -201,6 +211,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
                     );
                     stream.ended = true;
                     stream.chunks.length = 0;
+                    this.totalBufferedBytes -= stream.bufferedBytes;
                     stream.bufferedBytes = 0;
                     if (stream.resolveNext) {
                         const wake = stream.resolveNext;
@@ -223,18 +234,24 @@ export default class MessageDispatcher implements IMessageDispatcher {
                 // process died; failing the stream is recoverable, OOM is not.
                 const maxChunks = Config.streamMaxBufferedChunks;
                 const maxBytes = Config.streamMaxBufferedBytes;
+                const maxTotal = Config.streamMaxTotalBufferedBytes;
                 const wouldBeBytes = stream.bufferedBytes + body.length;
+                const wouldBeTotal = this.totalBufferedBytes + body.length;
 
-                if (stream.chunks.length + 1 > maxChunks || wouldBeBytes > maxBytes) {
+                if (stream.chunks.length + 1 > maxChunks
+                    || wouldBeBytes > maxBytes
+                    || wouldBeTotal > maxTotal) {
                     stream.error = new StreamBackpressureError(
-                        `stream ${id} exceeded its buffer limit ` +
-                        `(${stream.chunks.length + 1} chunks / ${wouldBeBytes} bytes; ` +
-                        `limits are ${maxChunks} chunks / ${maxBytes} bytes) — ` +
+                        `stream ${id} exceeded a buffer limit ` +
+                        `(${stream.chunks.length + 1} chunks / ${wouldBeBytes} bytes for this call, ` +
+                        `${wouldBeTotal} bytes across all calls; limits are ${maxChunks} chunks / ` +
+                        `${maxBytes} bytes / ${maxTotal} bytes total) — ` +
                         'the consumer is not keeping up with the producer',
                     );
                     stream.ended = true;
                     // Drop the buffer now; the iterator only needs the error.
                     stream.chunks.length = 0;
+                    this.totalBufferedBytes -= stream.bufferedBytes;
                     stream.bufferedBytes = 0;
                     if (stream.resolveNext) {
                         const wake = stream.resolveNext;
@@ -247,6 +264,8 @@ export default class MessageDispatcher implements IMessageDispatcher {
 
                 stream.chunks.push(body);
                 stream.bufferedBytes = wouldBeBytes;
+                this.totalBufferedBytes = wouldBeTotal;
+                stream.touch?.();
             }
             if (isFinal) {
                 stream.ended = true;
@@ -269,6 +288,22 @@ export default class MessageDispatcher implements IMessageDispatcher {
         }
     }
 
+    /**
+     * Hold a publish until the connection can carry it.
+     *
+     * A reconnection in progress is something to wait through rather than fail
+     * on: the channel is being replaced and will be there shortly, and the
+     * alternative is rejecting work for the length of a broker restart.
+     * Anything else with no connection is a caller error and is reported at
+     * once. An IConnection without whenReady() keeps the old behaviour.
+     */
+    private async _awaitPublishable(): Promise<void> {
+        if (!this.connection.isConnected && !this.connection.isReconnecting) {
+            throw new NotConnectedError();
+        }
+        await this.connection.whenReady?.();
+    }
+
     async init(): Promise<any> {
         if (this.isInitialized) return;
         this.channel = await this.connection.openChannel();
@@ -283,7 +318,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
      *   `rpc` is false, since there is nothing to wait for.
      */
     async publish(content: any, routingKey: string, rpc: boolean, timeoutMs?: number): Promise<Buffer> {
-        if (!this.connection.isConnected) throw new NotConnectedError();
+        await this._awaitPublishable();
 
         if (rpc !== false) {
             rpc = true;
@@ -371,7 +406,9 @@ export default class MessageDispatcher implements IMessageDispatcher {
         idleTimeoutMs?: number,
         options?: StreamOptions,
     ): AsyncIterable<Buffer> {
-        if (!this.connection.isConnected) throw new NotConnectedError();
+        if (!this.connection.isConnected && !this.connection.isReconnecting) {
+            throw new NotConnectedError();
+        }
 
         const id = randomUUID();
         const stream: StreamEntry = { chunks: [], bufferedBytes: 0, ended: false };
@@ -381,6 +418,54 @@ export default class MessageDispatcher implements IMessageDispatcher {
         // no `this` alias (lints clean under @typescript-eslint/no-this-alias).
         const pendingStreams = this.pendingStreams;
         const timeoutMs = idleTimeoutMs ?? Config.streamIdleTimeoutMs;
+        const releaseBytes = (n: number) => {
+            this.totalBufferedBytes = Math.max(0, this.totalBufferedBytes - n);
+        };
+
+        /**
+         * Idle deadline for the whole call, armed here rather than on the
+         * first next().
+         *
+         * A caller that never iterates — an early return, a throw between the
+         * call and the loop — otherwise leaves the entry and everything the
+         * server sends into it held for the life of the process, with no timer
+         * anywhere to release it.
+         */
+        let idleTimer: ReturnType<typeof setTimeout> | undefined;
+        const clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined; } };
+        const armIdle = () => {
+            clearIdle();
+            idleTimer = setTimeout(() => {
+                if (stream.ended) return;
+                stream.error = new StreamTimeoutError(
+                    `No streaming chunk received within ${timeoutMs}ms`,
+                );
+                stream.ended = true;
+                stream.chunks.length = 0;
+                stream.bufferedBytes = 0;
+                // The producer is still generating for a caller that has
+                // stopped listening, so tell it to stop — the same courtesy
+                // return() and throw() extend. Without this an abandoned
+                // stream ran to completion at the server's expense.
+                cancel({ notifyOnly: true });
+                const fail = stream.rejectNext;
+                stream.resolveNext = undefined;
+                stream.rejectNext = undefined;
+                if (fail) { fail(stream.error); }
+            }, timeoutMs);
+            if (idleTimer.unref) { idleTimer.unref(); }
+        };
+        stream.touch = armIdle;
+
+        /** Everything this call holds, released on any terminal outcome. */
+        const releaseCall = () => {
+            clearIdle();
+            releaseSignal();
+            pendingStreams.delete(id);
+            releaseBytes(stream.bufferedBytes);
+            stream.bufferedBytes = 0;
+            stream.chunks.length = 0;
+        };
 
         // Cancellation is BEST EFFORT and delivered at most once. The notice is
         // an ordinary message: if it is lost, the producer never hears it and
@@ -390,13 +475,33 @@ export default class MessageDispatcher implements IMessageDispatcher {
         // docs/advanced/streaming.md.
         let cancelled = false;
 
-        const cancel = () => {
+        /**
+         * Stop the producer and release everything this call holds.
+         *
+         * `notifyOnly` is for the idle path, which has already recorded the
+         * error the iterator is about to raise and must not have it erased.
+         */
+        const cancel = (opts: { notifyOnly?: boolean } = {}) => {
             if (cancelled) return;
             cancelled = true;
+            clearIdle();
+            releaseSignal();
             pendingStreams.delete(id);
+            releaseBytes(stream.bufferedBytes);
             stream.chunks.length = 0;
             stream.bufferedBytes = 0;
-            stream.ended = true;
+            if (!opts.notifyOnly) {
+                stream.ended = true;
+                // Wake a consumer parked on the next chunk so it observes the
+                // end. Cancelling also stands the idle deadline down, so
+                // without this there is nothing left to release the caller and
+                // its `for await` waits for a chunk nobody will ever send.
+                // The idle path passes notifyOnly and raises its own error.
+                const wake = stream.resolveNext;
+                stream.resolveNext = undefined;
+                stream.rejectNext = undefined;
+                if (wake) { wake(); }
+            }
 
             Logger.debug(`cancelling stream ${id}`);
             // Fire-and-forget: the caller has already stopped waiting, so there
@@ -409,13 +514,25 @@ export default class MessageDispatcher implements IMessageDispatcher {
             });
         };
 
-        if (options?.signal) {
-            if (options.signal.aborted) {
-                // Already aborted before we started: nothing to stream.
-                stream.ended = true;
-            } else {
-                options.signal.addEventListener('abort', cancel, { once: true });
-            }
+        // An abort listener outlives the call unless it is taken off again:
+        // one long-lived signal reused across many calls accumulates one per
+        // call, each holding its StreamEntry alive.
+        let releaseSignal = () => { /* nothing attached */ };
+        const onAbort = () => cancel();
+
+        const abortedBeforeStart = options?.signal?.aborted === true;
+        if (options?.signal && !abortedBeforeStart) {
+            const signal = options.signal;
+            signal.addEventListener('abort', onAbort, { once: true });
+            releaseSignal = () => { signal.removeEventListener('abort', onAbort); };
+        }
+
+        if (abortedBeforeStart) {
+            // Aborted before it began: nothing to send and nothing to wait for.
+            stream.ended = true;
+            pendingStreams.delete(id);
+        } else {
+            armIdle();
         }
 
         const properties: PublishOptions = {
@@ -428,18 +545,27 @@ export default class MessageDispatcher implements IMessageDispatcher {
         // Fire-and-forget the publish; chunks are routed back by _onResult.
         // If the publish fails we still expose the iterator and let it
         // surface the error on first iteration.
-        const publishPromise = this.connection.publish(
-            this.channel, Config.busExchangeName, routingKey, content, properties,
-        ).catch((err) => {
-            stream.error = err;
-            stream.ended = true;
-            if (stream.rejectNext) {
-                const r = stream.rejectNext;
-                stream.resolveNext = undefined;
-                stream.rejectNext = undefined;
-                r(err);
-            }
-        });
+        //
+        // The channel is read after readiness, not before: a reconnection
+        // replaces it, and capturing the old one here would publish onto a
+        // channel that is already gone.
+        const publishPromise = abortedBeforeStart
+            ? Promise.resolve()
+            : Promise.resolve()
+                .then(() => this.connection.whenReady?.())
+                .then(() => this.connection.publish(
+                    this.channel, Config.busExchangeName, routingKey, content, properties,
+                ))
+            .catch((err) => {
+                stream.error = err;
+                stream.ended = true;
+                if (stream.rejectNext) {
+                    const r = stream.rejectNext;
+                    stream.resolveNext = undefined;
+                    stream.rejectNext = undefined;
+                    r(err);
+                }
+            });
 
         // Return a real AsyncIterable whose `return()` cleans up on `break`.
         return {
@@ -451,44 +577,28 @@ export default class MessageDispatcher implements IMessageDispatcher {
 
                         while (true) {
                             if (stream.error) {
-                                pendingStreams.delete(id);
+                                // A rejecting next() does not cause the runtime
+                                // to call return() or throw(), so this is the
+                                // only chance to let go of what the call holds.
+                                releaseCall();
                                 throw stream.error;
                             }
                             if (stream.chunks.length > 0) {
                                 const value = stream.chunks.shift()!;
                                 stream.bufferedBytes -= value.length;
+                                releaseBytes(value.length);
+                                armIdle();
                                 return { value, done: false };
                             }
                             if (stream.ended) {
-                                pendingStreams.delete(id);
+                                releaseCall();
                                 return { value: undefined as any, done: true };
                             }
-                            // Park on the next chunk arrival.
+                            // Park on the next chunk arrival. The deadline is
+                            // the call's own, already running.
                             await new Promise<void>((resolve, reject) => {
-                                const timer = setTimeout(() => {
-                                    if (stream.resolveNext !== wake) return;
-                                    stream.resolveNext = undefined;
-                                    stream.rejectNext = undefined;
-                                    // Release the slot here: a rejecting next() does not
-                                    // cause the runtime to call return()/throw() on the
-                                    // iterator.
-                                    stream.chunks.length = 0;
-                                    stream.bufferedBytes = 0;
-                                    stream.ended = true;
-                                    pendingStreams.delete(id);
-                                    reject(new StreamTimeoutError(`No streaming chunk received within ${timeoutMs}ms`));
-                                }, timeoutMs);
-                                // Don't let an idle timer hold the event loop.
-                                if ((timer as any).unref) (timer as any).unref();
-
-                                // Clear the timer as soon as the event it was
-                                // waiting for happens, rather than letting a
-                                // dead timer sit until it fires. _onResult
-                                // calls these, so they own the cleanup.
-                                const wake = () => { clearTimeout(timer); resolve(); };
-                                const fail = (err: Error) => { clearTimeout(timer); reject(err); };
-                                stream.resolveNext = wake;
-                                stream.rejectNext = fail;
+                                stream.resolveNext = () => resolve();
+                                stream.rejectNext = (err: Error) => reject(err);
                             });
                         }
                     },
@@ -511,9 +621,8 @@ export default class MessageDispatcher implements IMessageDispatcher {
 
     async close(): Promise<void> {
         this.connection.removeListener('disconnected', this._boundOnDisconnected);
-        this.connection.removeListener('reconnected', this._boundOnReconnected);
+        this._detachRestorer();
         delete (this as any)._boundOnDisconnected;
-        delete (this as any)._boundOnReconnected;
         await this.callbackListener.close();
     }
 }

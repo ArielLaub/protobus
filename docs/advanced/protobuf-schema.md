@@ -219,6 +219,13 @@ messageFactory.parse(`
 `);
 ```
 
+> **Custom type names are process-wide.** `registerType()` adds the type to
+> that factory's root, but the codec itself goes into protobufjs's module-level
+> wrapper table, which is shared by everything in the process. Two factories
+> cannot hold different definitions of the same name, and a name registered
+> through one is visible to all of them. Namespace your names if a process
+> hosts more than one schema.
+
 Available wire types: `bytes`, `int64`, `uint64`, `string`, `int32`, `uint32`, `double`
 
 ### Timestamps

@@ -15,6 +15,10 @@ import {
 
 export class MessageTypeRequiredError extends Error {}
 export class NotInitializedError extends Error {}
+/** A name that is not of the form `<package>.<Service>.<method>`. */
+export class InvalidMethodNameError extends Error {}
+/** A well-formed name whose method is not declared by the named service. */
+export class UnknownMethodError extends Error {}
 
 /**
  * Every parse this module performs passes `keepCase: true` explicitly — the
@@ -277,12 +281,37 @@ export default class MessageFactory {
     constructor() {
     }
 
+    /**
+     * Split a fully-qualified method name into its service and method halves.
+     *
+     * Parsed from the RIGHT: the method is the final segment and the service is
+     * everything before it. Counting segments from the left instead assumes a
+     * single-segment package, so `com.example.Calc.add` looked for a service
+     * named `com.example`. It also left the trailing segments unexamined, which
+     * is what let a name carry a fourth segment past the method.
+     */
+    public static splitMethodName(fullName: string): { serviceName: string; methodName: string } {
+        const i = typeof fullName === 'string' ? fullName.lastIndexOf('.') : -1;
+        if (i <= 0 || i === fullName.length - 1) {
+            throw new InvalidMethodNameError(
+                `'${fullName}' is not a fully-qualified method name (<package>.<Service>.<method>)`,
+            );
+        }
+        return { serviceName: fullName.slice(0, i), methodName: fullName.slice(i + 1) };
+    }
+
     private getMethodType(fullName: string): protoBuf.Method  {
-        const nameParts = fullName.split('.');
-        const serviceName = `${nameParts[0]}.${nameParts[1]}`;
-        const methodName = nameParts[2];
+        const { serviceName, methodName } = MessageFactory.splitMethodName(fullName);
         const TService = this.root.lookupService(serviceName);
-        return TService.methods[methodName];
+        const method = TService.methods[methodName];
+        if (!method) {
+            // Returning undefined made the caller fail on a property access
+            // several frames away, naming neither the method nor the service.
+            throw new UnknownMethodError(
+                `service '${serviceName}' declares no method '${methodName}'`,
+            );
+        }
+        return method;
     }
 
     /**
@@ -310,8 +339,18 @@ export default class MessageFactory {
     }
 
     /**
-     * Register a custom type with this MessageFactory instance.
-     * The type will be available for use in .proto files.
+     * Register a custom type and add it to this factory's root.
+     *
+     * **The registration is process-wide, not per instance.** The type's
+     * codec goes into protobufjs's module-level `wrappers` table and into a
+     * module-level registry, both shared by everything in the process — so a
+     * type registered through one factory is visible to
+     * `isCustomType`/`getCustomType` everywhere, and two factories cannot hold
+     * different definitions of the same name. Only the addition to `root` is
+     * per instance.
+     *
+     * The built-in `bigint` and `timestamp` are registered the same way, at
+     * import time, before any factory exists.
      *
      * @param customType - The custom type definition
      * @returns The generated Message class for the type
@@ -503,24 +542,49 @@ export default class MessageFactory {
         }
     }
 
-    public decodeRequest(data: Buffer): IRequestContainer {
+    /** Method names declared by a service, in declaration order. */
+    public getServiceMethodNames(serviceFullName: string): string[] {
+        return Object.keys(this.root.lookupService(serviceFullName).methods);
+    }
+
+    /**
+     * Decode the request envelope only, leaving `data` as the undecoded payload.
+     *
+     * Separate from the payload decode so a caller can check which method the
+     * envelope names *before* interpreting the bytes. Decoding first means
+     * choosing the schema from a publisher-controlled field, which is how one
+     * service's payload ends up parsed as another's.
+     */
+    public decodeRequestEnvelope(data: Buffer): IRequestContainer {
         const request = RequestContainer.decode(data);
-        const TMethod = this.getMethodType(request.method);
         const result = request.toJSON();
+        return { method: result.method, actor: result.actor, data: request.data };
+    }
+
+    /** Decode a request payload against the declared request type of `methodFullName`. */
+    public decodeRequestPayload(methodFullName: string, payload: Buffer): any {
+        const TMethod = this.getMethodType(methodFullName);
+        return this.decodeMessage(TMethod.requestType, payload);
+    }
+
+    public decodeRequest(data: Buffer): IRequestContainer {
+        const envelope = this.decodeRequestEnvelope(data);
         return {
-            method: result.method,
-            data: this.decodeMessage(TMethod.requestType, request.data),
-            actor: result.actor
+            method: envelope.method,
+            data: this.decodeRequestPayload(envelope.method, envelope.data),
+            actor: envelope.actor,
         };
     }
 
     public buildResponse(methodFullName: string, obj: any): Buffer {
         if (!this.isInitialized) throw new NotInitializedError('message factory not initialized');
         let response = undefined;
-        const TMethod = this.getMethodType(methodFullName);
-        const messageType = TMethod.responseType;
 
         if (obj instanceof Error) {
+            // No method lookup on this path: an error response carries the
+            // method only as a label, and resolving it would make a failure
+            // that is *about* an unknown method impossible to report — leaving
+            // the caller to wait out its whole RPC timeout instead.
             response = ResponseContainer.create({
                 error: ResponseError.create({
                     method: methodFullName,
@@ -529,6 +593,7 @@ export default class MessageFactory {
                 }),
             });
         } else {
+            const messageType = this.getMethodType(methodFullName).responseType;
             const Message = this.root.lookupType(messageType);
             try {
                 // OPTIMIZATION: Skip preprocessing if message has no custom types

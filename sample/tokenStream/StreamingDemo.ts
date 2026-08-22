@@ -32,7 +32,11 @@ async function main() {
     const context = new Context();
     await context.init(AMQP_CONNECTION_STRING, [__dirname]);
 
-    const service = new AssistantService(context);
+    // maxConcurrent is the consumer prefetch, and it defaults to 1. A
+    // streaming handler holds its slot for the whole life of the stream, so
+    // leaving the default would serve one caller at a time — for a token
+    // stream, that is the difference between a demo and a queue.
+    const service = new AssistantService(context, { maxConcurrent: 8 });
     await service.init();
 
     const assistant: any = new ServiceProxy(context, service.ServiceName);

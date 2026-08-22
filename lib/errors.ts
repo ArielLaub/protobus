@@ -49,6 +49,22 @@ export function isHandledError(error: unknown): error is HandledError {
 }
 
 /**
+ * The message could not be understood: it did not decode, or it named
+ * something this service does not serve.
+ *
+ * Handled by definition. A malformed message is malformed every time it is
+ * delivered, so putting it through the retry ladder buys three more identical
+ * failures, a DLQ entry and the TTL round-trips between them — while the
+ * caller waits for a reply the retries were never going to produce.
+ */
+export class ProtocolError extends HandledError {
+    constructor(message: string) {
+        super(message, 'PROTOCOL_ERROR');
+        this.name = 'ProtocolError';
+    }
+}
+
+/**
  * Substituted for an unhandled service error before it crosses back to the
  * caller, unless Config.exposeInternalErrors is enabled.
  *

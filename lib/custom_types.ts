@@ -77,8 +77,19 @@ function createMessageClass(customType: ICustomType): typeof Message {
 }
 
 /**
- * Register a custom type globally.
- * This registers the protobufjs wrapper and stores the type definition.
+ * Register a custom type, process-wide.
+ *
+ * Two pieces of shared state are written: `protoBuf.wrappers`, which is
+ * protobufjs's own module-level table and is therefore shared with every other
+ * consumer of protobufjs in the process, and `customTypeRegistry` below. Names
+ * are global as a result — the last registration of a name wins, and every
+ * MessageFactory sees it.
+ *
+ * Note this is the module-level state that message_factory.ts deliberately
+ * avoids writing for parse options. The difference is not principle but
+ * mechanism: protobufjs resolves a wrapper by fully-qualified type name at
+ * encode and decode time with no per-root table to put it in, so there is
+ * nowhere else for it to live.
  */
 export function registerCustomType(customType: ICustomType): typeof Message {
     const MessageClass = createMessageClass(customType);
@@ -140,6 +151,9 @@ export function getCustomTypeNames(): string[] {
 // Built-in Custom Types
 // ============================================================================
 
+/** Width of the bigint wire format, in bytes. */
+export const BIGINT_BYTES = 32;
+
 /** Largest value representable in the 32-byte unsigned wire format. */
 export const BIGINT_MAX = 2n ** 256n - 1n;
 
@@ -178,10 +192,10 @@ export const BigIntType: ICustomType<bigint> = {
             );
         }
 
-        const bytes = new Uint8Array(32);
+        const bytes = new Uint8Array(BIGINT_BYTES);
         let temp = bi;
 
-        for (let i = 31; i >= 0 && temp > 0n; i--) {
+        for (let i = BIGINT_BYTES - 1; i >= 0 && temp > 0n; i--) {
             bytes[i] = Number(temp & 0xffn);
             temp >>= 8n;
         }
@@ -192,6 +206,18 @@ export const BigIntType: ICustomType<bigint> = {
     decode(data: Buffer | Uint8Array): bigint {
         if (!data || data.length === 0) {
             return 0n;
+        }
+
+        // The accumulator below shifts a growing bigint once per byte, so its
+        // cost is quadratic in the input length. The encoder never emits more
+        // than BIGINT_BYTES, so anything longer is malformed and there is no
+        // reason to spend the time finding out what it decodes to: a 1 MiB
+        // value takes over a minute, on the event loop, before a handler runs.
+        if (data.length > BIGINT_BYTES) {
+            throw new RangeError(
+                `bigint wire value is ${data.length} bytes; the protobus bigint ` +
+                `wire format is at most ${BIGINT_BYTES}`,
+            );
         }
 
         let result = 0n;
@@ -224,8 +250,12 @@ export const TimestampType: ICustomType<Date> = {
     decode(data: number | bigint | { low: number; high: number }): Date {
         // Handle Long type from protobufjs
         if (typeof data === 'object' && data !== null && 'low' in data && 'high' in data) {
-            // Convert Long to number (safe for timestamps until year 275760)
-            const num = (data.high >>> 0) * 0x100000000 + (data.low >>> 0);
+            // The high word is SIGNED: every instant before 1970 has its sign
+            // bit set, and coercing that away with `>>> 0` turns the whole
+            // value into a large positive one — far enough out of range that
+            // the Date is Invalid rather than merely wrong. Only the low word
+            // is unsigned, being the bottom 32 bits of the magnitude.
+            const num = data.high * 0x100000000 + (data.low >>> 0);
             return new Date(num);
         }
         return new Date(Number(data));
