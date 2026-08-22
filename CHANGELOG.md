@@ -194,11 +194,13 @@ the migration list for it.
   orphaned open with live consumers on it, and announcing `reconnected` twice.
   A non-async handler throwing synchronously leaked the new handler count, so
   every later drain waited out its full timeout. And a listener stayed
-  available for restoration between `stopConsuming()` and `close()`.
+  available for restoration between `stopConsuming()` and `close()` — the fix
+  for which then had to be made symmetric, since `stopConsuming()` followed by
+  `start()` is legal and left the listener out of restoration for good.
 - An aborted stream ends its loop rather than raising, matching `break`. That
   is deliberate, and now documented along with how to tell an early stop from a
   clean finish.
-- 291 unit tests and 48 integration tests, from 213 and 46. The two new
+- 293 unit tests and 48 integration tests, from 213 and 46. The two new
   integration tests exercise recovery against a real broker: the connection is
   severed from the broker side, and the reconnection is verified to be
   announced only once the topology is back, with a publish issued mid-outage

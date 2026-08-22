@@ -30,7 +30,8 @@ export abstract class BaseListener extends EventEmitter {
     protected bindings: string[] = []; // Track bound routing keys for reconnection
     private _isInitialized: boolean = false;
     private _wasStarted: boolean = false;
-    private _detachRestorer: () => void;
+    private _detachRestorer: () => void = () => undefined;
+    private _restorerAttached: boolean = false;
     private _boundOnDisconnected: () => void;
 
     constructor(connection: IConnection) {
@@ -61,14 +62,33 @@ export abstract class BaseListener extends EventEmitter {
         // Restoration is coordinated by the connection, which waits for it
         // before reporting itself reconnected. Disconnection stays an event:
         // there is nothing to wait for when the socket has already gone.
+        this._attachRestorer();
+        this._boundOnDisconnected = this._onDisconnected.bind(this);
+        this.connection.on('disconnected', this._boundOnDisconnected);
+    }
+
+    /**
+     * Take part in the connection's restoration.
+     *
+     * Paired with `_detachRestorer`, and both are idempotent, because the two
+     * are not called the same number of times: a listener attaches on
+     * construction and again on every `start()`, and detaches on
+     * `stopConsuming()` and on `close()`. Re-attaching in `start()` is what
+     * keeps stop/start reversible — a listener that resumed consuming but had
+     * been dropped from restoration would go quiet for good on the next
+     * reconnection, behind a connection reporting itself healthy.
+     */
+    private _attachRestorer(): void {
+        if (this._restorerAttached) return;
         const detach = attachRestorer(
             this.connection, () => this._restore(), this.constructor.name,
         );
-        // Idempotent: both stopConsuming() and close() release it, and a
-        // graceful shutdown runs them in that order.
-        this._detachRestorer = () => { this._detachRestorer = () => undefined; detach(); };
-        this._boundOnDisconnected = this._onDisconnected.bind(this);
-        this.connection.on('disconnected', this._boundOnDisconnected);
+        this._restorerAttached = true;
+        this._detachRestorer = () => {
+            if (!this._restorerAttached) return;
+            this._restorerAttached = false;
+            detach();
+        };
     }
 
     get isConnected() { return this.connection.isConnected; }
@@ -236,6 +256,10 @@ export abstract class BaseListener extends EventEmitter {
         if (!this._isInitialized) throw new NotInitializedError();
         if (this._wasStarted && this.consumerTag) throw new AlreadyStartedError();
         if (!this.connection.isConnected) throw new NotConnectedError();
+
+        // Restored again from here on: stopConsuming() drops out of
+        // restoration, and resuming has to undo that.
+        this._attachRestorer();
 
         // No try//catch for AlreadyStartedError here: it can only be thrown by
         // the guard above, which runs before this point.
