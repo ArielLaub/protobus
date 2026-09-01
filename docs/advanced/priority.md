@@ -40,6 +40,14 @@ class RecommendationsService extends RunnableService {
 integer from 1 to 255; anything else throws `InvalidPriorityError` at
 construction, before any broker I/O.
 
+**`maxPriority` requires `lateAck`, which is the default.** Passing
+`lateAck: false` alongside it throws. Priority reorders what is still in the
+*queue*, and RabbitMQ applies no QoS prefetch to an auto-ack consumer — so an
+early-ack consumer is handed the entire backlog and there is nothing left to
+reorder. This is refused rather than warned about because the failure is
+invisible: the queue is correctly declared, the operator has already done the
+one-time migration to enable it, and the feature simply does nothing.
+
 **Keep the number small.** RabbitMQ maintains internal structures per priority
 level, so a large range costs memory and throughput and buys nothing.
 `Config.RECOMMENDED_MAX_PRIORITY` is **2**, giving three levels, which is one
@@ -113,7 +121,10 @@ So the honest claim is a change of scale, not a guarantee:
 | With priority | at most `maxConcurrent × replicas` — typically single digits |
 
 If you need a hard bound rather than a large improvement, priority is not the
-mechanism; lowering prefetch tightens it further, at a throughput cost.
+mechanism; lowering `maxConcurrent` tightens it further, at a throughput cost.
+Conversely a large `maxConcurrent` erodes the benefit — at a prefetch of 500 a
+control message can still sit behind 500 bulk messages per replica, and the
+feature is close to inert. Choose `maxConcurrent` with that in mind.
 
 Two more limits worth knowing:
 
@@ -148,11 +159,25 @@ RabbitMQ as 0, which is exactly `PRIORITY_NORMAL`.
 `IMessageServiceOptions`; `options` is a new trailing argument on proxy methods
 and on `publishMessage`. Every existing call compiles and behaves identically.
 
-The retry queue and the DLQ are deliberately left alone. Dead-lettering
-preserves a message's priority property, so a retried message re-sorts correctly
-when it lands back in the main priority queue without `<Service>.Retry` needing
-priority of its own — which also makes enabling this a **one**-queue migration
-rather than a three-queue one.
+The retry queue and the DLQ are deliberately left without `x-max-priority` of
+their own, which keeps enabling this a **one**-queue migration rather than a
+three-queue one. A retried message re-sorts correctly when it lands back in the
+main priority queue, and it gets there with its priority intact for two separate
+reasons that both had to be checked:
+
+- The broker's dead-letter hop (retry queue → TTL expiry → DLX → main exchange)
+  preserves the `priority` property. Verified against RabbitMQ 3.
+- Protobus's own re-publish onto the retry exchange **copies `priority`
+  explicitly**. This one is not free: protobus does not let the broker move a
+  failed message, it re-publishes it and builds a fresh properties object by
+  hand, so anything not copied is dropped. Without it, a control message that
+  failed once would come back at priority 0 and queue behind the entire bulk
+  backlog — the exact failure this feature exists to prevent, reachable only
+  after something else has already gone wrong. The DLQ hop carries it too.
+
+The general rule, and the one to remember when touching this code: **anywhere
+protobus re-publishes rather than letting the broker move a message, priority
+has to be carried by hand.**
 
 ## ⚠️ Enabling priority on a queue that already exists
 

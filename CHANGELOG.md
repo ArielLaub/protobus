@@ -76,6 +76,22 @@ startup rather than silently ignoring the setting. See
 [Message Priority](docs/advanced/priority.md) and Procedure A in
 [Queue Migration](docs/advanced/queue-migration.md).
 
+### Fixed
+
+- **A re-published message keeps its priority.** Protobus does not let the
+  broker move a failed message — it re-publishes it onto the retry exchange (and
+  onto the DLQ once retries are exhausted) building a fresh properties object by
+  hand. `priority` was not among the properties copied, so a control message that
+  failed once came back at priority 0 and queued behind the whole bulk backlog:
+  the exact failure this feature exists to prevent, reachable only after
+  something else had already gone wrong. All three re-publish sites now carry it,
+  and a message that had no priority still gains none. Found by the protobus-py
+  port hitting the same bug in its own retry path.
+- **`maxPriority` with `lateAck: false` is now refused** instead of silently
+  doing nothing. RabbitMQ applies no QoS prefetch to an auto-ack consumer, so the
+  broker hands it the entire backlog and priority has nothing left to reorder.
+  The default (`lateAck: true`, prefetch ≥ 1) is unaffected.
+
 ### Known limitation
 
 Priority reorders messages **still in the queue**; it cannot reach one the

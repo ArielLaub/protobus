@@ -3,7 +3,7 @@ import Config from './config';
 import { IConnection, ConsumeRetryOptions } from './connection';
 import { RetryOptions, DEFAULT_RETRY_OPTIONS } from './message_service';
 import { isHandledError } from './errors';
-import { validateMaxPriority } from './priority';
+import { validateMaxPriority, InvalidPriorityError } from './priority';
 
 /**
  * Thrown when the retry queue exists with arguments that differ from what this
@@ -51,6 +51,22 @@ export default class MessageListener extends BaseListener {
         // Validated here, at construction, so a bad value fails before any
         // broker I/O rather than as a 406 that closes the shared channel.
         this.maxPriority = validateMaxPriority(maxPriority);
+
+        // Priority can only reorder messages still in the QUEUE. An early-ack
+        // consumer has no QoS prefetch — RabbitMQ ignores prefetch for
+        // auto-ack — so the broker pushes the whole backlog into the consumer
+        // and there is nothing left to reorder. Refused rather than warned
+        // about, because the failure is invisible: the queue is correctly
+        // declared, the operator has already done the one-time migration to
+        // enable it, and the feature simply does nothing.
+        if (this.maxPriority !== undefined && !lateAck) {
+            throw new InvalidPriorityError(
+                'maxPriority requires lateAck (the default). With lateAck: false the consumer ' +
+                'acks on delivery and RabbitMQ applies no prefetch, so the broker hands it the ' +
+                'entire backlog and priority has nothing left to reorder. Remove lateAck: false, ' +
+                'or drop maxPriority.',
+            );
+        }
 
         this.exchangeName = Config.busExchangeName;
         this.exchangeType = 'topic';
