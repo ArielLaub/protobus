@@ -4,6 +4,7 @@ import { IConnection, Channel, PublishOptions, attachRestorer } from './connecti
 import Config from './config';
 import { Logger } from './logger';
 import CallbackListener from './callback_listener';
+import { validatePriority } from './priority';
 import {
     StreamTimeoutError,
     RpcTimeoutError,
@@ -20,6 +21,23 @@ export interface StreamOptions {
      * arrives to resume the loop; a signal takes effect immediately.
      */
     signal?: AbortSignal;
+    /**
+     * Not supported on streaming calls, and declared so that passing one is a
+     * type error rather than a silent drop: `StreamOptions` sits in the 4th
+     * argument slot where a unary call takes `CallOptions`, so the two are easy
+     * to confuse at a call site.
+     */
+    priority?: never;
+}
+
+/** Per-call options for a unary RPC / fire-and-forget publish. */
+export interface CallOptions {
+    /**
+     * AMQP message priority, 0-255. Only has an effect on a queue declared
+     * with `maxPriority`; a broker silently ignores it on any other queue,
+     * which is what lets a new publisher talk to an old consumer.
+     */
+    priority?: number;
 }
 
 export class NotConnectedError extends Error {}
@@ -64,7 +82,7 @@ interface StreamEntry {
 export interface IMessageDispatcher {
     isInitialized: boolean;
     init(): Promise<any>;
-    publish(content: any, routingKey: string, rpc: boolean): Promise<any>;
+    publish(content: any, routingKey: string, rpc: boolean, timeoutMs?: number, options?: CallOptions): Promise<any>;
     publishStreaming(content: Buffer, routingKey: string, idleTimeoutMs?: number, options?: StreamOptions): AsyncIterable<Buffer>;
 }
 
@@ -317,7 +335,10 @@ export default class MessageDispatcher implements IMessageDispatcher {
      *   RpcTimeoutError. Defaults to Config.rpcCallTimeoutMs. Ignored when
      *   `rpc` is false, since there is nothing to wait for.
      */
-    async publish(content: any, routingKey: string, rpc: boolean, timeoutMs?: number): Promise<Buffer> {
+    async publish(
+        content: any, routingKey: string, rpc: boolean, timeoutMs?: number, options?: CallOptions,
+    ): Promise<Buffer> {
+        const priority = validatePriority(options?.priority);
         await this._awaitPublishable();
 
         if (rpc !== false) {
@@ -338,6 +359,13 @@ export default class MessageDispatcher implements IMessageDispatcher {
             // normal, and making that an error would break fan-out publishing.
             mandatory: rpc,
         };
+        // Assigned only when the caller asked for one, so a publish with no
+        // priority carries no priority property at all — byte-identical to
+        // every previous version, and read by an old consumer unchanged.
+        // `!== undefined` rather than a truthy test: PRIORITY_NORMAL is 0.
+        if (priority !== undefined) {
+            properties.priority = priority;
+        }
         if (!rpc) {
             // Nothing to wait for beyond the broker confirming receipt.
             await this.connection.publish(

@@ -1,5 +1,5 @@
 import { IContext } from './context';
-import { StreamOptions } from './message_dispatcher';
+import { StreamOptions, CallOptions } from './message_dispatcher';
 import { Logger } from './logger';
 
 export class InvalidServiceNameError extends Error {}
@@ -57,7 +57,16 @@ export default class ServiceProxy {
                     methodFullName, TMethod.requestType, requestMessage, actor, idleTimeoutMs, options,
                 );
             } else {
-                (<any>this)[TMethod.name] = async (requestMessage: any, actor?: string, rpc?: boolean, timeoutMs?: number) => {
+                // `options` is appended last, so every existing call signature
+                // keeps working unchanged — the same shape the streaming
+                // branch above uses for StreamOptions.
+                (<any>this)[TMethod.name] = async (
+                    requestMessage: any,
+                    actor?: string,
+                    rpc?: boolean,
+                    timeoutMs?: number,
+                    options?: CallOptions,
+                ) => {
                     let buffer;
                     try {
                         buffer = this.context.factory.buildRequest(methodFullName, requestMessage, actor);
@@ -75,7 +84,7 @@ export default class ServiceProxy {
                     // ambiguous and retrying either can duplicate. The
                     // messageId that makes deduplication possible rides on the
                     // error too. See docs/advanced/security.md.
-                    return this.context.publishMessage(buffer, `REQUEST.${methodFullName}`, rpc, timeoutMs)
+                    return this.context.publishMessage(buffer, `REQUEST.${methodFullName}`, rpc, timeoutMs, options)
                         .then((responseData) => {
                             if (rpc === false) {
                                 Logger.debug('recieved non rpc result sending back empty answer');

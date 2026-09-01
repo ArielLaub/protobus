@@ -913,6 +913,22 @@ export default class Connection extends EventEmitter implements IConnection {
                     }
                 };
 
+                // Protobus re-publishes a failed message rather than letting
+                // the broker move it, building a fresh properties object by
+                // hand at each hop — so every property that matters has to be
+                // copied explicitly. `priority` is one of them: without this a
+                // control message that failed once comes back at priority 0 and
+                // queues behind the whole bulk backlog, which is the exact
+                // failure the priority feature exists to prevent. It is only
+                // reachable after something else has already gone wrong, so
+                // nothing in normal operation would surface it.
+                //
+                // Spread rather than assigned, so a message that carried no
+                // priority does not gain one.
+                const carriedPriority = msg.properties.priority !== undefined
+                    ? { priority: msg.properties.priority }
+                    : {};
+
                 if (!options.noAck && lateAck) {
                     // Check if retry is configured and error is retryable
                     const isHandled = retryOptions?.isHandledError?.(err) ?? false;
@@ -959,6 +975,7 @@ export default class Connection extends EventEmitter implements IConnection {
                                         messageId: msg.properties.messageId,
                                         replyTo,
                                         headers: retryHeaders,
+                                        ...carriedPriority,
                                     },
                                 );
                             } else {
@@ -971,6 +988,7 @@ export default class Connection extends EventEmitter implements IConnection {
                                     messageId: msg.properties.messageId,
                                     replyTo,
                                     headers: retryHeaders,
+                                    ...carriedPriority,
                                 });
                             }
                             await this.ack(channel, msg);
@@ -998,6 +1016,10 @@ export default class Connection extends EventEmitter implements IConnection {
                                 correlationId,
                                 messageId: msg.properties.messageId,
                                 headers: dlqHeaders,
+                                // No ordering value on a plain DLQ, but a
+                                // dead-lettered message should still read back
+                                // as what it was.
+                                ...carriedPriority,
                             });
                             await this.ack(channel, msg);
                         }

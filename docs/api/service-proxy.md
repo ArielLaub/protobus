@@ -65,7 +65,13 @@ const multiplyResult = await proxy.multiply({ a: 4, b: 7 });
 
 **Method Signature:**
 ```typescript
-async methodName(request: RequestType, actor?: string): Promise<ResponseType>
+async methodName(
+    request: RequestType,
+    actor?: string,
+    rpc?: boolean,
+    timeoutMs?: number,
+    options?: CallOptions,
+): Promise<ResponseType>
 ```
 
 **Parameters:**
@@ -73,6 +79,16 @@ async methodName(request: RequestType, actor?: string): Promise<ResponseType>
 |------|------|-------------|
 | `request` | `object` | Request data matching proto message |
 | `actor` | `string?` | Optional identifier for the caller |
+| `rpc` | `boolean?` | `false` for fire-and-forget: publish and do not wait for a reply. Default `true`. |
+| `timeoutMs` | `number?` | How long to wait for a reply. Defaults to `Config.rpcCallTimeoutMs`. |
+| `options` | `CallOptions?` | Per-call options — currently `{ priority }`. See below. |
+
+**`options.priority`** — an AMQP message priority, integer 0-255. It only
+changes delivery order on a queue whose service declared `maxPriority`; on any
+other queue the broker ignores it without error, which is what lets an upgraded
+caller talk to a service that has not been upgraded. Use the named levels
+(`Config.PRIORITY_NORMAL` / `PRIORITY_HIGH` / `PRIORITY_CONTROL`) rather than
+bare integers. See [Message Priority](../advanced/priority.md).
 
 **Returns:** `Promise<ResponseType>` - The response from the service
 

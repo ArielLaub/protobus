@@ -1,5 +1,5 @@
 export { default as Context, IContext, ContextOptions } from './lib/context';
-export { default as MessageService, IMessageService, RetryOptions, HandledError, isHandledError } from './lib/message_service';
+export { default as MessageService, IMessageService, IMessageServiceOptions, RetryOptions, HandledError, isHandledError } from './lib/message_service';
 export { default as ProxiedService } from './lib/proxied_service';
 export { default as ServiceProxy } from './lib/service_proxy';
 export { default as EventListener } from './lib/event_listener';
@@ -28,7 +28,20 @@ export { ReconnectionOptions, ReconnectionError } from './lib/connection';
 // the connection is closed or gives up first. Restorer is the hook a custom
 // IConnection implements to take part in that coordination.
 export { NotReadyError, Restorer } from './lib/connection';
-export { DisconnectedError } from './lib/message_dispatcher';
+export { DisconnectedError, CallOptions, StreamOptions } from './lib/message_dispatcher';
+
+// Message priority (opt-in). `maxPriority` on IMessageServiceOptions declares
+// the service's request queue as a RabbitMQ priority queue; `priority` on
+// CallOptions sets a single message's level. Both are absent from the wire
+// unless set, so an upgraded process talks to an un-upgraded one unchanged.
+// See docs/advanced/priority.md.
+export { InvalidPriorityError } from './lib/priority';
+
+// Config carries the named priority levels (PRIORITY_NORMAL / PRIORITY_HIGH /
+// PRIORITY_CONTROL / RECOMMENDED_MAX_PRIORITY) as well as the environment
+// defaults. Exported so callers can name a level instead of writing a bare
+// integer, and so the constants match protobus-py's Config exactly.
+export { default as Config } from './lib/config';
 export { RetryQueueMismatchError } from './lib/message_listener';
 
 // A message this service could not understand — it did not decode, or it named

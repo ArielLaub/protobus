@@ -19,7 +19,7 @@ abstract class MessageService extends BaseListener implements IMessageService {
     abstract get ProtoFileName(): string;
 
     // Concurrency, retry and timeouts are constructor options, not overrides:
-    //   new MyService(context, { maxConcurrent, retry, lateAck, processingTimeoutMs })
+    //   new MyService(context, { maxConcurrent, retry, lateAck, processingTimeoutMs, maxPriority })
 
     // Lifecycle
     async init(): Promise<void>;
@@ -73,6 +73,25 @@ memory before anything is acknowledged.
 A **streaming** handler holds its slot for the entire life of the stream, so a
 streaming service left on the default serves one caller per replica. Set it
 deliberately — see [Concurrency](../configuration.md#concurrency).
+
+### maxPriority
+
+Declares this service's request queue as a RabbitMQ priority queue, so a caller
+can mark a control message to overtake a bulk backlog on the same queue:
+
+```typescript
+const service = new MyService(context, { maxPriority: Config.RECOMMENDED_MAX_PRIORITY });
+```
+
+**Default: unset**, and unset means the queue arguments are byte-identical to
+every previous version of protobus. Must be an integer 1-255; keep it small
+(2 is recommended, giving three levels).
+
+⚠️ **Adding this to a service that has already run against a broker requires an
+operator to drain and delete its main queue first** — RabbitMQ cannot add
+`x-max-priority` to an existing queue, and the failed declare rejects `init()`
+so the service does not start. Read [Message Priority](../advanced/priority.md)
+before enabling it.
 
 ## Methods
 

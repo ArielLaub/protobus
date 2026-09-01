@@ -72,6 +72,12 @@ export interface IMessageServiceOptions {
     lateAck?: boolean;
     /** Per-message processing timeout. Defaults to Config.messageProcessingTimeout. */
     processingTimeoutMs?: number;
+    /**
+     * Declare this service's request queue as a RabbitMQ priority queue with
+     * `x-max-priority: <maxPriority>`. Opt-in: left unset, the queue arguments
+     * are byte-identical to every previous version. See docs/advanced/priority.md.
+     */
+    maxPriority?: number;
 }
 
 export default abstract class MessageService implements IMessageService {
@@ -104,6 +110,7 @@ export default abstract class MessageService implements IMessageService {
             options.maxConcurrent,
             this.retryOptions,
             options.processingTimeoutMs,
+            options.maxPriority,
         );
         this.eventListener = new EventListener(context.connection, context.factory);
         this.cancelListener = new CancelListener(context.connection);
