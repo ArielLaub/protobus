@@ -155,9 +155,21 @@ describe('a priority queue lets a control message overtake a bulk backlog', () =
         // delivery and the remaining slots quietly drain the whole backlog
         // before the control message is even published — leaving nothing to
         // overtake and producing a number that looks like a priority failure
-        // but is really a drain-rate measurement. That mistake was made once
-        // during this feature's development, in both ports independently, and
-        // it is invisible without this check.
+        // but is really a drain-rate measurement.
+        //
+        // Not hypothetical, and not a client quirk. Gating only the first
+        // delivery at a prefetch of 5 gives a peak in-flight of 2 — the SAME
+        // number measured independently in protobus-py, whose AMQP client
+        // (aio-pika) also does not await its consume callback. Two runtimes,
+        // two clients, one number: the cause is protobus's shared delivery
+        // design, not something tunable in either driver.
+        //
+        // Why both ports missed it: at a prefetch of 1 this precondition is
+        // free, because holding one message saturates a one-slot consumer by
+        // definition. Both ports started there, so the assumption never had to
+        // be stated and the harness looked correct right up until someone
+        // raised the parameter. A test written at a parameter's lowest value
+        // can hide its own precondition.
         if (service.peakInFlight !== PREFETCH) {
             throw new Error(
                 `consumer not saturated: peak in-flight ${service.peakInFlight} != prefetch ` +
