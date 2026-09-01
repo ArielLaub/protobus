@@ -1,7 +1,0 @@
-syntax = "proto3";
-
-message Order {
-    reserved 2;
-    reserved "old_field";
-    string order_id = 1;
-}

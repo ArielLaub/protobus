@@ -3,3 +3,6 @@ node_modules/
 dist/
 .env
 
+
+# Scratch tree written by scripts/check-doc-snippets.js
+.doc-check/
