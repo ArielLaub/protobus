@@ -96,10 +96,14 @@ startup rather than silently ignoring the setting. See
 
 Priority reorders messages **still in the queue**; it cannot reach one the
 broker has already prefetched into a consumer. With prefetch `N` across `R`
-replicas, up to `N × R` bulk messages can still sit ahead of a control message.
-The integration test demonstrates this rather than hiding it: with prefetch 1, a
-control message published after 20 bulk messages is handled second, not first.
-This is a change of scale — thousands down to single digits — not a guarantee.
+replicas, up to `N × R` bulk messages can still sit ahead of a control message —
+and while the consumer is saturated that bound is an equality, not just a limit:
+measured against a 50-message backlog, the control message is handled at index
+1, 5 and 20 for a prefetch of 1, 5 and 20 respectively. `maxConcurrent` is
+therefore the width of the window priority cannot see into. The integration test
+demonstrates the limit rather than hiding it: with prefetch 1, a control message
+published after 20 bulk messages is handled second, not first. This is a change
+of scale — thousands down to single digits — not a guarantee.
 
 ### Documentation
 

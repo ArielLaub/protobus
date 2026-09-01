@@ -123,17 +123,36 @@ So the honest claim is a change of scale, not a guarantee:
 If you need a hard bound rather than a large improvement, priority is not the
 mechanism; lowering `maxConcurrent` tightens it further, at a throughput cost.
 
-**Conversely, a large `maxConcurrent` erodes the benefit to nothing**, and this
-is measured rather than reasoned about. The same 20-bulk-then-1-control
-scenario, one replica, differing only in prefetch:
+**Conversely, a large `maxConcurrent` erodes the benefit**, and when the
+consumer is saturated the bound above is not merely an upper limit — it is an
+equality. Measured, one replica, a 50-message backlog, only the prefetch
+varying, with every prefetched delivery held in its handler:
 
-| `maxConcurrent` | Position the control message was handled at |
+| `maxConcurrent` | Control message handled at |
 |---:|---|
-| 1 | **2nd** of 21 |
-| 100 | **20th** of 21 — priority effectively inert |
+| 1 | index **1** |
+| 5 | index **5** |
+| 20 | index **20** |
+
+The control message emerges at *exactly* the prefetch. Independently reproduced
+in protobus-py, which measured the same equality plus `max_concurrent=100`
+against a 50-message backlog landing the control message at index 50 — the
+whole backlog prefetched, priority fully inert.
 
 So `maxConcurrent` is not an independent tuning knob once priority is in play:
-it *is* the width of the window priority cannot see into. Choose it deliberately.
+it **is** the width of the window priority cannot see into, and raising it for
+throughput widens that window by exactly the amount you raise it.
+
+**The equality holds while the consumer is saturated** — that is, while all
+`maxConcurrent` slots are genuinely occupied by in-flight handlers. That is the
+case this feature exists for: a slow handler with work queueing up behind it. If
+handlers instead finish faster than messages arrive, slots keep freeing and the
+consumer simply drains the backlog; the control message can then be handled much
+later than `maxConcurrent` (measured: index 49 of 51 at a prefetch of 5) because
+the queue it would have jumped was already consumed while it was in flight. That
+case is not a problem — a backlog that drains in milliseconds is not a backlog —
+but it does mean a benchmark with a fast handler measures something other than
+this limit.
 
 Two more limits worth knowing:
 
