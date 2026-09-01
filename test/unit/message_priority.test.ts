@@ -175,6 +175,11 @@ describe('maxPriority validation', () => {
         ['a string', '2'],
         ['NaN', NaN],
         ['null', null],
+        // Explicit because protobus-py has to reject it explicitly:
+        // isinstance(True, int) is True in Python, so max_priority=True would
+        // silently mean 1 there. TS rejects it via the typeof check, and this
+        // pins that the two ports agree.
+        ['a boolean', true],
     ])('rejects %s', (_label, value) => {
         expect(build(value)).toThrow(InvalidPriorityError);
     });
@@ -263,6 +268,7 @@ describe('per-message priority validation', () => {
         ['non-integer', 1.5],
         ['a string', 'high'],
         ['NaN', NaN],
+        ['a boolean', true],
     ])('rejects %s', async (_label, value) => {
         await expect(publishWith(value)).rejects.toBeInstanceOf(InvalidPriorityError);
     });

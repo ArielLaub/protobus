@@ -19,7 +19,15 @@ alternative fix — a second service to own a second queue — adds a deployment
 unit to solve an ordering problem. Priority solves it on the queue that exists.
 
 Added in lockstep with [protobus-py](https://github.com/ArielLaub/protobus-py);
-the option names, validation ranges and constants are identical in both.
+the option names, validation ranges and constants are identical in both, and the
+two were checked against a live broker running both ports at once — a TS
+publisher's priority is honoured by a Python consumer's queue, and each port
+redeclares the other's priority queue without a 406.
+
+One byte-level difference between the ports pre-dates this change and is left
+alone: protobus-py always sets `priority: 0` on an unprioritised message
+(aio-pika normalizes it), while this port omits the property. RabbitMQ treats
+absent and 0 identically, so the behaviour matches even though the bytes do not.
 
 ### Added
 

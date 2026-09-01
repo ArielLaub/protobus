@@ -78,8 +78,10 @@ Protobus validates it rather than passing it straight to the driver because
 amqplib encodes the priority in a single byte and **silently truncates** a
 non-integer: `1.5` reaches the broker as `1`, with no error anywhere.
 
-A priority above the queue's `x-max-priority` is not an error — the broker
-clamps it for bucketing purposes.
+A priority above the queue's `x-max-priority` is not an error and not useful:
+the broker clamps it **for ordering** while preserving the property as sent. On
+an `x-max-priority: 2` queue, a message published at 5 sorts as a 2 — so it goes
+behind an earlier 2 rather than ahead of it — and still reads back as 5.
 
 ### Scope
 
@@ -186,5 +188,16 @@ applies.
 
 `maxPriority` / `priority` behave identically in
 [protobus-py](https://github.com/ArielLaub/protobus-py) (`max_priority`,
-`priority`), including the validation ranges and the "absent unless set" rule.
-A TypeScript publisher and a Python consumer sharing a queue agree on ordering.
+`priority`), including the validation ranges (1-255 and 0-255, integers only,
+booleans rejected). Verified against a live broker, both ports running at once:
+a TypeScript publisher's `priority` is honoured by a Python consumer's
+`max_priority` queue, and a TypeScript service redeclares a Python-created
+priority queue without a 406 — the two emit the same queue arguments, which is
+the one disagreement that would take a channel down.
+
+**One byte-level difference, pre-dating this feature and deliberately left
+alone:** protobus-py always puts `priority: 0` on a message with no priority,
+because aio-pika normalizes an unset priority to 0; this port omits the property
+entirely. RabbitMQ cannot distinguish absent from 0 — on a priority queue the
+two sort as equals and keep their relative publish order — so the wire bytes
+differ and the behaviour does not. Do not "fix" either side to match the other.
