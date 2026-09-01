@@ -122,9 +122,18 @@ So the honest claim is a change of scale, not a guarantee:
 
 If you need a hard bound rather than a large improvement, priority is not the
 mechanism; lowering `maxConcurrent` tightens it further, at a throughput cost.
-Conversely a large `maxConcurrent` erodes the benefit — at a prefetch of 500 a
-control message can still sit behind 500 bulk messages per replica, and the
-feature is close to inert. Choose `maxConcurrent` with that in mind.
+
+**Conversely, a large `maxConcurrent` erodes the benefit to nothing**, and this
+is measured rather than reasoned about. The same 20-bulk-then-1-control
+scenario, one replica, differing only in prefetch:
+
+| `maxConcurrent` | Position the control message was handled at |
+|---:|---|
+| 1 | **2nd** of 21 |
+| 100 | **20th** of 21 — priority effectively inert |
+
+So `maxConcurrent` is not an independent tuning knob once priority is in play:
+it *is* the width of the window priority cannot see into. Choose it deliberately.
 
 Two more limits worth knowing:
 
@@ -220,9 +229,40 @@ a TypeScript publisher's `priority` is honoured by a Python consumer's
 priority queue without a 406 — the two emit the same queue arguments, which is
 the one disagreement that would take a channel down.
 
-**One byte-level difference, pre-dating this feature and deliberately left
-alone:** protobus-py always puts `priority: 0` on a message with no priority,
-because aio-pika normalizes an unset priority to 0; this port omits the property
-entirely. RabbitMQ cannot distinguish absent from 0 — on a priority queue the
-two sort as equals and keep their relative publish order — so the wire bytes
-differ and the behaviour does not. Do not "fix" either side to match the other.
+Verified in **both** directions against a live broker with both ports running:
+
+| Direction | Result |
+|---|---|
+| TS publisher → Python consumer (`max_priority=2`) | control message handled 2nd of 21 |
+| Python publisher → TS consumer (`maxPriority: 2`) | control message handled 2nd of 21 |
+
+### Where the two ports deliberately differ
+
+Same observable behaviour, different internals. None of these is a bug in
+either port, and none should be "fixed" to match the other.
+
+**1. An unset priority on the wire.** protobus-py always puts `priority: 0` on a
+message with no priority, because aio-pika normalizes it; this port omits the
+property entirely. RabbitMQ cannot distinguish absent from 0 — on a priority
+queue the two sort as equals and keep their relative publish order — so the
+bytes differ and the behaviour does not. This pre-dates the feature in both
+ports.
+
+**2. An explicit `priority: 0`.** protobus-py folds it to "not asked for" and
+does not forward it; this port sends it. In Python the two paths emit
+*identical* bytes anyway, so folding is free there, and it avoids passing an
+unexpected keyword to a third-party `IContext` implementation written before the
+parameter existed. TypeScript has no equivalent compatibility pressure and the
+bytes genuinely differ, so this port stays faithful to what the caller passed.
+Different constraints, same result at the broker.
+
+**3. What each port refuses.** Both reject a configuration in which priority
+would be silently inert, but they have to reject different things because their
+defaults differ. This port defaults to a bounded prefetch (`maxConcurrent || 1`,
+falling back to a positive config default), so `maxPriority` on its own is
+already safe and only `lateAck: false` is a hole — that is what it rejects.
+protobus-py has no default prefetch at all, so an unset `max_concurrent` means
+no QoS whatsoever, and it rejects both that and the auto-ack case. It
+deliberately did not adopt a default prefetch to match, since that would change
+delivery behaviour for every existing Python listener, not just priority-enabled
+ones.
