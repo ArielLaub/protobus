@@ -1,0 +1,380 @@
+# Configuration
+
+Protobus is configured through environment variables, constructor parameters, and reconnection options.
+
+## Environment Variables
+
+### Exchanges
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BUS_EXCHANGE_NAME` | `proto.bus` | Main exchange for RPC requests |
+| `CALLBACKS_EXCHANGE_NAME` | `proto.bus.callback` | Exchange for RPC responses |
+| `EVENTS_EXCHANGE_NAME` | `proto.bus.events` | Exchange for pub/sub events |
+| `CANCEL_EXCHANGE_NAME` | `proto.bus.cancel` | Fanout exchange carrying stream-cancellation notices |
+
+### Connection
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AMQP_HEARTBEAT_SECONDS` | `30` | AMQP heartbeat interval. See [Heartbeats](#heartbeats) below |
+| `CONNECTION_READY_TIMEOUT_MS` | `30000` | How long a publish parked on a reconnection waits before failing with `NotReadyError` |
+
+### Timeouts
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MESSAGE_PROCESSING_TIMEOUT` | `600000` | How long a **server** handler may run before the delivery is abandoned (10 minutes) |
+| `RPC_CALL_TIMEOUT_MS` | `600000` | How long a **caller** waits for a reply before `RpcTimeoutError` (10 minutes) |
+| `STREAM_IDLE_TIMEOUT_MS` | `60000` | Longest gap between streaming chunks before `StreamTimeoutError` |
+| `PUBLISH_CONFIRM_TIMEOUT_MS` | `30000` | How long a publish waits for its broker confirm |
+| `SHUTDOWN_DRAIN_TIMEOUT_MS` | `30000` | How long a graceful shutdown waits for in-flight messages |
+| `SHUTDOWN_EXIT_GRACE_MS` | `5000` | How long after shutdown before the process is forced to exit |
+
+The two 10-minute defaults are separate settings for separate roles, and they
+are not the same clock. A caller gives up after `RPC_CALL_TIMEOUT_MS`, while a
+server may still be retrying the same request for
+`maxRetries × (MESSAGE_PROCESSING_TIMEOUT + retryDelayMs)`. Set the caller's
+budget deliberately rather than leaving both at the default.
+
+### Throughput and bounds
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEFAULT_PREFETCH` | `1` | Unacked messages a late-ack consumer will hold when `maxConcurrent` is unset. See [Concurrency](#concurrency) |
+| `MAX_OUTSTANDING_CONFIRMS` | `256` | Publishes awaiting a confirm on one channel before further publishes park |
+| `STREAM_MAX_BUFFERED_CHUNKS` | `1024` | Chunks buffered for one unconsumed streaming call |
+| `STREAM_MAX_BUFFERED_BYTES` | `67108864` | Bytes buffered for one unconsumed streaming call (64 MiB) |
+
+### Errors and logging
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROTOBUS_EXPOSE_INTERNAL_ERRORS` | `true` | Send an unhandled error's message back to the caller. See [Security](../operations/security.md) |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, or `silent` |
+
+### Concurrency
+
+`maxConcurrent` is the consumer prefetch, and it defaults to **1**: a replica
+handles one request at a time, holding the slot until the handler returns and
+its reply is away.
+
+For unary handlers that is a deliberate, conservative default. **For streaming
+it is usually wrong.** A streaming handler keeps its slot for the entire life
+of the stream, so a service answering minute-long token streams with the
+default serves exactly one caller per replica and queues everyone else:
+
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+```typescript
+// A streaming service almost always wants this set.
+const service = new AssistantService(context, { maxConcurrent: 8 });
+```
+
+Raise it to the number of concurrent messages one replica should be working on.
+It bounds memory as well as throughput — with late ack, the broker will push up
+to this many unacknowledged messages into the process.
+
+### Heartbeats
+
+amqplib closes a connection after two missed heartbeats, so the interval is
+half the worst-case time to notice a peer that vanished without closing its
+socket — a crashed broker, a network partition, a NAT that dropped the flow.
+At the default of 30 seconds that is about a minute.
+
+Left to the broker to propose, RabbitMQ asks for 60 seconds, which is two
+minutes of publishing into a dead socket while the connection still reports
+itself healthy. That is why protobus sets one rather than accepting the
+proposal.
+
+A heartbeat already present in the connection URL is treated as deliberate and
+left alone, which is also how you turn heartbeats off:
+
+```
+amqp://guest:guest@localhost:5672/?heartbeat=0
+```
+
+Shortening the interval detects failure sooner at the cost of a few extra
+frames per minute per connection. Raising it above the broker's own
+`heartbeat` setting has no effect — the lower of the two is negotiated.
+
+## Reconnection Options
+
+Protobus automatically reconnects when the RabbitMQ connection is lost. Configure reconnection behavior when initializing the context:
+
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+```typescript
+import { Context, ReconnectionOptions } from 'protobus';
+
+const reconnectionOptions: ReconnectionOptions = {
+    maxRetries: 10,           // Max attempts (0 = infinite)
+    initialDelayMs: 1000,     // First retry delay
+    maxDelayMs: 30000,        // Max delay between retries
+    backoffMultiplier: 2,     // Exponential backoff multiplier
+};
+
+const context = new Context();
+await context.init(amqpUrl, protoPaths, { reconnection: reconnectionOptions });
+```
+
+### Reconnection Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `maxRetries` | `10` | Maximum reconnection attempts. Set to `0` for infinite retries. |
+| `initialDelayMs` | `1000` | Delay before first reconnection attempt (ms). |
+| `maxDelayMs` | `30000` | Maximum delay between attempts (ms). |
+| `backoffMultiplier` | `2` | Multiplier for exponential backoff. |
+
+### Reconnection Behavior
+
+1. **Connection loss detected** - All channels become invalid
+2. **Pending RPC calls rejected** - With `DisconnectedError`
+3. **Exponential backoff** - Delay doubles after each failed attempt (with jitter)
+4. **Automatic re-initialization** - Channels, queues, and consumers are restored
+5. **Services resume** - Once reconnected, services continue processing
+
+### Connection Events
+
+Monitor connection state via the connection object:
+
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+```typescript
+// Listen for connection events
+context.connection.on('disconnected', () => {
+    console.log('Connection lost');
+});
+
+context.connection.on('reconnecting', ({ attempt, delay }) => {
+    console.log(`Reconnecting (attempt ${attempt}, delay ${delay}ms)`);
+});
+
+context.connection.on('reconnected', () => {
+    console.log('Connection restored');
+});
+
+context.connection.on('error', (err) => {
+    console.error('Connection error:', err.message);
+});
+
+// Check connection state
+if (context.isConnected) {
+    // Safe to make RPC calls
+}
+
+if (context.isReconnecting) {
+    // Currently attempting to reconnect
+}
+```
+
+### Handling Disconnections in Client Code
+
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+```typescript
+import { ServiceProxy, DisconnectedError } from 'protobus';
+
+try {
+    const result = await proxy.someMethod({ data: 'test' });
+} catch (error) {
+    if (error instanceof DisconnectedError) {
+        // Connection was lost during the RPC call
+        // The system is automatically reconnecting
+        // You may want to retry after a delay
+        console.log('Connection lost, will retry after reconnection');
+    } else {
+        throw error;
+    }
+}
+```
+
+### Infinite Retries
+
+For services that should never give up:
+
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+```typescript
+await context.init(amqpUrl, protoPaths, {
+    reconnection: {
+        maxRetries: 0,  // Infinite retries
+        maxDelayMs: 60000,  // Cap at 1 minute between attempts
+    }
+});
+```
+
+### Example
+
+```bash
+export BUS_EXCHANGE_NAME=myapp.bus
+export CALLBACKS_EXCHANGE_NAME=myapp.bus.callback
+export EVENTS_EXCHANGE_NAME=myapp.bus.events
+export MESSAGE_PROCESSING_TIMEOUT=30000  # 30 seconds
+```
+
+## AMQP Connection String
+
+The connection string follows the standard AMQP URI format:
+
+```
+amqp://[username:password@]host[:port][/vhost]
+```
+
+### Examples
+
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+```typescript
+// Local development
+const url = 'amqp://guest:guest@localhost:5672/';
+
+// With virtual host
+const url = 'amqp://user:password@rabbitmq.example.com:5672/production';
+
+// CloudAMQP
+const url = 'amqps://user:password@rabbit.cloudamqp.com/vhost';
+
+// Amazon MQ
+const url = 'amqps://user:password@b-xxx.mq.region.amazonaws.com:5671';
+```
+
+## Context Initialization
+
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+```typescript
+const context = new Context();
+await context.init(amqpUrl, protoPaths);
+```
+
+**Parameters:**
+- `amqpUrl`: AMQP connection string
+- `protoPaths`: Array of directories containing .proto files
+
+## Service Configuration
+
+### MessageService Options
+
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+```typescript
+class MyService extends MessageService {
+    // Required: Service identifier
+    public get ServiceName(): string {
+        return 'Package.ServiceName';
+    }
+
+    // Required: Path to proto file
+    public get ProtoFileName(): string {
+        return __dirname + '/service.proto';
+    }
+}
+
+// Concurrency is a constructor option, not an override. Default 1.
+const service = new MyService(context, { maxConcurrent: 10 });
+```
+
+## Queue Configuration
+
+Protobus creates queues with the following defaults:
+
+### Service Queues
+- **Name:** `<ServiceName>` (e.g., `Calculator.Math`)
+- **Durable:** `true` - survives broker restart
+- **Auto-delete:** `false`
+- **Exclusive:** `false`
+
+### Callback Queues
+- **Name:** Auto-generated unique ID
+- **Durable:** `false`
+- **Auto-delete:** `true` - deleted when client disconnects
+- **Exclusive:** `true` - only accessible by creating connection
+
+### Event Queues
+- **Name:** `<ServiceName>.Events` (e.g., `Calculator.Math.Events`)
+- **Durable:** `true`
+- **Auto-delete:** `false`
+
+## Exchange Configuration
+
+All exchanges are created with:
+- **Type:** `topic` (main, events) or `direct` (callback)
+- **Durable:** `true`
+- **Auto-delete:** `false`
+
+## Message Options
+
+### Persistence
+All messages are sent with `deliveryMode: 2` (persistent), ensuring they survive broker restarts.
+
+### Timeout
+RPC calls timeout after `MESSAGE_PROCESSING_TIMEOUT` milliseconds. Adjust this for long-running operations:
+
+```bash
+# For operations that may take up to 5 minutes
+export MESSAGE_PROCESSING_TIMEOUT=300000
+```
+
+## Logging Configuration
+
+Replace the default console logger:
+
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+```typescript
+import { setLogger, ILogger } from 'protobus';
+
+const customLogger: ILogger = {
+    info: (message: string) => myLogger.info(message),
+    debug: (message: string) => myLogger.debug(message),
+    warn: (message: string) => myLogger.warn(message),
+    error: (message: string) => myLogger.error(message)
+};
+
+setLogger(customLogger);
+```
+
+## RabbitMQ Server Configuration
+
+Recommended RabbitMQ settings for production:
+
+```ini
+# rabbitmq.conf
+
+# Upper bound on the heartbeat interval. The lower of this and the client's
+# AMQP_HEARTBEAT_SECONDS is what gets negotiated, so raising this alone does
+# not slow protobus's heartbeats down.
+heartbeat = 60
+
+# Memory high watermark
+vm_memory_high_watermark.relative = 0.7
+
+# Disk free limit
+disk_free_limit.relative = 2.0
+```
+
+## Docker Compose Example
+
+```yaml
+version: '3.8'
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: protobus
+      RABBITMQ_DEFAULT_PASS: secret
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  my-service:
+    build: .
+    environment:
+      AMQP_URL: amqp://protobus:secret@rabbitmq:5672/
+      BUS_EXCHANGE_NAME: myapp.bus
+      MESSAGE_PROCESSING_TIMEOUT: 60000
+    depends_on:
+      - rabbitmq
+
+volumes:
+  rabbitmq_data:
+```
+
+---
+
+Next: [Message Flow](../concepts/message-flow.md) | [Architecture](../concepts/architecture.md)

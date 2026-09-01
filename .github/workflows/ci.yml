@@ -165,6 +165,64 @@ jobs:
         env:
           AMQP_URL: amqp://guest:guest@localhost:5672/
 
+  docs:
+    name: Documentation (examples executed)
+    runs-on: ubuntu-latest
+    # A documentation review executed every runnable example in docs/ and found
+    # nine that did not do what they claimed — three of which ran cleanly and
+    # silently produced the wrong result. Reading cannot catch those; this job
+    # compiles every tagged snippet against the library's own declarations and
+    # runs the ones that assert an output against a real broker.
+    timeout-minutes: 15
+    services:
+      rabbitmq:
+        image: rabbitmq:3-management-alpine
+        ports:
+          - 5672:5672
+          # The snippet runner diffs the queue list before and after so it can
+          # delete exactly the queues the examples created, which needs the
+          # management API.
+          - 15672:15672
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 12
+          --health-start-period 10s
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      # The snippets import 'protobus' by bare specifier and resolve it to this
+      # working tree's build, so dist/ has to exist first. Built here rather than
+      # downloaded, because a documentation failure should not depend on another
+      # job's artifact.
+      - run: npm run build-ts
+      - name: Every relative link and anchor resolves
+        run: node scripts/check-doc-links.js
+      - name: Every documented example compiles, and runs
+        run: node scripts/check-doc-snippets.js
+        env:
+          AMQP_URL: amqp://guest:guest@localhost:5672/
+          RABBITMQ_MGMT: http://localhost:15672
+      # Not a devDependency: a headless browser is a heavy thing to carry for a
+      # docs check, and check-mermaid.js skips cleanly when playwright is
+      # absent, so a contributor without it still gets every other check.
+      - name: Install a headless browser for the diagram check
+        run: |
+          npm install --no-save playwright
+          npx playwright install chromium
+      - name: Every Mermaid diagram renders
+        # A diagram with a syntax error shows on GitHub as a red error box and
+        # fails nowhere else. This renders each one with the real library.
+        run: node scripts/check-mermaid.js
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
