@@ -146,6 +146,7 @@ Nothing matched.
    implements no RPCs**. An empty block is enough:
 
    <!-- doc-check: proto -->
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
    ```protobuf
    service Subscriber {
    }

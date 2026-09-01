@@ -73,7 +73,7 @@ flowchart LR
     Q --> R1
     Q --> R2
 
-    R1 -->|"reply, key = correlationId"| CB
+    R1 -->|"reply, key = the caller's callback queue"| CB
     CB --> QC
     QC --> CL
     CL --> P
@@ -119,7 +119,7 @@ sequenceDiagram
     B->>Q: matched by binding REQUEST.Orders.Service.*
     Q->>S: delivered, up to maxConcurrent unacked at once
     S->>S: decode container, decode inner message, run handler
-    S->>K: publish reply, routing key = correlationId
+    S->>K: publish reply, routing key = replyTo<br/>(the caller's callback queue)
     Note over S,Q: the reply is published BEFORE the request is acked —<br/>a crash in between redelivers rather than losing the answer
     S->>Q: ack
     K->>C: exclusive callback queue delivers
@@ -194,7 +194,7 @@ Five exchanges, three of them shared by the whole bus and two per service.
 | Exchange | Type | Scope | Carries | Env override |
 |---|---|---|---|---|
 | `proto.bus` | topic | shared | RPC requests | `BUS_EXCHANGE_NAME` |
-| `proto.bus.callback` | direct | shared | RPC replies, keyed by `correlationId` | `CALLBACKS_EXCHANGE_NAME` |
+| `proto.bus.callback` | direct | shared | RPC replies, keyed by the caller's callback queue name | `CALLBACKS_EXCHANGE_NAME` |
 | `proto.bus.events` | topic | shared | published events | `EVENTS_EXCHANGE_NAME` |
 | `proto.bus.cancel` | fanout | shared | stream cancellation notices ([Streaming](../guide/streaming.md#cancellation)) | `CANCEL_EXCHANGE_NAME` |
 | `<Service>.Retry.Exchange` | topic | per service | failed messages awaiting redelivery | — |
@@ -205,9 +205,19 @@ Five exchanges, three of them shared by the whole bus and two per service.
 |---|---|---|
 | RPC request | `REQUEST.<Package>.<Service>.<method>` | `REQUEST.Orders.Service.create` |
 | Service binding | `REQUEST.<Package>.<Service>.*` | one queue serves every method |
-| RPC reply | the `correlationId` | `cjk8b9x0000001234567890` |
+| RPC reply | the caller's `replyTo` queue name | `amq.gen-JzTY20BRgKO-HjmUJj0wLg` |
 | Event, default | `EVENT.<Package>.<EventType>` | `EVENT.Orders.OrderCreated` |
 | Event, custom topic | anything you pass | `ORDERS.US.SHIPPED`, matched by `ORDERS.*.SHIPPED` |
+
+> [!IMPORTANT]
+> **A reply is routed by the caller's queue name, not by its `correlationId`.**
+> The callback queue is anonymous and exclusive, so the broker names it
+> (`amq.gen-…`), and it is bound to `proto.bus.callback` under that name
+> ([`lib/base_listener.ts`](../../lib/base_listener.ts)). `correlationId` is an
+> AMQP *property* carried alongside, and it is what the caller's process uses to
+> match the reply to the right pending promise — the broker never looks at it.
+> Earlier versions of this page and of `message-flow.md` both said the routing
+> key was the correlationId.
 
 > [!NOTE]
 > A service binds `REQUEST.<Service>.*` — **one queue for every method**. That is what makes [Message Priority](../guide/priority.md) necessary: a slow bulk method and a fast control method share a lane.

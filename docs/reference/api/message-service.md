@@ -111,7 +111,7 @@ export function build(context: IContext): CalculatorService {
 > **`lateAck: false` is not a performance setting.** Acking on delivery disables the retry, DLQ and error-reply paths entirely: a failed message is dropped and the caller waits out its full `RPC_CALL_TIMEOUT_MS` for a reply that is never published. Use it only for genuine at-most-once delivery with no error reporting.
 
 > [!WARNING]
-> **`maxPriority` cannot be added to a queue that already exists.** RabbitMQ fixes queue arguments at declare time, so the changed declare fails with `PRECONDITION_FAILED` and `init()` rejects — the service does not start. An operator has to drain and delete the main queue first. Read [Message Priority → Enabling priority on a queue that already exists](../../guide/priority.md#-enabling-priority-on-a-queue-that-already-exists) before turning it on. The floor is `1`, not `0`: `x-max-priority: 0` is a plain queue with a priority queue's overhead, so it is refused ([`lib/priority.ts`](../../../lib/priority.ts), `validateMaxPriority`).
+> **`maxPriority` cannot be added to a queue that already exists.** RabbitMQ fixes queue arguments at declare time, so the changed declare fails with `PRECONDITION_FAILED` and `init()` rejects — the service does not start. An operator has to drain and delete the main queue first. Read the "Enabling priority on a queue that already exists" section of [Message Priority](../../guide/priority.md) before turning it on. The floor is `1`, not `0`: `x-max-priority: 0` is a plain queue with a priority queue's overhead, so it is refused ([`lib/priority.ts`](../../../lib/priority.ts), `validateMaxPriority`).
 
 ---
 

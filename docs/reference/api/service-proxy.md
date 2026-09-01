@@ -227,10 +227,22 @@ export RPC_CALL_TIMEOUT_MS=30000   # every caller in this process waits 30s
 
 Per call, pass `timeoutMs` as the fourth argument. Size it against the retry ladder, not against one handler run: no reply is published while a message is being retried, so at the service's defaults (`maxRetries: 3`, `retryDelayMs: 5000`) a permanently failing call takes roughly 15 seconds to produce its error.
 
-<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
+<!-- doc-check: compile -->
 ```typescript
-import { IContext, ServiceProxy, RpcTimeoutError, UnroutableError } from 'protobus';
-import { CalculatorMath } from './client';
+import { IContext, ServiceProxy, CallOptions, RpcTimeoutError, UnroutableError } from 'protobus';
+
+// The transport arguments have to be in the interface YOU declare, or the
+// compiler rejects them. A generated interface stops at `actor`; widen it when
+// you need a per-call timeout or a priority.
+interface CalculatorMath {
+    add(
+        request: { a: number; b: number },
+        actor?: string,
+        rpc?: boolean,
+        timeoutMs?: number,
+        options?: CallOptions,
+    ): Promise<{ result: number }>;
+}
 
 async function callWithBudget(context: IContext) {
     const calculator = new ServiceProxy(context, 'Calculator.Math') as ServiceProxy & CalculatorMath;

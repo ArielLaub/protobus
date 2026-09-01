@@ -206,7 +206,7 @@ sequenceDiagram
     participant H as Your handler
 
     S->>E: publishEvent(type, content, topic?)
-    E->>E: topic defaults to EVENT.&lt;type&gt; when omitted
+    E->>E: topic defaults to "EVENT." plus the type when omitted
     E->>E: buildEvent: wrap the encoded message in EventContainer
     E->>X: publish, routing key = topic, persistent, NOT mandatory
     X->>Q: every queue whose binding matches the topic gets a copy

@@ -68,6 +68,7 @@ it writes `common/types/proto.ts`:
 <details>
 <summary>The generated file, verbatim</summary>
 
+<!-- doc-check: ignore why="verbatim CLI output; it declares classes protobufjs generates, not code to compile here" -->
 ```typescript
 /* eslint-disable */
 /* tslint:disable */
@@ -175,6 +176,7 @@ npx protobus generate:service Calculator
 **Output example:**
 
 Generates `services/calculator/CalculatorService.ts`:
+<!-- doc-check: ignore why="verbatim CLI output; it imports the types the generator writes into your project" -->
 ```typescript
 import { RunnableService, Context } from 'protobus';
 import { Calculator } from '../../common/types/proto';

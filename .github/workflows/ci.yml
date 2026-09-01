@@ -211,6 +211,17 @@ jobs:
         env:
           AMQP_URL: amqp://guest:guest@localhost:5672/
           RABBITMQ_MGMT: http://localhost:15672
+      # Not a devDependency: a headless browser is a heavy thing to carry for a
+      # docs check, and check-mermaid.js skips cleanly when playwright is
+      # absent, so a contributor without it still gets every other check.
+      - name: Install a headless browser for the diagram check
+        run: |
+          npm install --no-save playwright
+          npx playwright install chromium
+      - name: Every Mermaid diagram renders
+        # A diagram with a syntax error shows on GitHub as a red error box and
+        # fails nowhere else. This renders each one with the real library.
+        run: node scripts/check-mermaid.js
 
   audit:
     name: Dependency audit

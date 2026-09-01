@@ -71,6 +71,7 @@
     "docker:up": "docker compose up -d --wait",
     "docker:down": "docker compose down",
     "docs:check": "node scripts/check-doc-links.js && node scripts/check-doc-snippets.js",
+    "docs:check:diagrams": "node scripts/check-mermaid.js",
     "docs:check:offline": "node scripts/check-doc-links.js && node scripts/check-doc-snippets.js --no-broker",
     "watch": "tsc -w"
   },
