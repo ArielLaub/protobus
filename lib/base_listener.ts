@@ -334,8 +334,10 @@ export abstract class BaseListener extends EventEmitter {
      * One method rather than two copies because `init()` and `_reinitialize()`
      * both declare the same queue, and RabbitMQ fixes a queue's arguments at
      * declare time: if the two ever disagree, the first reconnection after a
-     * broker restart hits a 406 PRECONDITION_FAILED, the channel closes, and
-     * the listener is dead behind a connection that reports itself healthy.
+     * broker restart hits a 406 PRECONDITION_FAILED and the restore fails —
+     * which the connection turns into a discarded generation and, eventually, a
+     * connection that has given up. Loud, but only after a broker restart, and
+     * from a queue that declared perfectly well at startup.
      *
      * Every key is added only when its option is set, so a listener that
      * configures nothing declares `{}` — byte-identical to what protobus sent

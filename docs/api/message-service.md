@@ -89,8 +89,9 @@ every previous version of protobus. Must be an integer 1-255; keep it small
 
 ⚠️ **Adding this to a service that has already run against a broker requires an
 operator to drain and delete its main queue first** — RabbitMQ cannot add
-`x-max-priority` to an existing queue, and the failed declare closes the shared
-channel. Read [Message Priority](../advanced/priority.md) before enabling it.
+`x-max-priority` to an existing queue, and the failed declare rejects `init()`
+so the service does not start. Read [Message Priority](../advanced/priority.md)
+before enabling it.
 
 ## Methods
 

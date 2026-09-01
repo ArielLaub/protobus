@@ -7,10 +7,10 @@ import Config from './config';
  * failures it prevents are expensive:
  *
  *  - An out-of-range `x-max-priority` is a 406 PRECONDITION_FAILED on
- *    `queue.declare`, and a channel error takes the channel down. Protobus
- *    shares one connection across every listener in a process, so a bad value
- *    discovered at the broker is a service-wide startup failure with an opaque
- *    message.
+ *    `queue.declare`, which kills the channel the declare was issued on. Each
+ *    listener opens its own channel, so this does not take the whole process
+ *    down with it — but the listener's `init()` rejects and the service fails
+ *    to start, with an opaque broker message rather than a useful one.
  *  - A non-integer per-message `priority` is worse, because it is silent:
  *    amqplib encodes the priority as a single byte and 1.5 arrives at the
  *    broker as 1. Nothing errors, and the message simply sorts somewhere the

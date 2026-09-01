@@ -61,7 +61,9 @@ more than any known use needs:
 
 ### 2. Publish with a `priority`
 
-Proxy methods take an options object as their last argument:
+Unary and fire-and-forget proxy methods take an options object as their last
+argument. (Streaming methods take `StreamOptions` in that position instead and
+cannot carry a priority — see [Scope](#scope).)
 
 ```typescript
 const recs = new ServiceProxy(context, 'Recommendations.Service');
@@ -219,10 +221,13 @@ Operation failed: QueueDeclare; 406 (PRECONDITION-FAILED) with message
 'MyService' in vhost '/': received the value '2' of type 'byte' but current is none"
 ```
 
-A 406 closes the channel. **Protobus shares one connection across every listener
-in a process**, so this is not a single failed declare — it is a service that
-does not start, and if it happens on a reconnection, a listener that goes
-permanently silent behind a connection still reporting itself healthy.
+A 406 kills the channel the declare was issued on. Each listener opens its own
+channel, so this is not a process-wide channel outage — but `init()` rejects and
+**the service does not start**. Hitting it on a *reconnection* is no quieter:
+the failed restore propagates to the connection, which discards that generation,
+reports itself disconnected and retries, then gives up through its reconnection
+budget. Either way it is loud. What it is not is recoverable without the
+migration below.
 
 So enabling `maxPriority` on a service that has already run against a broker
 requires a one-time, operator-driven **drain, delete and recreate** of that

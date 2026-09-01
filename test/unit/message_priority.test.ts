@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 
 import MessageListener from '../../lib/message_listener';
-import MessageDispatcher from '../../lib/message_dispatcher';
+import MessageDispatcher, { StreamOptions } from '../../lib/message_dispatcher';
 import MessageService from '../../lib/message_service';
 import MessageFactory from '../../lib/message_factory';
 import Config from '../../lib/config';
@@ -332,5 +332,35 @@ describe('MessageService threads maxPriority to its request listener', () => {
         const conn = new RecordingConnection();
         const svc = new Svc(context(conn), { maxPriority: 2 });
         expect((svc as any).eventListener.maxPriority).toBeUndefined();
+    });
+});
+
+describe('streaming calls cannot carry a priority', () => {
+    /**
+     * A type-level assertion. StreamOptions occupies the 4th argument slot
+     * where a unary call takes CallOptions, so `{priority}` on a streaming call
+     * is an easy mistake the broker would never complain about — the property
+     * is simply never sent.
+     *
+     * Deliberately NOT an object literal. TypeScript's excess-property check
+     * already rejects `const o: StreamOptions = { priority: 2 }` whether or not
+     * `priority?: never` exists, so a literal-based test passes for the wrong
+     * reason — verified by removing the declaration and watching the literal
+     * version stay green. Excess-property checking does not apply to a value
+     * that arrives through a variable, and that is the case `priority?: never`
+     * actually rules out.
+     *
+     * `@ts-expect-error` is the oracle in both directions: ts-jest fails the
+     * suite on an UNUSED directive, so dropping `priority?: never` turns this
+     * red rather than silently green.
+     */
+    it('rejects a priority reaching StreamOptions through a variable', () => {
+        const carrier = { signal: new AbortController().signal, priority: 2 };
+        // @ts-expect-error priority is not supported on a streaming call
+        const bad: StreamOptions = carrier;
+        expect(bad).toBeDefined();
+
+        const good: StreamOptions = { signal: new AbortController().signal };
+        expect(good.signal).toBeDefined();
     });
 });

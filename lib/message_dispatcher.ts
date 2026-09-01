@@ -21,6 +21,13 @@ export interface StreamOptions {
      * arrives to resume the loop; a signal takes effect immediately.
      */
     signal?: AbortSignal;
+    /**
+     * Not supported on streaming calls, and declared so that passing one is a
+     * type error rather than a silent drop: `StreamOptions` sits in the 4th
+     * argument slot where a unary call takes `CallOptions`, so the two are easy
+     * to confuse at a call site.
+     */
+    priority?: never;
 }
 
 /** Per-call options for a unary RPC / fire-and-forget publish. */

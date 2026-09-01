@@ -61,10 +61,11 @@ export default class MessageListener extends BaseListener {
         // enable it, and the feature simply does nothing.
         if (this.maxPriority !== undefined && !lateAck) {
             throw new InvalidPriorityError(
-                'maxPriority requires lateAck (the default). With lateAck: false the consumer ' +
-                'acks on delivery and RabbitMQ applies no prefetch, so the broker hands it the ' +
-                'entire backlog and priority has nothing left to reorder. Remove lateAck: false, ' +
-                'or drop maxPriority.',
+                'maxPriority requires lateAck. With lateAck off the consumer acks on delivery, ' +
+                'RabbitMQ applies no prefetch, and the broker hands it the entire backlog — ' +
+                'leaving priority nothing to reorder. MessageService enables lateAck by default, ' +
+                'so this means an explicit lateAck: false; MessageListener, constructed directly, ' +
+                'defaults it to off and needs it passed. Enable lateAck, or drop maxPriority.',
             );
         }
 
