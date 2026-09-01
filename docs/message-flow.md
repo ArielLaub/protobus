@@ -204,16 +204,31 @@ Registered patterns:
   - ORDERS.#              → Handler B
   - ORDERS.US.*.SHIPPED   → Handler C
 
-Incoming event: ORDERS.US.123.CREATED
-  ├─ Matches: ORDERS.*.CREATED    → Handler A ✓
+Incoming event: ORDERS.US.CREATED          (3 words)
+  ├─ Matches: ORDERS.*.CREATED    → Handler A ✓   (* = US)
   ├─ Matches: ORDERS.#            → Handler B ✓
   └─ No match: ORDERS.US.*.SHIPPED
 
-Incoming event: ORDERS.EU.456.SHIPPED
+Incoming event: ORDERS.US.123.CREATED      (4 words)
+  ├─ No match: ORDERS.*.CREATED                   (* is ONE word; it cannot cover US.123)
+  ├─ Matches: ORDERS.#            → Handler B ✓   (# covers any number of words)
+  └─ No match: ORDERS.US.*.SHIPPED
+
+Incoming event: ORDERS.US.123.SHIPPED      (4 words)
   ├─ No match: ORDERS.*.CREATED
   ├─ Matches: ORDERS.#            → Handler B ✓
-  └─ No match: ORDERS.US.*.SHIPPED
+  └─ Matches: ORDERS.US.*.SHIPPED → Handler C ✓   (* = 123)
+
+Incoming event: ORDERS.EU.456.SHIPPED      (4 words)
+  ├─ No match: ORDERS.*.CREATED
+  ├─ Matches: ORDERS.#            → Handler B ✓
+  └─ No match: ORDERS.US.*.SHIPPED                (US is literal, and this is EU)
 ```
+
+The second event is the one worth pausing on: `ORDERS.*.CREATED` looks like it should
+match `ORDERS.US.123.CREATED`, but `*` stands for exactly **one** word, so the pattern
+describes a three-word topic and the event has four. Reach for `#` when the number of
+words varies.
 
 **Wildcard rules:**
 - `*` matches exactly one word
