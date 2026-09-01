@@ -24,6 +24,15 @@ const AMQP_CONNECTION_STRING = 'amqp://guest:guest@localhost:5672/';
 /** Unique per run: queues are durable, and their arguments are immutable. */
 const STAMP = `P${Date.now()}`;
 
+/**
+ * The consumer prefetch these tests run at, and the quantity the ordering
+ * assertions are stated in terms of. Named rather than repeated, because the
+ * saturation check below has to compare against the SAME number the service was
+ * configured with — a literal in one place and not the other is how this test
+ * would start measuring something else.
+ */
+const PREFETCH = 1;
+
 function protoFor(pkg: string): string {
     return `syntax = "proto3";
 package ${pkg};
@@ -39,6 +48,9 @@ service Service {
 /** Records the order messages were handled in; the first one blocks on a gate. */
 class RecordingService extends MessageService {
     public handled: string[] = [];
+    /** Concurrent handler invocations, and the high-water mark of that. */
+    public inFlight = 0;
+    public peakInFlight = 0;
     public firstEntered: Promise<void>;
     private signalFirstEntered: () => void = () => undefined;
     private gate: Promise<void> = Promise.resolve();
@@ -46,7 +58,7 @@ class RecordingService extends MessageService {
     private gateArmed = false;
 
     constructor(context: IContext, private pkg: string, maxPriority?: number) {
-        super(context, { maxConcurrent: 1, retry: { maxRetries: 0 }, maxPriority });
+        super(context, { maxConcurrent: PREFETCH, retry: { maxRetries: 0 }, maxPriority });
         this.firstEntered = new Promise<void>((resolve) => { this.signalFirstEntered = resolve; });
     }
 
@@ -62,13 +74,19 @@ class RecordingService extends MessageService {
     public get Proto(): string { return protoFor(this.pkg); }
 
     public async handle(request: any): Promise<any> {
-        if (this.gateArmed) {
-            this.gateArmed = false;
-            this.signalFirstEntered();
-            await this.gate;
+        this.inFlight++;
+        if (this.inFlight > this.peakInFlight) { this.peakInFlight = this.inFlight; }
+        try {
+            if (this.gateArmed) {
+                this.gateArmed = false;
+                this.signalFirstEntered();
+                await this.gate;
+            }
+            this.handled.push(request.tag);
+            return { tag: request.tag };
+        } finally {
+            this.inFlight--;
         }
-        this.handled.push(request.tag);
-        return { tag: request.tag };
     }
 }
 
@@ -126,6 +144,27 @@ describe('a priority queue lets a control message overtake a bulk backlog', () =
         }
         await service.firstEntered;
         await sleep(500); // let the rest settle into the queue
+
+        // PRECONDITION, asserted rather than assumed: the consumer must be
+        // SATURATED — every prefetch slot occupied by a held handler — or this
+        // test measures the wrong quantity entirely.
+        //
+        // Protobus does not serialise deliveries (amqplib does not await the
+        // consume callback), so any slot this gate does not hold keeps pulling
+        // from the queue. Raise maxConcurrent while gating only the first
+        // delivery and the remaining slots quietly drain the whole backlog
+        // before the control message is even published — leaving nothing to
+        // overtake and producing a number that looks like a priority failure
+        // but is really a drain-rate measurement. That mistake was made once
+        // during this feature's development, in both ports independently, and
+        // it is invisible without this check.
+        if (service.peakInFlight !== PREFETCH) {
+            throw new Error(
+                `consumer not saturated: peak in-flight ${service.peakInFlight} != prefetch ` +
+                `${PREFETCH}. This test would be measuring the drain rate, not the prefetch ` +
+                `window. Hold every delivery, not just the first, or set PREFETCH to match.`,
+            );
+        }
 
         // The control message arrives LAST of all, and behind 19 others.
         await proxy.handle(
