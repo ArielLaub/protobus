@@ -1,0 +1,8 @@
+enum OrderStatus {
+    ORDER_STATUS_UNKNOWN = 0;  // Always have unknown/default
+    ORDER_STATUS_PENDING = 1;
+    ORDER_STATUS_PROCESSING = 2;
+    ORDER_STATUS_SHIPPED = 3;
+    ORDER_STATUS_DELIVERED = 4;
+    ORDER_STATUS_CANCELLED = 5;
+}

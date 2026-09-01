@@ -22,6 +22,7 @@ elapses, at which point its messages stay unacknowledged and are redelivered.
 **Workaround:**
 Watch the signal in anything long-running:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 async generateReport(request: Request, actor: string, id: string, ctx?: MessageHandlerContext) {
     for (const chunk of workItems) {
@@ -45,6 +46,7 @@ No built-in support for distributed tracing (e.g., OpenTelemetry, Jaeger).
 **Workaround:**
 Add tracing manually in your service methods:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 async myMethod(request: any, actor?: string, correlationId?: string) {
     const span = tracer.startSpan('myMethod', { correlationId });

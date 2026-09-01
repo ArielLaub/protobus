@@ -19,3 +19,7 @@ service Math {
     rpc add(Calculator.AddRequest) returns(Calculator.AddResponse);
 }
 
+// A service that only subscribes to events still needs a service block.
+// See "Subscribe to events" below for why.
+service Subscriber {
+}

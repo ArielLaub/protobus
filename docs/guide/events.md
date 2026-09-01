@@ -304,7 +304,7 @@ Corollaries, all of which contradict what this page used to say:
 - **`HandledError` changes nothing on the event path.** On the RPC path it is the difference between an immediate error reply and three retries. Here both branches end in the same reject-without-requeue. Throwing it is harmless and communicates intent, but it does not prevent a retry, because there is no retry.
 - **"Unacknowledged events are redelivered" is true only for a crash.** Late acknowledgement means an event whose process dies mid-handler is unacked and comes back. An event whose handler *returned a rejected promise* is settled, not unacked.
 
-So the durability of an event's *effects* is yours to arrange. The two shapes that work:
+So the durability of an event's *effects* is yours to arrange. Either catch inside the handler and record the failure somewhere you can replay from:
 
 <!-- doc-check: compile id=ev-catch -->
 ```typescript
@@ -332,7 +332,7 @@ class BillingService extends RunnableService {
 }
 ```
 
-or, when the work genuinely must not be lost, do not use an event for it: make it an RPC, which does have the retry ladder and the DLQ — see [Delivery Guarantees](../concepts/delivery-guarantees.md).
+or, when the work genuinely must not be lost, do not model it as an event at all. An RPC has the retry ladder and the DLQ — see [Delivery Guarantees](../concepts/delivery-guarantees.md).
 
 ---
 
@@ -353,7 +353,7 @@ or, when the work genuinely must not be lost, do not use an event for it: make i
 
 ## A subscriber that is not a service
 
-A process that only listens does not need `RunnableService`. It does need the same `service` block, and it must close its connection.
+A process that only listens does not need `RunnableService.start` and its signal handling; it can own its own lifecycle. It still needs the same `service` block, and it must close its connection.
 
 <!-- doc-check: compile id=ev-standalone needs=ev-subscriber-class -->
 ```typescript
@@ -371,7 +371,7 @@ async function main(): Promise<void> {
 
     await subscriber.subscribeEvent('Orders.OrderShipped', async (event) => {
         console.log('shipped', event.order_id);
-    }, 'ORDERS.#');
+    }, 'ORDERS.*.SHIPPED');
 
     console.log('listening');
 
@@ -413,6 +413,16 @@ message CreateOrderResponse {
     string order_id = 1;
 }
 
+message ShipOrderRequest {
+    string order_id = 1;
+    string region = 2;
+    string carrier = 3;
+}
+
+message ShipOrderResponse {
+    bool ok = 1;
+}
+
 message OrderCreated {
     string order_id = 1;
     string user_id = 2;
@@ -428,6 +438,7 @@ message OrderShipped {
 
 service Service {
     rpc createOrder(Orders.CreateOrderRequest) returns(Orders.CreateOrderResponse);
+    rpc shipOrder(Orders.ShipOrderRequest) returns(Orders.ShipOrderResponse);
 }
 ```
 
@@ -452,6 +463,20 @@ class OrdersService extends RunnableService {
         });
 
         return { order_id: orderId };
+    }
+
+    async shipOrder(
+        request: { order_id: string; region: string; carrier: string },
+    ): Promise<{ ok: boolean }> {
+        // The region goes in the TOPIC, so a subscriber can filter on it
+        // without decoding anything.
+        await this.publishEvent('Orders.OrderShipped', {
+            order_id: request.order_id,
+            carrier: request.carrier,
+            region: request.region,
+        }, `ORDERS.${request.region}.SHIPPED`);
+
+        return { ok: true };
     }
 }
 

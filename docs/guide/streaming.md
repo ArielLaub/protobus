@@ -8,6 +8,7 @@ The motivating use case is LLM token streaming: a model generates a 500-word ans
 
 ## TL;DR
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 // 1. Declare the method as streaming in your .proto file, using the gRPC `stream` keyword:
 service Llm {
@@ -83,6 +84,7 @@ Three terminal outcomes the client must handle:
 
 Use the standard gRPC syntax — the `stream` keyword on the response type:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```proto
 service Llm {
     rpc complete       (CompleteRequest) returns (CompleteResponse);
@@ -108,6 +110,7 @@ The proxy and the service base class inspect this flag once when methods are wir
 
 The proxy method returns an `AsyncIterable<T>` — you consume it with `for await`:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 import { ServiceProxy } from 'protobus';
 
@@ -131,6 +134,7 @@ That's the entire client API for streaming. The framework:
 
 Errors are thrown inside the iteration — same model as any async generator:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 import { HandledError, StreamTimeoutError } from 'protobus';
 
@@ -157,6 +161,7 @@ Cancelling stops the **producer**, not just the reader. Two ways to trigger it.
 
 **Break out of the loop.** The iterator's `return()` runs, which releases the client's slot and sends a cancellation notice to the server:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 for await (const chunk of llm.completeStream(req)) {
     process(chunk);
@@ -166,6 +171,7 @@ for await (const chunk of llm.completeStream(req)) {
 
 **Pass an `AbortSignal`.** `break` only takes effect once the next chunk arrives to resume the loop, so it cannot help when the decision is made elsewhere — a Stop button in a different request handler, or a client that disconnects. A signal fires immediately, from anywhere:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 const stop = new AbortController();
 app.post('/chat/:id/stop', (req, res) => { stop.abort(); res.end(); });
@@ -183,6 +189,7 @@ and "the server finished" looking identical from inside the loop, which matters
 when the signal belongs to someone else. Check the signal afterwards when you
 need to tell them apart:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 for await (const chunk of llm.completeStream(req, undefined, undefined, { signal: stop.signal })) {
     send(chunk);
@@ -192,6 +199,7 @@ if (stop.signal.aborted) { /* stopped early — the response is partial */ }
 
 On the server, watch `context.signal` — the fourth argument to your handler:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 public async *completeStream(request, actor?, correlationId?, context?) {
     for await (const delta of openai.chat.completions.create({
@@ -213,6 +221,7 @@ The cancellation notice is an ordinary message, published once and not retried. 
 
 If that work is expensive enough to matter, detect it and cancel again: chunks still arriving well after you cancelled mean the notice did not land.
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 // Cancel, then re-cancel if the producer is evidently still going.
 stop.abort();
@@ -234,6 +243,7 @@ If the broker credentials cannot declare that exchange, the service logs a warni
 
 Streaming uses an **idle timeout** rather than a total-call timeout, because a long stream can legitimately take minutes. The default is 60 seconds between chunks (configurable via the `STREAM_IDLE_TIMEOUT_MS` env var):
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 // Per-call override
 for await (const chunk of llm.completeStream(req, undefined, 120_000)) {
@@ -247,6 +257,7 @@ If no chunk arrives within the timeout, `StreamTimeoutError` is thrown. The unar
 
 A streaming handler is an **async generator** (`yield`s instead of `return`s):
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 import { MessageService } from 'protobus';
 
@@ -282,6 +293,7 @@ The framework:
 
 Throwing from inside the generator publishes a terminal error message that the client iterator will re-throw:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 public async *completeStream(req: any): AsyncIterable<any> {
     for await (const event of bedrock.converseStream(req)) {

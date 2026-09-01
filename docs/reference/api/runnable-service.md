@@ -46,6 +46,7 @@ export class CalculatorService extends RunnableService {
 
 ## `ProtoFileName`
 
+<!-- doc-check: ignore why="quoted verbatim from lib/runnable_service.ts, a method body outside any class" -->
 ```typescript
 public get ProtoFileName(): string {
     const packageName = this.ServiceName.split('.')[0] || this.ServiceName;
@@ -100,6 +101,7 @@ export class ReportService extends RunnableService {
 
 ## `cleanup()`
 
+<!-- doc-check: ignore why="the static signature as declared, not a call site" -->
 ```typescript
 protected async cleanup(): Promise<void>
 ```
@@ -134,6 +136,7 @@ export class OrderService extends RunnableService {
 
 ## `RunnableService.start(context, ServiceClass, options?, postInit?)`
 
+<!-- doc-check: ignore why="a protected member signature, not a standalone snippet" -->
 ```typescript
 static async start<T extends RunnableService>(
     context: IContext,

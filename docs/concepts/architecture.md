@@ -236,6 +236,7 @@ Five exchanges, three of them shared by the whole bus and two per service.
 > [!CAUTION]
 > `maxConcurrent` is the consumer prefetch and it **defaults to `1`**. One replica handles one message at a time, holding the slot until the handler returns. This is deliberate and conservative — and it means a service that does I/O and was never configured is leaving almost all of its throughput on the table.
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 // A service that awaits anything almost always wants this raised.
 const service = new OrdersService(context, { maxConcurrent: 10 });
@@ -270,6 +271,7 @@ The bus routes, retries, dead-letters and logs a message without ever needing yo
 
 <br/>
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 message RequestContainer {
     string method = 1;   // Package.Service.method

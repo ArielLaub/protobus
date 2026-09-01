@@ -6,6 +6,7 @@ What protobus does and does not guarantee, and where the responsibility sits.
 
 Every request carries an optional `actor` string, and handlers receive it:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 async add(request: AddRequest, actor?: string): Promise<AddResponse> {
     // `actor` is whatever the CALLER put there. Nothing verified it.

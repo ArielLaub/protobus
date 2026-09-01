@@ -140,6 +140,7 @@ setLogger(sink);
 <details>
 <summary>The full <code>LogRecord</code> shape</summary>
 
+<!-- doc-check: compile -->
 ```typescript
 interface LogRecord {
     component: 'protobus';

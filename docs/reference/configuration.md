@@ -64,6 +64,7 @@ it is usually wrong.** A streaming handler keeps its slot for the entire life
 of the stream, so a service answering minute-long token streams with the
 default serves exactly one caller per replica and queues everyone else:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 // A streaming service almost always wants this set.
 const service = new AssistantService(context, { maxConcurrent: 8 });
@@ -100,6 +101,7 @@ frames per minute per connection. Raising it above the broker's own
 
 Protobus automatically reconnects when the RabbitMQ connection is lost. Configure reconnection behavior when initializing the context:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 import { Context, ReconnectionOptions } from 'protobus';
 
@@ -135,6 +137,7 @@ await context.init(amqpUrl, protoPaths, { reconnection: reconnectionOptions });
 
 Monitor connection state via the connection object:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 // Listen for connection events
 context.connection.on('disconnected', () => {
@@ -165,6 +168,7 @@ if (context.isReconnecting) {
 
 ### Handling Disconnections in Client Code
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 import { ServiceProxy, DisconnectedError } from 'protobus';
 
@@ -186,6 +190,7 @@ try {
 
 For services that should never give up:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 await context.init(amqpUrl, protoPaths, {
     reconnection: {
@@ -214,6 +219,7 @@ amqp://[username:password@]host[:port][/vhost]
 
 ### Examples
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 // Local development
 const url = 'amqp://guest:guest@localhost:5672/';
@@ -230,6 +236,7 @@ const url = 'amqps://user:password@b-xxx.mq.region.amazonaws.com:5671';
 
 ## Context Initialization
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 const context = new Context();
 await context.init(amqpUrl, protoPaths);
@@ -243,6 +250,7 @@ await context.init(amqpUrl, protoPaths);
 
 ### MessageService Options
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 class MyService extends MessageService {
     // Required: Service identifier
@@ -305,6 +313,7 @@ export MESSAGE_PROCESSING_TIMEOUT=300000
 
 Replace the default console logger:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 import { setLogger, ILogger } from 'protobus';
 

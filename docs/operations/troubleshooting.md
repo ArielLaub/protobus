@@ -75,6 +75,7 @@ module)`), and so is the default `tsconfig.json` most projects start with.
 
 **Fix.** Wrap it, which is what every example in these docs now does:
 
+<!-- doc-check: compile -->
 ```typescript
 async function main() {
     // ... your awaits
@@ -144,6 +145,7 @@ Nothing matched.
    because it applies **even to a service that only subscribes to events and
    implements no RPCs**. An empty block is enough:
 
+   <!-- doc-check: proto -->
    ```protobuf
    service Subscriber {
    }
@@ -176,6 +178,7 @@ than the missing line.
 **Fix.** Register the type on the factory **before** `context.init()` — `init()`
 parses your protos — and give the schema a syntax line:
 
+<!-- doc-check: proto -->
 ```protobuf
 syntax = "proto3";
 package Accounts;
@@ -283,6 +286,7 @@ Error: ENOENT: no such file or directory, open '/path/to/service.proto'
 `ProtoFileName` is resolved relative to the process's working directory unless it
 is absolute, and the working directory is not where your source file lives:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 get ProtoFileName() { return './service.proto'; }              // fragile
 get ProtoFileName() { return __dirname + '/service.proto'; }   // correct
@@ -304,6 +308,7 @@ Error: Cannot read property 'encode' of undefined
 The request or response type named in the `rpc` line does not resolve. In a
 protobus schema, **rpc types are fully qualified**:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 package MyPackage;
 
@@ -374,6 +379,7 @@ TypeError: proxy.myMethod is not a function
 **Cause.** `ServiceProxy` builds its methods from the schema during `init()`.
 Before that it has none.
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 const proxy = new ServiceProxy(context, 'MyPackage.MyService');
 await proxy.init();          // this is what installs the methods
@@ -450,6 +456,7 @@ replica or a restart. Use a store the replicas share.
 bounds how many unacknowledged messages the broker will push into this process.
 It defaults to **1**.
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 const service = new MyService(context, { maxConcurrent: 10 });
 ```

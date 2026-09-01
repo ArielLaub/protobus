@@ -31,6 +31,7 @@ marks individual messages.
 
 ### 1. Declare the queue with `maxPriority`
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 import { RunnableService, Config } from 'protobus';
 
@@ -99,6 +100,7 @@ Unary and fire-and-forget proxy methods take an options object as their last
 argument. (Streaming methods take `StreamOptions` in that position instead and
 cannot carry a priority — see [Scope](#scope).)
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 const recs = new ServiceProxy(context, 'Recommendations.Service');
 await recs.init();
@@ -254,6 +256,7 @@ The service is the shape the feature exists for: one expensive method that
 fills the queue and one cheap one that has to get through anyway, sharing the
 single queue a protobus service has.
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 class WorkService extends MessageService {
     constructor(context: IContext, prefetch: number, maxPriority?: number) {
@@ -277,6 +280,7 @@ Flood the slow method, wait until every prefetch slot is genuinely busy — the
 test asserts this rather than assuming it, because an unsaturated consumer just
 drains the backlog and the run measures nothing — then send the control call:
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 for (let i = 0; i < 30; i++) {
     await proxy.slow(

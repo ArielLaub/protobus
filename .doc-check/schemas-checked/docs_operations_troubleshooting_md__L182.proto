@@ -1,0 +1,6 @@
+syntax = "proto3";
+package Accounts;
+
+message Account {
+    uuid id = 1;
+}

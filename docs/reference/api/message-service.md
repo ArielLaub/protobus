@@ -16,6 +16,7 @@
 
 ## The class
 
+<!-- doc-check: ignore why="the declared shape of the class, not a standalone snippet: abstract members and EventHandler are not importable in isolation" -->
 ```typescript
 abstract class MessageService implements IMessageService {
     constructor(context: IContext, options?: IMessageServiceOptions);

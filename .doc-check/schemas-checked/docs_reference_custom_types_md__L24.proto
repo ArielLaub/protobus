@@ -1,0 +1,11 @@
+syntax = "proto3";
+package Billing;
+
+message Invoice {
+    string id    = 1;
+    money  total = 2;
+}
+
+service Api {
+    rpc issue (Invoice) returns (Invoice);
+}

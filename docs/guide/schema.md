@@ -12,6 +12,7 @@
 
 ## Basic Structure
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 syntax = "proto3";
 package MyPackage;
@@ -54,6 +55,7 @@ service MyService {
 
 ### Request Messages
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 message CreateOrderRequest {
     // Required fields first
@@ -71,6 +73,7 @@ message CreateOrderRequest {
 
 ### Response Messages
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 message CreateOrderResponse {
     // Primary result
@@ -87,6 +90,7 @@ message CreateOrderResponse {
 
 ### Event Messages
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 message OrderCreatedEvent {
     // Event identification
@@ -137,6 +141,7 @@ The `bigint` type handles large integers commonly used in Web3 applications:
 - Deserializes to native JavaScript `bigint`
 - Accepts `bigint`, `string` (decimal or hex), or `number` as input
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 message TokenTransfer {
     string from = 1;
@@ -146,6 +151,7 @@ message TokenTransfer {
 }
 ```
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 // Using native bigint
 await tokenService.transfer({
@@ -170,6 +176,7 @@ The `timestamp` type provides convenient Date handling:
 - Deserializes to JavaScript `Date` object
 - Accepts `Date`, ISO string, or milliseconds number as input
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 message Event {
     string name = 1;
@@ -178,6 +185,7 @@ message Event {
 }
 ```
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
 // Using Date objects
 await eventService.create({
@@ -264,6 +272,7 @@ Available wire types: `bytes`, `int64`, `uint64`, `string`, `int32`, `uint32`, `
 
 ### Timestamps
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 // Option 1: Unix timestamp (recommended)
 int64 created_at = 1;  // milliseconds since epoch
@@ -274,6 +283,7 @@ string created_at = 1;  // "2024-01-15T10:30:00Z"
 
 ### Money
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 message Money {
     int64 amount = 1;      // In smallest unit (cents)
@@ -289,6 +299,7 @@ message Order {
 
 ### Enums
 
+<!-- doc-check: proto -->
 ```protobuf
 enum OrderStatus {
     ORDER_STATUS_UNKNOWN = 0;  // Always have unknown/default
@@ -302,6 +313,7 @@ enum OrderStatus {
 
 ### Repeated Fields (Arrays)
 
+<!-- doc-check: proto -->
 ```protobuf
 message Order {
     repeated OrderItem items = 1;
@@ -311,6 +323,7 @@ message Order {
 
 ### Nested Messages
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 message Order {
     message Item {
@@ -327,6 +340,7 @@ message Order {
 
 ### One Operation Per Method
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 // Good: Single responsibility
 service OrderService {
@@ -345,6 +359,7 @@ service OrderService {
 
 ### Request/Response Per Method
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 // Good: Dedicated types
 rpc CreateOrder(CreateOrderRequest) returns(CreateOrderResponse);
@@ -359,6 +374,7 @@ rpc UpdateOrder(OrderRequest) returns(OrderResponse);
 
 ### Adding Fields
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 // v1
 message Order {
@@ -380,6 +396,7 @@ message Order {
 - Never reuse field numbers
 - Reserved removed fields
 
+<!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```protobuf
 message Order {
     reserved 3, 4;              // Removed fields
@@ -402,6 +419,7 @@ message Order {
 
 ## Complete Example
 
+<!-- doc-check: proto -->
 ```protobuf
 syntax = "proto3";
 package Orders;

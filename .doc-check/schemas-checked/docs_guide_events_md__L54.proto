@@ -1,0 +1,6 @@
+syntax = "proto3";
+package Notifications;
+
+// No rpcs. It exists so resolveContract can find 'Notifications.Service'.
+service Service {
+}

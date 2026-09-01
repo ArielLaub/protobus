@@ -1,0 +1,4 @@
+message Order {
+    repeated OrderItem items = 1;
+    repeated string tags = 2;
+}

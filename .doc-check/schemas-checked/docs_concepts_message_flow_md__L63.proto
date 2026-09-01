@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+message RequestContainer {
+    string method = 1;   // <Package>.<Service>.<method>
+    string actor  = 2;   // caller-supplied; tracing only
+    bytes  data   = 3;   // encoded request message
+}
+
+message ResponseResult {
+    string method = 1;   // echoed back; selects the schema for data
+    bytes  data   = 2;   // encoded response message
+}
+
+message ResponseError {
+    string method  = 1;
+    string message = 2;
+    string code    = 3;  // the code carried by HandledError; "" otherwise
+}
+
+message ResponseContainer {
+    oneof value {
+        ResponseResult result = 1;
+        ResponseError  error  = 2;
+    }
+}
+
+message EventContainer {
+    string type  = 1;    // <Package>.<MessageType>
+    string topic = 2;    // the topic it was published under
+    bytes  data  = 3;    // encoded event message
+}
