@@ -221,6 +221,27 @@ export default class Config {
         return envInt('STREAM_MAX_TOTAL_BUFFERED_BYTES', 256 * 1024 * 1024);
     }
 
+    /**
+     * Named message-priority levels, matching protobus-py.
+     *
+     * `PRIORITY_NORMAL` is 0 because that is what RabbitMQ assigns a message
+     * that carries no priority property at all — so an old publisher and a new
+     * one that passes PRIORITY_NORMAL sort identically, which is what makes the
+     * two interoperable on the same queue.
+     */
+    static readonly PRIORITY_NORMAL = 0;
+    static readonly PRIORITY_HIGH = 1;
+    static readonly PRIORITY_CONTROL = 2;
+
+    /**
+     * The `maxPriority` to declare a priority queue with, for the levels above.
+     *
+     * Deliberately tiny. RabbitMQ maintains internal structures per priority
+     * level, so a large range costs memory and throughput for nothing; the
+     * broker's own guidance is a handful of levels. 255 is legal and a waste.
+     */
+    static readonly RECOMMENDED_MAX_PRIORITY = 2;
+
     // Headers used by the streaming wire protocol. See docs/advanced/streaming.md.
     static readonly HEADER_FINAL = 'x-protobus-final';
     static readonly HEADER_SEQ = 'x-protobus-seq';

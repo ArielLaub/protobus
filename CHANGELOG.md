@@ -4,6 +4,91 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] — 2026-09-01
+
+Opt-in RabbitMQ message priority, so a control message can overtake bulk traffic
+on a service's single request queue.
+
+Protobus binds one queue per service to `REQUEST.<ServiceName>.*`, so every
+method a service serves shares that queue and RabbitMQ delivers it FIFO. A
+service whose "start the job" RPC fans out one message per user onto its own
+queue therefore puts the *next* control message behind the entire fan-out: with
+a 5,232-message backlog, three subsequent control calls were accepted and all
+three failed at exactly their deadline while every replica was healthy. The
+alternative fix — a second service to own a second queue — adds a deployment
+unit to solve an ordering problem. Priority solves it on the queue that exists.
+
+Added in lockstep with [protobus-py](https://github.com/ArielLaub/protobus-py);
+the option names, validation ranges and constants are identical in both.
+
+### Added
+
+- **`maxPriority` on `IMessageServiceOptions`.** Declares the service's request
+  queue with `x-max-priority`. An integer 1-255, validated at construction so a
+  bad value fails before any broker I/O rather than as a 406 that closes the
+  shared channel.
+- **`priority` on the new `CallOptions`**, accepted as a trailing `options`
+  argument by proxy methods, `Context.publishMessage()` and
+  `MessageDispatcher.publish()`. An integer 0-255.
+- **`Config.PRIORITY_NORMAL` (0), `PRIORITY_HIGH` (1), `PRIORITY_CONTROL` (2)
+  and `RECOMMENDED_MAX_PRIORITY` (2)**, with `Config` itself now exported from
+  the package root. The recommended range is deliberately tiny: RabbitMQ builds
+  internal structures per priority level, so a large range costs memory and
+  throughput and buys nothing.
+- **`InvalidPriorityError`**, exported from the package root. Raised for a
+  non-integer or out-of-range priority. amqplib encodes the priority in one byte
+  and silently truncates — `1.5` reaches the broker as `1` with no error — so
+  this is validated rather than delegated to the driver.
+
+### Backward compatibility
+
+Priority is **off unless asked for**, and each of these is pinned by a test:
+
+- With `maxPriority` unset, `x-max-priority` is absent from the queue arguments
+  entirely, not present-and-undefined. An existing service declares `{}` (or
+  `{'x-message-ttl': …}`) exactly as before and its queue redeclares cleanly.
+- With no `priority` given, no `priority` property is set on the message.
+- A `priority` published to a non-priority queue is ignored by the broker, not
+  rejected — verified against RabbitMQ 3, and what lets a new publisher run
+  against an old consumer. The reverse direction works because an unset priority
+  is 0, which is `PRIORITY_NORMAL`.
+- No existing signature changed; `maxPriority` and `options` are additive.
+
+The `<Service>.Retry` and `<Service>.DLQ` queues are deliberately untouched.
+Dead-lettering preserves a message's priority property, so a retried message
+re-sorts correctly on its way back into the main queue — which keeps enabling
+this a one-queue migration rather than a three-queue one.
+
+**⚠️ Enabling `maxPriority` on a service that has already run against a broker
+requires an operator to drain and delete its main queue first.** RabbitMQ fixes
+queue arguments at declare time; adding `x-max-priority` to an existing queue is
+a 406 `PRECONDITION_FAILED` that closes the channel, and protobus shares one
+connection across every listener in a process. The service fails loudly on
+startup rather than silently ignoring the setting. See
+[Message Priority](docs/advanced/priority.md) and Procedure A in
+[Queue Migration](docs/advanced/queue-migration.md).
+
+### Known limitation
+
+Priority reorders messages **still in the queue**; it cannot reach one the
+broker has already prefetched into a consumer. With prefetch `N` across `R`
+replicas, up to `N × R` bulk messages can still sit ahead of a control message.
+The integration test demonstrates this rather than hiding it: with prefetch 1, a
+control message published after 20 bulk messages is handled second, not first.
+This is a change of scale — thousands down to single digits — not a guarantee.
+
+### Documentation
+
+- New [Message Priority](docs/advanced/priority.md) guide: usage, the four
+  backward-compatibility guarantees, the prefetch limitation stated plainly, and
+  the migration procedure for an existing queue.
+- [Queue Migration](docs/advanced/queue-migration.md) now covers three options
+  rather than two, and notes that `maxPriority` is the one most likely to be
+  added to a service already in production.
+- `maxPriority` documented on [MessageService](docs/api/message-service.md); the
+  [ServiceProxy](docs/api/service-proxy.md) method signature now documents all
+  five parameters, `rpc` and `timeoutMs` included, which were undocumented.
+
 ## [2.1.0] — 2026-08-22
 
 A second security and performance audit, and its remediation. Two independent

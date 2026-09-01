@@ -3,6 +3,7 @@ import Config from './config';
 import { IConnection, ConsumeRetryOptions } from './connection';
 import { RetryOptions, DEFAULT_RETRY_OPTIONS } from './message_service';
 import { isHandledError } from './errors';
+import { validateMaxPriority } from './priority';
 
 /**
  * Thrown when the retry queue exists with arguments that differ from what this
@@ -44,8 +45,12 @@ export default class MessageListener extends BaseListener {
         maxConcurrent?: number,
         retryOptions?: RetryOptions,
         processingTimeoutMs?: number,
+        maxPriority?: number,
     ) {
         super(connection);
+        // Validated here, at construction, so a bad value fails before any
+        // broker I/O rather than as a 406 that closes the shared channel.
+        this.maxPriority = validateMaxPriority(maxPriority);
 
         this.exchangeName = Config.busExchangeName;
         this.exchangeType = 'topic';

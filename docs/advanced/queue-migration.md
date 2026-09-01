@@ -4,17 +4,24 @@ RabbitMQ fixes a queue's arguments when the queue is declared. Redeclaring an
 existing durable queue with different arguments does not update it — the broker
 rejects the declare with `PRECONDITION_FAILED` and closes the channel.
 
-This matters for two Protobus options, both of which become queue arguments:
+This matters for three Protobus options, each of which becomes a queue argument:
 
 | Option | Queue argument | Queue it applies to |
 |--------|----------------|---------------------|
 | `retryDelayMs` | `x-message-ttl` | `<ServiceName>.Retry` |
 | `messageTtlMs` | `x-message-ttl` | the service's main queue |
+| `maxPriority` | `x-max-priority` | the service's main queue |
 
-Change either one for a service that has already run against a broker, and the
+Change any of them for a service that has already run against a broker, and the
 next startup fails. Protobus turns the retry-queue case into a
 `RetryQueueMismatchError` naming the queue and the current value; the main-queue
-case surfaces as the broker's raw `PRECONDITION_FAILED`.
+cases surface as the broker's raw `PRECONDITION_FAILED`.
+
+`maxPriority` is the one most likely to be *added* to a service that is already
+running, since the whole point is to fix a queue that is misbehaving in
+production. Turning it on is Procedure A below applied to `<ServiceName>` alone
+— `.Retry` and `.DLQ` do not carry `x-max-priority` and must not be deleted.
+See [Message Priority](./priority.md) for why.
 
 Queue names are derived from the service name and stay stable across
 deployments. That is deliberate: silently deriving a new name from the settings
@@ -75,8 +82,10 @@ migration with no unroutable window.
 
 ## Avoiding the problem
 
-- Treat `retryDelayMs` and `messageTtlMs` as deployment-time constants. Pick
-  them before the first production deploy.
+- Treat `retryDelayMs`, `messageTtlMs` and `maxPriority` as deployment-time
+  constants. Pick them before the first production deploy — for a brand-new
+  service, declaring `maxPriority` up front costs nothing and saves the
+  migration entirely.
 - Drive them from configuration that is reviewed alongside the code, not from an
   environment variable that differs per environment — a value that varies
   between staging and production means one of the two brokers will reject the
@@ -95,6 +104,8 @@ retryDelayMs.
 ```
 
 A bare `PRECONDITION_FAILED - inequivalent arg 'x-message-ttl' for queue ...`
-from the broker means the same thing for a main queue carrying `messageTtlMs`.
+from the broker means the same thing for a main queue carrying `messageTtlMs`,
+and `inequivalent arg 'x-max-priority' ... but current is none` means a service
+has asked for `maxPriority` on a queue that was created without it.
 Either way the service does not start: the fix is one of the procedures above,
 or reverting the value to what the existing queue was declared with.

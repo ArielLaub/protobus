@@ -29,7 +29,8 @@ A TypeScript microservices framework using RabbitMQ and Protocol Buffers.
 - [Custom Logger](./advanced/custom-logger.md) - Logging integration
 - [Structured Logging](./advanced/structured-logging.md) - Opt-in log records and payload diagnostics
 - [Security Model](./advanced/security.md) - What `actor` does and does not prove, redaction, delivery guarantees
-- [Queue Migration](./advanced/queue-migration.md) - Changing `retryDelayMs` or `messageTtlMs` on queues that already exist
+- [Message Priority](./advanced/priority.md) - Letting control messages overtake a bulk backlog on a service's single queue
+- [Queue Migration](./advanced/queue-migration.md) - Changing `retryDelayMs`, `messageTtlMs` or `maxPriority` on queues that already exist
 
 ### Operations
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions

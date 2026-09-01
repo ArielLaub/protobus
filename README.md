@@ -209,6 +209,7 @@ See [CLI Documentation](docs/cli.md) for details.
 | Topic | Description |
 |-------|-------------|
 | [Streaming RPC](docs/advanced/streaming.md) | Server-streaming responses with `for await` |
+| [Message Priority](docs/advanced/priority.md) | Letting control messages overtake a bulk backlog (opt-in) |
 | [Protobuf Schema](docs/advanced/protobuf-schema.md) | Defining service interfaces |
 | [Error Handling](docs/advanced/error-handling.md) | Retry logic and dead-letter queues |
 | [Custom Logger](docs/advanced/custom-logger.md) | Integrating your own logger |

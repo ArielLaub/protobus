@@ -25,6 +25,7 @@ export abstract class BaseListener extends EventEmitter {
     protected lateAck: boolean;
     protected maxConcurrent: number;
     protected messageTtlMs: number | undefined;
+    protected maxPriority: number | undefined;
     protected processingTimeoutMs: number | undefined;
     protected defaultHandler: MessageHandler;
     protected bindings: string[] = []; // Track bound routing keys for reconnection
@@ -48,6 +49,7 @@ export abstract class BaseListener extends EventEmitter {
         this.lateAck = false;
         this.maxConcurrent = undefined; // only used for late ack workers.
         this.messageTtlMs = undefined;
+        this.maxPriority = undefined;
         this.bindings = [];
         this.defaultHandler = async (message: Buffer, correlationId?: string) => {
             // Size and correlationId only. Never the body: JSON.stringify
@@ -169,10 +171,7 @@ export abstract class BaseListener extends EventEmitter {
         // For named queues, we can re-use the same name
         const queueNameToUse = this.isAnonymous ? '' : this.configuredQueueName;
 
-        const queueArguments: Record<string, unknown> = {};
-        if (this.messageTtlMs !== undefined) {
-            queueArguments['x-message-ttl'] = this.messageTtlMs;
-        }
+        const queueArguments = this.buildQueueArguments();
         this.queueName = await this.connection.declareQueue(this.channel, queueNameToUse, {
             autoDelete: this.isAnonymous,
             durable: !this.isAnonymous,
@@ -233,10 +232,7 @@ export abstract class BaseListener extends EventEmitter {
             internal: false,
             arguments: {}
         });
-        const queueArguments: Record<string, unknown> = {};
-        if (this.messageTtlMs !== undefined) {
-            queueArguments['x-message-ttl'] = this.messageTtlMs;
-        }
+        const queueArguments = this.buildQueueArguments();
         this.queueName = await this.connection.declareQueue(this.channel, queueName, {
             autoDelete: this.isAnonymous,
             durable: !this.isAnonymous,
@@ -330,6 +326,31 @@ export abstract class BaseListener extends EventEmitter {
         this._isInitialized = false;
         this._wasStarted = false;
         this.bindings = [];
+    }
+
+    /**
+     * The `arguments` this listener's main queue is declared with.
+     *
+     * One method rather than two copies because `init()` and `_reinitialize()`
+     * both declare the same queue, and RabbitMQ fixes a queue's arguments at
+     * declare time: if the two ever disagree, the first reconnection after a
+     * broker restart hits a 406 PRECONDITION_FAILED, the channel closes, and
+     * the listener is dead behind a connection that reports itself healthy.
+     *
+     * Every key is added only when its option is set, so a listener that
+     * configures nothing declares `{}` — byte-identical to what protobus sent
+     * before either option existed, which is what lets an existing queue be
+     * redeclared instead of rejected.
+     */
+    protected buildQueueArguments(): Record<string, unknown> {
+        const queueArguments: Record<string, unknown> = {};
+        if (this.messageTtlMs !== undefined) {
+            queueArguments['x-message-ttl'] = this.messageTtlMs;
+        }
+        if (this.maxPriority !== undefined) {
+            queueArguments['x-max-priority'] = this.maxPriority;
+        }
+        return queueArguments;
     }
 
     /**
