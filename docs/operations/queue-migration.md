@@ -21,7 +21,7 @@ cases surface as the broker's raw `PRECONDITION_FAILED`.
 running, since the whole point is to fix a queue that is misbehaving in
 production. Turning it on is Procedure A below applied to `<ServiceName>` alone
 — `.Retry` and `.DLQ` do not carry `x-max-priority` and must not be deleted.
-See [Message Priority](./priority.md) for why.
+See [Message Priority](../guide/priority.md) for why.
 
 Queue names are derived from the service name and stay stable across
 deployments. That is deliberate: silently deriving a new name from the settings

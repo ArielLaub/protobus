@@ -2,7 +2,7 @@
 
 > What a resolved `publish()` actually promises, what happens to a message whose handler threw, and where duplicates come from.
 
-**Read this if** you are deciding how much your handlers have to defend themselves — or you are staring at a `<Service>.DLQ` with 400 messages in it and want to know how they got there.
+**Read this if** you are deciding how much your handlers have to defend themselves — or you are staring at a non-empty `<Service>.DLQ` and want to know how those messages got there.
 
 | | |
 |---|---|
@@ -77,13 +77,13 @@ The practical effect: calling a service nobody is running fails in one broker ro
 
 ### Deduplicating on `messageId`
 
-Every publish carries a `messageId` — the caller's if they supplied one, otherwise a fresh UUID — and the same id is copied onto every retry and DLQ hop ([`lib/connection.ts`](../../lib/connection.ts), the retry and DLQ publishes). It is the only thing that identifies two copies as one logical message, which is why the package root says so at the export site:
+Every publish carries a `messageId`, minted as a UUID by the publish path unless the properties already have one, and the same id is copied onto every retry and DLQ hop ([`lib/connection.ts`](../../lib/connection.ts), `_confirmedPublish` and the retry and DLQ publishes). It is the only thing that identifies two copies as one logical message, which is why the package root says so at the export site:
 
 > A resolved `publish()` means the broker confirmed the message; these are the ways that can fail. `PublishConfirmTimeoutError` and `ChannelClosedError` are AMBIGUOUS — the message may or may not have been stored — so retrying either can duplicate. Deduplicate on `messageId`.
 >
 > — [`index.ts`](../../index.ts)
 
-A handler reads it off the framework context, which arrives as the fourth argument to a service method alongside `redelivered`.
+A handler reads it off the framework context, which arrives as the fourth argument to a service method alongside `redelivered`. The context type itself is `MessageHandlerContext` in [`lib/connection.ts`](../../lib/connection.ts) and is not re-exported from the package root, so declare the shape you need inline:
 
 <!-- doc-check: compile -->
 ```typescript
@@ -91,7 +91,10 @@ import { MessageService } from 'protobus';
 
 const alreadyDone = new Set<string>();
 
-abstract class Orders extends MessageService {
+class OrdersService extends MessageService {
+    get ServiceName(): string { return 'Orders.Service'; }
+    get ProtoFileName(): string { return './protos/orders.proto'; }
+
     async create(
         request: { customerId: string },
         actor: string,
@@ -111,6 +114,9 @@ abstract class Orders extends MessageService {
 
 > [!NOTE]
 > An in-memory `Set` is shown for brevity. In a real service the deduplication key belongs in the same store as the side effect, written in the same transaction — otherwise the process restarts and forgets what it applied.
+
+> [!WARNING]
+> **`messageId` covers redeliveries and retries, not a caller's own republish.** `ServiceProxy` and `Context.publishMessage()` take no `messageId` argument, so a caller that reacts to an ambiguous outcome by calling the method again produces a message with a *new* `messageId` and a new `correlationId` — which the consumer cannot recognise as the same request. Deduplicating a caller-driven republish needs an idempotency key you put in the request payload yourself.
 
 ---
 
@@ -237,7 +243,7 @@ Six headers are stamped by the retry and DLQ paths in [`lib/connection.ts`](../.
 
 <br/>
 
-RabbitMQ adds its own `x-death` array when the retry queue's TTL dead-letters a message, recording each queue it passed through and how many times. That is broker behaviour, not protobus, and it appears only on messages that took the TTL route — not on the DLQ copy, which protobus publishes directly.
+RabbitMQ adds its own `x-death` array when the retry queue's TTL dead-letters a message, recording each queue it passed through and how many times. That is broker behaviour, not protobus. The DLQ copy is a fresh publish rather than a broker dead-lettering, so any `x-death` you see on it was carried over from an earlier retry hop — it does not record the trip to the DLQ.
 
 What is **not** recoverable from a DLQ message:
 

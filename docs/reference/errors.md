@@ -114,7 +114,7 @@ Anything that is *not* handled — a plain `Error`, a `TypeError`, a driver time
 
 ### `ProtocolError`
 
-A `HandledError` subclass, so it is answered rather than retried — by definition, because a malformed message is malformed on every redelivery. It is raised in four places, all in [`lib/message_service.ts`](../../lib/message_service.ts):
+A `HandledError` subclass, so it is answered rather than retried — by definition, because a malformed message is malformed on every redelivery. Every condition that produces one lives in [`lib/message_service.ts`](../../lib/message_service.ts):
 
 | Condition | Message |
 |---|---|
@@ -329,7 +329,10 @@ export async function placeOrder(call: () => Promise<{ id: string }>) {
 }
 ```
 
-`RPC_TIMEOUT`, `NOT_READY` and the publish codes are set locally by the classes above and never arrive over the wire, so one `switch` covers both origins without ambiguity — no protobus code is reused between the two sets.
+No code is shared between the two sets — the wire carries `HANDLED_ERROR`, `PROTOCOL_ERROR`, `INTERNAL_ERROR` and whatever you define, while `RPC_TIMEOUT`, `NOT_READY` and the publish codes are set locally — so one `switch` can cover both origins without ambiguity.
+
+> [!NOTE]
+> A local code can still reach a *further* caller when services are chained. Service B calling service C gets an `RpcTimeoutError`, which is not a `HandledError`, so it runs B's retry ladder and is finally answered to A as `code: "RPC_TIMEOUT"`. The code is unambiguous; the hop it happened on is not, which is what `correlationId` is for.
 
 ---
 

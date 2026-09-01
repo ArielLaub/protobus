@@ -378,7 +378,7 @@ migration below.
 So enabling `maxPriority` on a service that has already run against a broker
 requires a one-time, operator-driven **drain, delete and recreate** of that
 service's main queue. Follow **Procedure A** in
-[Queue Migration](./queue-migration.md) — the same procedure as for a changed
+[Queue Migration](../operations/queue-migration.md) — the same procedure as for a changed
 `messageTtlMs`, applied to `<ServiceName>` only (not `.Retry`, not `.DLQ`).
 
 Deploying the new code before the queue is deleted fails loudly on startup with

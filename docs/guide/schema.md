@@ -1,6 +1,14 @@
-# Protobuf Schema Design
+# Schema Design
 
-Best practices for designing Protocol Buffer schemas for Protobus services.
+> The `.proto` file is the contract. Everything else — the queue name, the routing key, the generated types — follows from it.
+
+**Read this if** you are about to write or change a schema, or you want to know which changes are safe to deploy.
+
+| | |
+|---|---|
+| **Prerequisites** | [Getting Started](./getting-started.md) |
+| **Next** | [CLI](../reference/cli.md) — generating types from it · [Custom Types](../reference/custom-types.md) |
+| **Source** | [`lib/message_factory.ts`](../../lib/message_factory.ts) · [`lib/custom_types.ts`](../../lib/custom_types.ts) |
 
 ## Basic Structure
 
@@ -192,39 +200,65 @@ console.log(event.created_at instanceof Date);  // true
 
 You can define your own custom types by implementing the `ICustomType` interface:
 
+<!-- doc-check: compile -->
 ```typescript
-import { ICustomType } from 'protobus';
+import { Context, ICustomType } from 'protobus';
 
 const uuidType: ICustomType<string> = {
-    name: 'uuid',           // Type name in .proto files
-    wireType: 'bytes',      // Underlying protobuf type
-    tsType: 'string',       // TypeScript type for exports
+    name: 'uuid',           // how it is written in a .proto
+    wireType: 'bytes',      // how it travels
+    tsType: 'string',       // what generated types call it
     encode: (value: string) => Buffer.from(value.replace(/-/g, ''), 'hex'),
     decode: (data: Buffer) => {
         const hex = Buffer.from(data).toString('hex');
-        return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
-    }
+        return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    },
 };
 
-// Register before or after init()
-messageFactory.registerType(uuidType);
-messageFactory.init([]);
+async function main() {
+    const context = new Context();
 
-// Now use in .proto files
-messageFactory.parse(`
-    message Entity {
-        uuid id = 1;
-        string name = 2;
-    }
-`);
+    // Register BEFORE init(): init() parses your .proto files, and a schema
+    // using `uuid` cannot be parsed until the type exists.
+    context.factory.registerType(uuidType);
+
+    await context.init('amqp://localhost', ['./proto']);
+}
+
+main().catch((error) => { console.error(error); process.exit(1); });
 ```
 
+The schema that uses it **must declare `syntax = "proto3";`**:
+
+<!-- doc-check: ignore why="uses a custom type, so it only parses in a process that has registered uuid first" -->
+```protobuf
+syntax = "proto3";
+package Entities;
+
+message Entity {
+    uuid id = 1;
+    string name = 2;
+}
+```
+
+> [!WARNING]
+> Without the syntax line, protobufjs parses the file as proto2 — where every
+> field needs an `optional` / `required` / `repeated` label — and reports the
+> custom type as `illegal token 'uuid'`. Earlier versions of this page and of the
+> root README both omitted it, and neither example ran. The rule is pinned by
+> [`test/unit/documented_behaviour.test.ts`](../../test/unit/documented_behaviour.test.ts).
+
+> [!CAUTION]
 > **Custom type names are process-wide.** `registerType()` adds the type to
-> that factory's root, but the codec itself goes into protobufjs's module-level
+> > that factory's root, but the codec itself goes into protobufjs's module-level
 > wrapper table, which is shared by everything in the process. Two factories
 > cannot hold different definitions of the same name, and a name registered
-> through one is visible to all of them. Namespace your names if a process
-> hosts more than one schema.
+> through one is visible to all of them. Registration is also **not idempotent**:
+> registering the same name twice on one factory throws `duplicate name`, and the
+> built-in `bigint` and `timestamp` are already registered. Namespace your names
+> if a process hosts more than one schema.
+>
+> Full account: [Custom Types](../reference/custom-types.md).
 
 Available wire types: `bytes`, `int64`, `uint64`, `string`, `int32`, `uint32`, `double`
 
@@ -478,4 +512,8 @@ service OrderService {
 
 ---
 
-Next: [Error Handling](./error-handling.md) | [Events](../api/events.md)
+<div align="center">
+
+**[← Getting Started](./getting-started.md)** · **[Docs index](../README.md)** · **[Events →](./events.md)**
+
+</div>

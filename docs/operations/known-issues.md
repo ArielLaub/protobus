@@ -33,7 +33,7 @@ async generateReport(request: Request, actor: string, id: string, ctx?: MessageH
 
 Graceful shutdown itself is built in — `RunnableService.start()` installs signal
 handlers that stop consuming, drain in-flight work, run your `cleanup()` hook
-and then disconnect. See [RunnableService](./api/runnable-service.md).
+and then disconnect. See [RunnableService](../reference/api/runnable-service.md).
 
 ---
 
@@ -76,4 +76,4 @@ If you encounter issues not listed here:
 
 ---
 
-Next: [Troubleshooting](./troubleshooting.md) | [Architecture](./architecture.md)
+Next: [Troubleshooting](./troubleshooting.md) | [Architecture](../concepts/architecture.md)

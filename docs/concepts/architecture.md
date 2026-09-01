@@ -6,9 +6,9 @@
 
 | | |
 |---|---|
-| **Prerequisites** | [Getting Started](./getting-started.md) — you have run one service |
-| **Next** | [Configuration](./configuration.md) · [Error Handling](./advanced/error-handling.md) |
-| **Source** | [`lib/context.ts`](../lib/context.ts) · [`lib/connection.ts`](../lib/connection.ts) · [`lib/message_listener.ts`](../lib/message_listener.ts) |
+| **Prerequisites** | [Getting Started](../guide/getting-started.md) — you have run one service |
+| **Next** | [Configuration](../reference/configuration.md) · [Error Handling](../guide/error-handling.md) |
+| **Source** | [`lib/context.ts`](../../lib/context.ts) · [`lib/connection.ts`](../../lib/connection.ts) · [`lib/message_listener.ts`](../../lib/message_listener.ts) |
 
 **On this page** — [The one idea](#the-one-idea) · [What a service creates](#what-a-service-creates-in-the-broker) · [The RPC round trip](#the-rpc-round-trip) · [When a handler fails](#when-a-handler-fails) · [Exchanges](#exchange-reference) · [Queues](#queue-reference) · [Wire format](#wire-format) · [Components](#components)
 
@@ -96,7 +96,7 @@ flowchart LR
 
 Three things in that picture surprise people, so they are worth saying in words:
 
-- **`Orders.Service.Events` is a queue, not a subscription.** It is durable and it is *not* auto-delete. Events published while every replica is down are still there when one comes back. It also means an event queue for a service you deleted keeps filling forever — see [Queue Migration](./advanced/queue-migration.md).
+- **`Orders.Service.Events` is a queue, not a subscription.** It is durable and it is *not* auto-delete. Events published while every replica is down are still there when one comes back. It also means an event queue for a service you deleted keeps filling forever — see [Queue Migration](../operations/queue-migration.md).
 - **The callback queue is per *client process*, exclusive and auto-deleting.** It vanishes when the client disconnects, which is why an in-flight RPC whose caller died is simply dropped rather than replied to.
 - **The retry queue has no consumer.** Messages sit in it until their TTL expires and RabbitMQ dead-letters them back onto `proto.bus`. The delay *is* the TTL. Nothing sleeps in Node.
 
@@ -181,7 +181,7 @@ A message parked on `Orders.Service.Retry` comes back via RabbitMQ's dead-letter
 
 Publishing to a per-service *topic* exchange bound with `#` preserves the original `REQUEST.Orders.Service.create` key across the queue → TTL → DLX → `proto.bus` round trip, so the redelivery lands back on the service queue. That is the entire reason `<Service>.Retry.Exchange` exists.
 
-See [`lib/connection.ts`](../lib/connection.ts) around the retry ladder, and the comment in [`lib/message_listener.ts`](../lib/message_listener.ts).
+See [`lib/connection.ts`](../../lib/connection.ts) around the retry ladder, and the comment in [`lib/message_listener.ts`](../../lib/message_listener.ts).
 
 </details>
 
@@ -196,7 +196,7 @@ Five exchanges, three of them shared by the whole bus and two per service.
 | `proto.bus` | topic | shared | RPC requests | `BUS_EXCHANGE_NAME` |
 | `proto.bus.callback` | direct | shared | RPC replies, keyed by `correlationId` | `CALLBACKS_EXCHANGE_NAME` |
 | `proto.bus.events` | topic | shared | published events | `EVENTS_EXCHANGE_NAME` |
-| `proto.bus.cancel` | fanout | shared | stream cancellation notices ([Streaming](./advanced/streaming.md#cancellation)) | `CANCEL_EXCHANGE_NAME` |
+| `proto.bus.cancel` | fanout | shared | stream cancellation notices ([Streaming](../guide/streaming.md#cancellation)) | `CANCEL_EXCHANGE_NAME` |
 | `<Service>.Retry.Exchange` | topic | per service | failed messages awaiting redelivery | — |
 
 ### Routing keys
@@ -210,7 +210,7 @@ Five exchanges, three of them shared by the whole bus and two per service.
 | Event, custom topic | anything you pass | `ORDERS.US.SHIPPED`, matched by `ORDERS.*.SHIPPED` |
 
 > [!NOTE]
-> A service binds `REQUEST.<Service>.*` — **one queue for every method**. That is what makes [Message Priority](./advanced/priority.md) necessary: a slow bulk method and a fast control method share a lane.
+> A service binds `REQUEST.<Service>.*` — **one queue for every method**. That is what makes [Message Priority](../guide/priority.md) necessary: a slow bulk method and a fast control method share a lane.
 
 ---
 
@@ -243,7 +243,7 @@ const service = new OrdersService(context, { maxConcurrent: 10 });
 
 It bounds memory as well as throughput: with late ack the broker will push up to `maxConcurrent` unacked messages into the process. Scale out with more processes, not by co-locating services — Node is single-threaded, so co-location buys no parallelism and couples failure domains.
 
-Full detail in [Configuration → Concurrency](./configuration.md#concurrency).
+Full detail in [Configuration → Concurrency](../reference/configuration.md#concurrency).
 
 ---
 
@@ -305,7 +305,7 @@ message EventContainer {
 </details>
 
 > [!WARNING]
-> `actor` is set by the caller and nothing verifies it. It is for tracing, never for authorisation — see the [Security model](./advanced/security.md).
+> `actor` is set by the caller and nothing verifies it. It is for tracing, never for authorisation — see the [Security model](../operations/security.md).
 
 ---
 
@@ -338,13 +338,13 @@ flowchart TD
 
 | Component | Responsibility | Source |
 |---|---|---|
-| **Context** | one AMQP connection, the proto registry, the shared dispatchers. Create one per process. | [`lib/context.ts`](../lib/context.ts) |
-| **Connection** | channels, declarations, bindings, reconnection, the retry ladder | [`lib/connection.ts`](../lib/connection.ts) |
-| **MessageFactory** | loads `.proto` files; encodes and decodes both layers | [`lib/message_factory.ts`](../lib/message_factory.ts) |
-| **MessageService** | serves a queue: dispatches RPCs to your methods, subscribes to events | [`lib/message_service.ts`](../lib/message_service.ts) |
-| **RunnableService** | `MessageService` plus process lifecycle — proto resolution by convention, SIGINT/SIGTERM, non-zero exit on boot failure | [`lib/runnable_service.ts`](../lib/runnable_service.ts) |
-| **ServiceProxy** | builds method stubs from the proto and calls them over the bus | [`lib/service_proxy.ts`](../lib/service_proxy.ts) |
-| **Trie** | wildcard topic matching for event subscriptions | [`lib/trie.ts`](../lib/trie.ts) |
+| **Context** | one AMQP connection, the proto registry, the shared dispatchers. Create one per process. | [`lib/context.ts`](../../lib/context.ts) |
+| **Connection** | channels, declarations, bindings, reconnection, the retry ladder | [`lib/connection.ts`](../../lib/connection.ts) |
+| **MessageFactory** | loads `.proto` files; encodes and decodes both layers | [`lib/message_factory.ts`](../../lib/message_factory.ts) |
+| **MessageService** | serves a queue: dispatches RPCs to your methods, subscribes to events | [`lib/message_service.ts`](../../lib/message_service.ts) |
+| **RunnableService** | `MessageService` plus process lifecycle — proto resolution by convention, SIGINT/SIGTERM, non-zero exit on boot failure | [`lib/runnable_service.ts`](../../lib/runnable_service.ts) |
+| **ServiceProxy** | builds method stubs from the proto and calls them over the bus | [`lib/service_proxy.ts`](../../lib/service_proxy.ts) |
+| **Trie** | wildcard topic matching for event subscriptions | [`lib/trie.ts`](../../lib/trie.ts) |
 
 ---
 
@@ -360,6 +360,6 @@ open http://localhost:15672            # guest / guest — the queues above, liv
 
 <div align="center">
 
-**[← Getting Started](./getting-started.md)** · **[Docs index](./README.md)** · **[Configuration →](./configuration.md)**
+**[← Getting Started](../guide/getting-started.md)** · **[Docs index](../README.md)** · **[Configuration →](../reference/configuration.md)**
 
 </div>

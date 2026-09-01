@@ -1,6 +1,26 @@
-# Examples & Common Patterns
+# Patterns
 
-This document covers common patterns and practical examples for protobus.
+> Worked examples assembled from everything in the guide: concurrency, retries, events, service-to-service calls, shutdown and deployment.
+
+**Read this if** you have a service running and want to know the shape of the next thing you are about to build.
+
+| | |
+|---|---|
+| **Prerequisites** | [Getting Started](./getting-started.md) · [Error Handling](./error-handling.md) |
+| **Next** | [Testing](./testing.md) · [Configuration](../reference/configuration.md) |
+| **Source** | [`sample/combatGame`](../../sample/combatGame) — six services doing most of this at once |
+
+**On this page** — [Concurrency](#concurrency-control) · [Retries](#retry-configuration) · [Events](#event-driven-patterns) · [Service to service](#service-to-service-calls) · [Shutdown](#graceful-shutdown-with-cleanup) · [Scaling out](#load-balancing-multiple-instances) · [Configuration](#environment-based-configuration) · [Docker](#docker-deployment) · [Resilience](#resilience-patterns)
+
+> [!NOTE]
+> Most snippets below are written against **CLI-generated types**
+> (`Orders.ServiceName`, `Orders.ICreateOrderRequest`), which is how a real
+> project looks. They are marked as not machine-checked for that reason — the
+> types come from your schema, not from this repository. The
+> [Getting Started](./getting-started.md) examples are executed by CI and are the
+> place to copy runnable code from.
+
+---
 
 ## Concurrency Control
 
@@ -8,6 +28,7 @@ By default, services process messages one at a time. For CPU-bound or I/O-bound 
 
 ### Setting Max Concurrency
 
+<!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 import { RunnableService, Context } from 'protobus';
 import { ImageProcessor } from './common/types/proto';
@@ -66,6 +87,7 @@ Configure automatic retries for transient failures.
 
 ### Basic Retry Setup
 
+<!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 await RunnableService.start(
     context,
@@ -92,6 +114,7 @@ await RunnableService.start(
 
 Use `HandledError` for errors that should not be retried (validation errors, not found, etc.):
 
+<!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 import { HandledError, RunnableService } from 'protobus';
 
@@ -118,6 +141,7 @@ class OrderService extends RunnableService implements Orders.Service {
 
 ### Publishing Events
 
+<!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 class OrderService extends RunnableService implements Orders.Service {
     ServiceName = Orders.ServiceName;
@@ -139,6 +163,7 @@ class OrderService extends RunnableService implements Orders.Service {
 
 ### Subscribing to Events
 
+<!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 class NotificationService extends RunnableService implements Notifications.Service {
     ServiceName = Notifications.ServiceName;
@@ -164,6 +189,7 @@ class NotificationService extends RunnableService implements Notifications.Servi
 
 Use topics for fine-grained event routing:
 
+<!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 // Publisher: include region in topic
 await this.publishEvent('Orders.OrderCreated', orderData, `orders.${order.region}.created`);
@@ -179,6 +205,7 @@ await this.subscribeEvent('Orders.OrderCreated', handler, 'orders.*.*');
 
 ### Calling Another Service
 
+<!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 import { Context, ServiceProxy, RunnableService } from 'protobus';
 
@@ -223,6 +250,7 @@ class CheckoutService extends RunnableService implements Checkout.Service {
 
 ## Graceful Shutdown with Cleanup
 
+<!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 class DatabaseService extends RunnableService implements Database.Service {
     ServiceName = Database.ServiceName;
@@ -258,19 +286,20 @@ RabbitMQ automatically load balances across multiple service instances:
 
 ```bash
 # Terminal 1
-INSTANCE_ID=1 ts-node services/calculator/CalculatorService.ts
+INSTANCE_ID=1 npx tsx services/calculator/CalculatorService.ts
 
 # Terminal 2
-INSTANCE_ID=2 ts-node services/calculator/CalculatorService.ts
+INSTANCE_ID=2 npx tsx services/calculator/CalculatorService.ts
 
 # Terminal 3
-INSTANCE_ID=3 ts-node services/calculator/CalculatorService.ts
+INSTANCE_ID=3 npx tsx services/calculator/CalculatorService.ts
 ```
 
 Requests are distributed round-robin across all instances automatically.
 
 ## Environment-Based Configuration
 
+<!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 class MyService extends RunnableService {
     ServiceName = MyProto.ServiceName;
@@ -338,4 +367,127 @@ services:
 
 ---
 
-Next: [CLI](./cli.md) | [Configuration](./configuration.md)
+## Resilience patterns
+
+These are ordinary application patterns rather than protobus features, and they
+live here so the [Error Handling](./error-handling.md) page can stay about what
+protobus actually does. Use them around a `ServiceProxy` call the same way you
+would around any remote call.
+
+### Retry a call from the caller's side
+
+Protobus retries on the **server**. A caller that wants its own attempts — for a
+timeout, or a service that was briefly not running — needs its own loop, and must
+not retry a terminal failure:
+
+<!-- doc-check: compile -->
+```typescript
+import { isHandledError } from 'protobus';
+
+export async function callWithRetry<T>(
+    fn: () => Promise<T>,
+    maxAttempts = 3,
+    backoffMs = 1000,
+): Promise<T> {
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await fn();
+        } catch (error) {
+            lastError = error;
+            // A HandledError means the same request fails the same way. Stop.
+            if (isHandledError(error)) { throw error; }
+            if (attempt < maxAttempts) {
+                await new Promise((r) => setTimeout(r, backoffMs * 2 ** (attempt - 1)));
+            }
+        }
+    }
+    throw lastError;
+}
+```
+
+> [!WARNING]
+> A caller-side retry stacks on top of the server-side ladder. With the defaults
+> a single `callWithRetry` of three attempts can mean twelve handler invocations
+> and roughly 45 seconds. Decide which layer owns the retry; rarely both.
+
+### Circuit breaker
+
+<!-- doc-check: compile -->
+```typescript
+export class CircuitBreaker {
+    private failures = 0;
+    private openedAt = 0;
+
+    constructor(
+        private readonly threshold = 5,
+        private readonly cooldownMs = 30000,
+    ) {}
+
+    async run<T>(fn: () => Promise<T>): Promise<T> {
+        if (this.failures >= this.threshold) {
+            if (Date.now() - this.openedAt < this.cooldownMs) {
+                throw new Error('circuit open');
+            }
+            this.failures = 0;   // half-open: let one through
+        }
+        try {
+            const result = await fn();
+            this.failures = 0;
+            return result;
+        } catch (error) {
+            this.failures += 1;
+            this.openedAt = Date.now();
+            throw error;
+        }
+    }
+}
+```
+
+### Graceful degradation
+
+When a dependency is optional, answer without it rather than failing the whole
+request — but say so in the response, so the caller can tell a real answer from a
+degraded one:
+
+<!-- doc-check: compile -->
+```typescript
+interface Profile { id: string; recommendations: string[]; degraded: boolean; }
+
+export async function buildProfile(
+    id: string,
+    fetchRecommendations: (id: string) => Promise<string[]>,
+): Promise<Profile> {
+    try {
+        return { id, recommendations: await fetchRecommendations(id), degraded: false };
+    } catch {
+        return { id, recommendations: [], degraded: true };
+    }
+}
+```
+
+### Input validation at the edge
+
+Validate before doing any work, and throw `HandledError` so the message is
+answered rather than retried four times:
+
+<!-- doc-check: compile -->
+```typescript
+import { HandledError } from 'protobus';
+
+export function requireFields<T extends object>(request: T, fields: (keyof T)[]): void {
+    const missing = fields.filter((f) => request[f] === undefined || request[f] === null);
+    if (missing.length) {
+        throw new HandledError(`missing required field(s): ${missing.join(', ')}`, 'VALIDATION_ERROR');
+    }
+}
+```
+
+---
+
+<div align="center">
+
+**[← Testing](./testing.md)** · **[Docs index](../README.md)** · **[CLI →](../reference/cli.md)**
+
+</div>

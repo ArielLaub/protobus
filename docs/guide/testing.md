@@ -152,6 +152,7 @@ Two consequences:
 
 The fix this repo uses is to stamp the service name per run. From [`test/integration/message_priority.test.ts:32`](../../test/integration/message_priority.test.ts):
 
+<!-- doc-check: ignore why="quoted verbatim from the repo's own test; it is a fragment, not a standalone snippet" -->
 ```typescript
 /** Unique per run: queues are durable, and their arguments are immutable. */
 const STAMP = `P${Date.now()}`;
@@ -224,6 +225,7 @@ The callback queue needs no cleanup: it is exclusive and auto-delete, and disapp
 
 ### Disconnect in `afterAll`
 
+<!-- doc-check: ignore why="a jest lifecycle hook; describe/afterAll are not available in the snippet sandbox" -->
 ```typescript
 afterAll(async () => {
     await context.connection.disconnect();
@@ -306,11 +308,11 @@ bash scripts/run-combat-sample.sh
 ```
 
 ```
-==> Result: 47 shots fired, 1 winner(s), 5 eliminated
+==> Result: <n> shots fired, 1 winner(s), 5 eliminated
 PASS: combat game completed with exactly one winner
 ```
 
-The assertions are three lines of shell: non-zero exit fails, `(WINNER!)` must appear exactly once, and at least one `shoots at` must appear — that last one because a run that fires no shots exits cleanly and proves nothing. The header comment states the case for it plainly: this is the only exercise of the framework as a consumer sees it, so a broken decorator, an event that never routes, or a hang on disconnect shows up here as "no winner" or "several winners" when unit and integration tests miss it entirely.
+The shot count varies per run; the other two do not, because the final results block prints one line per player and six players minus one winner is five eliminated. The assertions are three: a non-zero exit fails, `(WINNER!)` must appear exactly once, and at least one `shoots at` must appear — that last one because a run that fires no shots exits cleanly and proves nothing. The header comment states the case for it plainly: this is the only exercise of the framework as a consumer sees it, so a broken decorator, an event that never routes, or a hang on disconnect shows up here as "no winner" or "several winners" when unit and integration tests miss it entirely.
 
 Two mechanics in that script are worth copying if you write your own:
 
@@ -319,7 +321,7 @@ Two mechanics in that script are worth copying if you write your own:
 
 ### `sample/combatGame` is the worked example
 
-Six player services, each a `MessageService` with its own strategy, all in one process: RPC between players, pub/sub for hits and eliminations, and a clean shutdown at the end. It is self-asserting, it is the most complete example in the repo, and no other documentation page points at it.
+Six player services, each a `MessageService` with its own strategy, all in one process: RPC between players (`shoot`), pub/sub for the six event types they each subscribe to, and a disconnect at the end. It is the most complete example in the repo, and the only one that exercises RPC, events and shutdown together — read it before writing your own end-to-end test rather than after.
 
 | | |
 |---|---|
@@ -328,7 +330,7 @@ Six player services, each a `MessageService` with its own strategy, all in one p
 | Services | [`sample/combatGame/players/`](../../sample/combatGame/players) — six strategies over one `BasePlayer` |
 | Run it | `bash scripts/run-combat-sample.sh` |
 
-`GameRunner` also shows the one non-obvious thing about co-locating services: `context.connection.setMaxListeners(50)`, because every player attaches its own reconnection restorer to the shared connection and Node warns at ten.
+`GameRunner` also shows the one non-obvious thing about co-locating services in a test: it calls `context.connection.setMaxListeners(50)` before creating the players, because six services each subscribing to six event types put far more than Node's default ten listeners on the shared connection, and the warning that follows looks like a leak.
 
 For streaming, [`sample/tokenStream`](../../sample/tokenStream) is the equivalent: a server-streaming RPC with a client that consumes it.
 

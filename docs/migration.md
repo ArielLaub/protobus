@@ -19,7 +19,7 @@
 | protobus | Node | RabbitMQ | protobufjs | Notes |
 |---|---|---|---|---|
 | **2.x** | **≥ 20**, declared in `engines` | 3.8+ | 8.x | Unit-tested on 20, 22 and 24; integration-tested against `rabbitmq:3-management-alpine` |
-| 1.x | no `engines` constraint declared | 3.8+ | 7.x | 1.4.0 and 1.4.1 were **unpublished from npm** — they shipped a `.env` with a live token, since revoked |
+| 1.x | no `engines` constraint declared | 3.8+ | 7.x | `1.2.1`–`1.4.1` shipped a `.env` containing a live npm token, since revoked; 1.4.0 and 1.4.1 were **removed from the registry** |
 | 1.4.2, 1.5.0 | — | — | — | **Never published.** Their fixes ship inside 2.0.0, so the real upgrade path is **1.4.1 → 2.x** |
 | 0.x | — | — | — | See [Older upgrades](#older-upgrades) |
 
@@ -35,7 +35,7 @@ Probably yes, and the item at the top of this table is why the page exists. Read
 
 | Change | Breaks | What to do |
 |---|---|---|
-| **proto3 zero values decode as `0` / `""` / `false`** | **Silently, at runtime** | Audit every `?? `, `=== undefined` and `in` against a decoded request. [Details](#the-dangerous-one-proto3-zero-values) |
+| **proto3 zero values decode as `0` / `""` / `false`** | **Silently, at runtime** | Audit every `??`, `=== undefined` and `in` against a decoded request. [Details](#the-dangerous-one-proto3-zero-values) |
 | `publish()` resolves on a broker confirm | At runtime — new latency, new errors | Handle `PublishError` subclasses; stop assuming a publish returns before delivery. [Details](#publish-now-resolves-on-a-broker-confirm) |
 | RPC requests are `mandatory` | At runtime — a new error where there was a timeout | Expect `UnroutableError` when no service is bound. [Details](#rpc-requests-are-published-mandatory) |
 | `ServiceCluster` removed | **At compile time** | One service per process; `RunnableService.start()` |
@@ -157,7 +157,7 @@ function describe(error: unknown): string {
 }
 ```
 
-Every publish carries a stable `messageId` (yours if you supply one) so consumers can deduplicate after an ambiguous outcome. `PUBLISH_CONFIRM_TIMEOUT_MS` (default 30000) and `MAX_OUTSTANDING_CONFIRMS` (default 256) bound how long a confirm is awaited and how much unconfirmed work may be in flight per channel.
+Every publish carries a `messageId`, stable across redeliveries and every retry and DLQ hop, so a consumer can recognise a duplicate. Note the limit: `ServiceProxy` and `Context.publishMessage()` take no `messageId` argument, so a caller that republishes after an ambiguous outcome sends a *new* id — deduplicating that needs an idempotency key of your own inside the request payload. `PUBLISH_CONFIRM_TIMEOUT_MS` (default 30000) and `MAX_OUTSTANDING_CONFIRMS` (default 256) bound how long a confirm is awaited and how much unconfirmed work may be in flight per channel.
 
 Full treatment in [Delivery Guarantees](./concepts/delivery-guarantees.md).
 
@@ -244,7 +244,7 @@ Connections negotiate a 30-second heartbeat unless the URL already carries one (
 
 ## Upgrade checklist
 
-1. **Move to Node 20 or later.** `npm install protobus@2` fails the `engines` check otherwise.
+1. **Move to Node 20 or later.** 2.x declares `engines: { "node": ">=20" }`, so npm reports the mismatch on install — and refuses outright under `engine-strict`.
 2. **Reinstall and rebuild.** protobufjs moves 7.x → 8.x, which also clears a hard `ERESOLVE` between the runtime and `protobufjs-cli`. Regenerate anything produced by `protobus generate-types`.
 3. **Delete `ServiceCluster` usage.** The compiler will find every site. One service per process, started with `RunnableService.start()`.
 4. **Audit the three unsafe operators.** `??`, `=== undefined` / `!== undefined` and `in`, against anything decoded off the bus. This is the step that is worth doing carefully; nothing else on this list can fail silently.
@@ -258,7 +258,7 @@ Connections negotiate a 30-second heartbeat unless the URL already carries one (
 
 ## How to tell you are done
 
-Nothing here needs a broker except the last two.
+Three of these need a running broker; the other two are a compile and a grep.
 
 - **The compiler is green.** That clears `ServiceCluster` and any import that moved. It clears nothing else.
 - **A decoded zero survives a round trip.** Send a request with a scalar explicitly set to `0` / `""` / `false` and assert the handler sees the zero, not a default. This is the regression test for step 4, and it is the one your 1.x suite almost certainly does not have.

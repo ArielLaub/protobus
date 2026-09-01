@@ -361,7 +361,7 @@ The wire format itself uses **only AMQP headers** — no `ResponseContainer` sch
 
 ## See also
 
-- [Message Flow](../message-flow.md) — the underlying unary RPC pipeline this builds on
-- [Error Handling](../advanced/error-handling.md) — `HandledError` and retry semantics, which apply identically to streaming
-- [Configuration](../configuration.md) — `STREAM_IDLE_TIMEOUT_MS` setting
+- [Message Flow](../concepts/message-flow.md) — the underlying unary RPC pipeline this builds on
+- [Error Handling](./error-handling.md) — `HandledError` and retry semantics, which apply identically to streaming
+- [Configuration](../reference/configuration.md) — `STREAM_IDLE_TIMEOUT_MS` setting
 - `sample/tokenStream/` — a runnable token-stream demo with a Stop button, showing how many tokens the server is spared

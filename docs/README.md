@@ -4,10 +4,10 @@
 
 **RabbitMQ-native microservices with Protocol Buffers.**
 
-[![npm](https://img.shields.io/npm/v/protobus.svg)](https://www.npmjs.com/package/protobus)
-[![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
-[![rabbitmq](https://img.shields.io/badge/rabbitmq-3.8%2B-orange.svg)](https://www.rabbitmq.com)
-[![license](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
+[![npm](https://img.shields.io/npm/v/protobus.svg?logo=npm)](https://www.npmjs.com/package/protobus)
+[![node](https://img.shields.io/badge/node-%E2%89%A520-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![RabbitMQ](https://img.shields.io/badge/RabbitMQ-%E2%89%A53.8-FF6600?logo=rabbitmq&logoColor=white)](https://www.rabbitmq.com)
+[![license](https://img.shields.io/npm/l/protobus.svg)](../LICENSE)
 
 </div>
 
@@ -18,10 +18,11 @@
 | I want to… | Go to | Time |
 |---|---|---|
 | **See it work before I read anything** | [Run the sample](#run-the-sample-in-60-seconds) | 1 min |
-| **Decide whether to adopt it** | [Why ProtoBus](../README.md#why-protobus) → [Architecture](./architecture.md) → [Similar Libraries](./similar-libraries.md) | 15 min |
-| **Build my first service** | [Getting Started](./getting-started.md) → [CLI](./cli.md) → [Configuration](./configuration.md) | 30 min |
-| **Look something up** | [API Reference](#api-reference) · [Troubleshooting](./troubleshooting.md) | — |
-| **Upgrade an existing service** | [Migration Guide](./migration.md) · [CHANGELOG](../CHANGELOG.md) | — |
+| **Decide whether to adopt it** | [Why ProtoBus](./why-protobus.md) → [Architecture](./concepts/architecture.md) | 15 min |
+| **Build my first service** | [Getting Started](./guide/getting-started.md) → [CLI](./reference/cli.md) → [Configuration](./reference/configuration.md) | 30 min |
+| **Understand why it is reliable** | [Delivery Guarantees](./concepts/delivery-guarantees.md) | 15 min |
+| **Look something up** | [Reference](#reference) · [Troubleshooting](./operations/troubleshooting.md) | — |
+| **Upgrade an existing service** | [Migration](./migration.md) · [CHANGELOG](../CHANGELOG.md) | — |
 
 ### Run the sample in 60 seconds
 
@@ -34,68 +35,97 @@ bash scripts/run-combat-sample.sh
 Six services fight a battle royale over the bus — RPC, pub/sub events, and clean
 shutdown in one run — and the script asserts exactly one player survived. Open
 <http://localhost:15672> (`guest`/`guest`) to watch the queues while it runs.
+The source is [`sample/combatGame`](../sample/combatGame).
 
 ---
 
-## Learn
+## Guide
 
-Read in this order. Each page assumes the ones above it.
+Read in order. Each page assumes the ones above it.
 
 | # | Page | What it gives you |
 |---|---|---|
-| 1 | **[Getting Started](./getting-started.md)** | A running service and a client that calls it |
-| 2 | **[Architecture](./architecture.md)** | What that service created in the broker, and why |
-| 3 | **[Protobuf Schema Design](./advanced/protobuf-schema.md)** | How to write the `.proto` that is your contract |
-| 4 | **[CLI](./cli.md)** | Generating types and service stubs from it |
-| 5 | **[Configuration](./configuration.md)** | Timeouts, concurrency, reconnection, heartbeats |
-| 6 | **[Error Handling](./advanced/error-handling.md)** | Retriable vs. terminal, the retry ladder, the DLQ |
-| 7 | **[Examples](./examples.md)** | Patterns assembled from all of the above |
+| 1 | **[Getting Started](./guide/getting-started.md)** | A running service, a client that calls it, and an event that arrives |
+| 2 | **[Schema Design](./guide/schema.md)** | Writing the `.proto` that is your contract |
+| 3 | **[Events](./guide/events.md)** | Publish/subscribe, topics and wildcards |
+| 4 | **[Error Handling](./guide/error-handling.md)** | Retriable vs terminal, the retry ladder, the DLQ |
+| 5 | **[Testing](./guide/testing.md)** | Unit, integration and end-to-end, without a broker where possible |
+| 6 | **[Patterns](./guide/patterns.md)** | Worked examples assembled from all of the above |
+| — | [Streaming RPC](./guide/streaming.md) | `returns (stream Chunk)`, backpressure, cancellation |
+| — | [Message Priority](./guide/priority.md) | Letting control messages overtake a bulk backlog |
 
 ---
 
-## API reference
+## Concepts
+
+How it works. Read once, refer back.
+
+| Page | |
+|---|---|
+| **[Architecture](./concepts/architecture.md)** | What a service creates in the broker, and why the design is one queue with N consumers |
+| **[Message Flow](./concepts/message-flow.md)** | The wire format and one round trip in detail |
+| **[Delivery Guarantees](./concepts/delivery-guarantees.md)** | Acks, publish confirms, the retry ladder's headers, duplicates, and the parked caller |
+
+---
+
+## Reference
+
+| Page | |
+|---|---|
+| **[Configuration](./reference/configuration.md)** | Every environment variable and its real default |
+| **[CLI](./reference/cli.md)** | `generate`, `generate:service`, and what they actually emit |
+| **[Errors](./reference/errors.md)** | Every exported error class and the condition that throws it |
+| **[Custom Types](./reference/custom-types.md)** | `BigIntType`, `TimestampType`, and registering your own |
+
+**API**
 
 | Class | Use it to | |
 |---|---|---|
-| **[Context](./api/context.md)** | hold the connection and the proto registry — one per process | |
-| **[MessageService](./api/message-service.md)** | implement a service | base class |
-| **[RunnableService](./api/runnable-service.md)** | implement a service that owns its process | preferred |
-| **[ServiceProxy](./api/service-proxy.md)** | call a remote service | |
-| **[Events](./api/events.md)** | publish and subscribe | |
-| **[Custom Types](./advanced/protobuf-schema.md#built-in-custom-types)** | serialise `BigInt`, timestamps, your own types | |
+| [Context](./reference/api/context.md) | hold the connection and the proto registry — one per process | |
+| [MessageService](./reference/api/message-service.md) | implement a service | base class |
+| [RunnableService](./reference/api/runnable-service.md) | implement a service that owns its process | preferred |
+| [ServiceProxy](./reference/api/service-proxy.md) | call a remote service | |
 
 ---
 
-## Going further
+## Operations
 
-<table>
-<tr><td width="50%" valign="top">
+Running it in production. None of this is advanced; it is mandatory.
 
-**Capabilities**
+| Page | |
+|---|---|
+| **[Troubleshooting](./operations/troubleshooting.md)** | Symptom, cause, fix — start from the error text |
+| **[Security](./operations/security.md)** | What `actor` does *not* prove, and what leaves the process |
+| **[Logging](./operations/logging.md)** | Levels, your own sink, structured records, payload diagnostics |
+| **[Queue Migration](./operations/queue-migration.md)** | Changing settings on a live queue without losing messages |
+| **[Known Issues](./operations/known-issues.md)** | Current limitations |
 
-- [Streaming RPC](./advanced/streaming.md) — `returns (stream Chunk)`, backpressure, cancellation
-- [Message Priority](./advanced/priority.md) — letting control messages overtake a bulk backlog
-- [Structured Logging](./advanced/structured-logging.md) — machine-readable log records
-- [Custom Logger](./advanced/custom-logger.md) — Winston, Pino, Bunyan
+---
 
-</td><td width="50%" valign="top">
+## How this documentation is kept honest
 
-**Operating it**
+Every code block that carries a `doc-check` directive is compiled — and where it
+claims an output, executed against a real broker — on every commit:
 
-- [Security Model](./advanced/security.md) — what `actor` does *not* prove
-- [Queue Migration](./advanced/queue-migration.md) — changing settings on live queues
-- [Troubleshooting](./troubleshooting.md) — symptom → cause → fix
-- [Known Issues](./known-issues.md) — current limitations
+```bash
+node scripts/check-doc-snippets.js     # compile and run the examples
+node scripts/check-doc-links.js        # resolve every relative link and anchor
+```
 
-</td></tr>
-</table>
+Both run in [CI](../.github/workflows/ci.yml). Claims a snippet cannot assert
+about itself (that a recipe does *nothing* without a second line, that a method
+does not exist) are pinned in
+[`test/unit/documented_behaviour.test.ts`](../test/unit/documented_behaviour.test.ts)
+and [`test/unit/trie_documented_examples.test.ts`](../test/unit/trie_documented_examples.test.ts).
+
+If you change a documented behaviour, one of those will tell you.
 
 ---
 
 ## Other languages
 
-The `.proto` files are the contract, and RabbitMQ does the routing — so a port
-only needs protobuf and an AMQP client.
+The `.proto` files are the contract and RabbitMQ does the routing, so a port
+needs only protobuf and an AMQP client.
 
 | Language | Repo | Status |
 |---|---|---|
@@ -104,7 +134,7 @@ only needs protobuf and an AMQP client.
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | experimental |
 
 Differences between ports are recorded per feature — see
-[Priority → Cross-language](./advanced/priority.md#cross-language).
+[Priority → Cross-language](./guide/priority.md#cross-language).
 
 ---
 

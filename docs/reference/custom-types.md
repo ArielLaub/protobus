@@ -133,7 +133,7 @@ export abstract class BillingApi extends RunnableService {
 
 Registration must happen **before the schema that uses the type is parsed**. That is the whole rule; `init()` is not the boundary people assume.
 
-`MessageFactory.init()` builds a fresh root, adds the built-ins, then re-adds everything registered so far, and only then calls `loadSync()` on the proto files ([`lib/message_factory.ts:395`](../../lib/message_factory.ts)). `loadSync` resolves eagerly, so a schema on disk that names an unregistered type fails right there.
+`MessageFactory.init()` builds a fresh root, adds the built-ins, then re-adds everything registered so far, and only then calls `loadSync()` on the proto files ([`lib/message_factory.ts:386`](../../lib/message_factory.ts)). `loadSync` resolves eagerly, so a schema on disk that names an unregistered type fails right there.
 
 | Order | Result |
 |---|---|

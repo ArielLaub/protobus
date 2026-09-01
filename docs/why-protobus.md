@@ -1,4 +1,18 @@
-# Similar Libraries
+# Why ProtoBus
+
+> The case for choosing it, the case against, and how it compares with Moleculer, NestJS and Seneca.
+
+**Read this if** you are deciding whether to adopt protobus, or explaining that decision to someone else.
+
+| | |
+|---|---|
+| **Prerequisites** | none |
+| **Next** | [Getting Started](./guide/getting-started.md) · [Architecture](./concepts/architecture.md) |
+| **Source** | [`lib/`](../lib) |
+
+**On this page** — [The gap](#the-gap-in-nodejs-microservices) · [Framework comparison](#framework-comparison) · [When to choose it](#summary-when-to-choose-protobus) · [Performance](#performance)
+
+---
 
 ## The Gap in Node.js Microservices
 
@@ -196,7 +210,7 @@ Choose something else when:
 
 ## Performance
 
-ProtoBus outperforms Moleculer in all tested scenarios. Benchmarks run on the same hardware with RabbitMQ, using realistic single-publisher patterns:
+In the authors' measurements, ProtoBus outperformed Moleculer in every scenario tested. Both ran on the same hardware against the same RabbitMQ, using a single shared publisher context:
 
 ### Benchmark Results
 
@@ -223,4 +237,25 @@ ProtoBus outperforms Moleculer in all tested scenarios. Benchmarks run on the sa
 
 The "Complex Order" benchmark uses a realistic e-commerce order with nested objects, arrays, and a ~3KB text field. The "Metrics" benchmark simulates time-series ingestion with 3,200 data points per message.
 
-Benchmark code available in the repository. Independent benchmarks welcome!
+> [!WARNING]
+> **These numbers are not reproducible from this repository.** The benchmark
+> harness that produced them was never committed — `find . -iname "*bench*"`
+> returns nothing, and `sample/` holds only `combatGame` and `tokenStream`. An
+> earlier version of this page said "benchmark code available in the repository",
+> which was not true.
+>
+> Treat the table as a recorded result from the authors, not as something you can
+> verify here. Measure your own workload before it matters to you: payload shape
+> dominates, and the gap on a 100-byte message is not the gap on a 139 KB one.
+>
+> Contributing a runnable harness — ideally alongside
+> [`scripts/run-combat-sample.sh`](../scripts/run-combat-sample.sh), so CI could
+> run it — would close this, and is welcome.
+
+---
+
+<div align="center">
+
+**[← Docs index](./README.md)** · **[Docs index](./README.md)** · **[Getting Started →](./guide/getting-started.md)**
+
+</div>

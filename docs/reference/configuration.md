@@ -50,7 +50,7 @@ budget deliberately rather than leaving both at the default.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PROTOBUS_EXPOSE_INTERNAL_ERRORS` | `true` | Send an unhandled error's message back to the caller. See [Security](./advanced/security.md) |
+| `PROTOBUS_EXPOSE_INTERNAL_ERRORS` | `true` | Send an unhandled error's message back to the caller. See [Security](../operations/security.md) |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, or `silent` |
 
 ### Concurrency
@@ -368,4 +368,4 @@ volumes:
 
 ---
 
-Next: [Message Flow](./message-flow.md) | [Architecture](./architecture.md)
+Next: [Message Flow](../concepts/message-flow.md) | [Architecture](../concepts/architecture.md)
