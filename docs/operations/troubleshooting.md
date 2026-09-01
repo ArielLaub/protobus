@@ -477,11 +477,11 @@ Within one process, raise `maxConcurrent` so a replica works on several messages
 while others wait on I/O.
 
 > [!WARNING]
-> There is no `ServiceCluster` in the TypeScript library. Earlier versions of this
-> page showed `cluster.use(MyService, 4)`, which does not exist and never did
-> here — that API belongs to
-> [protobus-py](https://github.com/ArielLaub/protobus-py). Use `maxConcurrent`
-> and more processes.
+> There is no `ServiceCluster` in protobus 2.x. Earlier versions of this page
+> showed `cluster.use(MyService, 4)`, which does not compile: the class was
+> removed in 2.0 (see [Migration](../migration.md#servicecluster-is-gone)), and
+> even in 1.x it took no concurrency argument. Use `maxConcurrent` and more
+> processes.
 
 ---
 
