@@ -9,6 +9,11 @@ onto its own queue. The fan-out is thousands of messages long, and the *next*
 control message — a second start, a cancel, a status request — lands behind all
 of them and breaches its deadline while every replica is healthy and busy.
 
+The shape it was diagnosed in: three control calls issued during one 5,232-
+message drain, all three accepted by the broker, all three timed out at their
+deadline, both replicas connected and consuming the whole time. Nothing was
+broken. The queue was simply one lane, and the lane was full.
+
 Message priority fixes that without a second service and without a second queue:
 the control message is published at a higher priority and overtakes the bulk
 traffic still sitting in the queue.
@@ -58,6 +63,35 @@ more than any known use needs:
 | `Config.PRIORITY_NORMAL` | 0 | Bulk work. Also what an unset priority means. |
 | `Config.PRIORITY_HIGH` | 1 | Spare rung. |
 | `Config.PRIORITY_CONTROL` | 2 | Control messages that must not queue behind bulk. |
+
+#### Why three levels, and why named
+
+The set is deliberately small and deliberately fixed. Four reasons, in the
+order they carry weight:
+
+- **A priority level is not free.** RabbitMQ builds internal data structures per
+  level, so `x-max-priority: 10` costs memory and throughput for seven levels
+  nobody publishes to. [RabbitMQ's own
+  documentation](https://www.rabbitmq.com/docs/priority) recommends keeping the
+  number small for exactly this reason.
+- **Three covers the distinction that actually exists.** Bulk work, elevated,
+  control. `PRIORITY_HIGH` is already a spare rung, kept because leaving a gap
+  is cheaper than a migration later.
+- **A named constant documents itself at the call site.** `priority: 2` in a
+  publish tells a reader nothing; `priority: Config.PRIORITY_CONTROL` tells them
+  why the call is there. Values are integers on the wire, but callers should not
+  be writing integers.
+- **A fixed set keeps the two ports identical.** TypeScript and
+  [protobus-py](https://github.com/ArielLaub/protobus-py) services talk to each
+  other over the same queues, so the levels have to mean the same thing in both;
+  a per-project priority vocabulary is a per-project disagreement waiting to
+  happen.
+
+Underneath all four: priority is a coarse instrument. It only reorders what is
+still **in the queue** (see [What priority does not
+do](#what-priority-does-not-do)), so a wide range invites callers to encode a
+fine-grained scheduling policy into a mechanism that cannot honour it. Two
+neighbouring levels rarely produce two distinguishable outcomes.
 
 ### 2. Publish with a `priority`
 
@@ -113,7 +147,9 @@ regardless of what arrives later. With prefetch `N` across `R` replicas, up to
 The integration test in `test/integration/message_priority.test.ts` is written
 to show this rather than hide it: with prefetch 1, a control message published
 *after* 20 bulk messages is handled **second**, not first. The one ahead of it
-is the one already in the consumer's hands.
+is the one already in the consumer's hands. That test counts messages;
+`message_priority_latency.test.ts` times them, which turns out to matter — see
+[The count is not the wait](#the-count-is-not-the-wait).
 
 So the honest claim is a change of scale, not a guarantee:
 
@@ -122,13 +158,13 @@ So the honest claim is a change of scale, not a guarantee:
 | Without priority | the whole backlog — thousands |
 | With priority | at most `maxConcurrent × replicas` — typically single digits |
 
-If you need a hard bound rather than a large improvement, priority is not the
-mechanism; lowering `maxConcurrent` tightens it further, at a throughput cost.
+If you need a hard bound on that *count* rather than a large improvement,
+priority is not the mechanism. But the count is rarely what you actually care
+about — see [The count is not the wait](#the-count-is-not-the-wait) below.
 
-**Conversely, a large `maxConcurrent` erodes the benefit**, and when the
-consumer is saturated the bound above is not merely an upper limit — it is an
-equality. Measured, one replica, a 50-message backlog, only the prefetch
-varying, with every prefetched delivery held in its handler:
+When the consumer is saturated the bound above is not merely an upper limit —
+it is an equality. Measured, one replica, a 50-message backlog, only the
+prefetch varying, with every prefetched delivery held in its handler:
 
 | `maxConcurrent` | Control message handled at |
 |---:|---|
@@ -137,13 +173,8 @@ varying, with every prefetched delivery held in its handler:
 | 20 | index **20** |
 
 The control message emerges at *exactly* the prefetch. Independently reproduced
-in protobus-py, which measured the same equality plus `max_concurrent=100`
-against a 50-message backlog landing the control message at index 50 — the
-whole backlog prefetched, priority fully inert.
-
-So `maxConcurrent` is not an independent tuning knob once priority is in play:
-it **is** the width of the window priority cannot see into, and raising it for
-throughput widens that window by exactly the amount you raise it.
+in protobus-py, which measured the same equality at `max_concurrent` 1, 5 and
+20.
 
 **The equality holds while the consumer is saturated** — that is, while all
 `maxConcurrent` slots are genuinely occupied by in-flight handlers. That is the
@@ -156,6 +187,49 @@ case is not a problem — a backlog that drains in milliseconds is not a backlog
 but it does mean a benchmark with a fast handler measures something other than
 this limit.
 
+### The count is not the wait
+
+The obvious reading of that table is that a large `maxConcurrent` erodes the
+benefit: twenty messages ahead of you must mean twenty task durations of
+waiting. That reading is wrong, and it is worth being exact about why, because
+it leads to precisely the wrong tuning decision.
+
+**Those prefetched messages are being worked concurrently.** They are not
+queued in front of the control message, they are running *beside each other*.
+The control message waits for **one slot to free** — about one task duration —
+whether that slot is one of three or one of thirty.
+
+And the more slots there are, the more often one of them frees, so extra
+parallelism can only shorten that wait — never lengthen it. Measured against a
+live broker, one replica, a 30-message backlog of one-second handlers — the
+[worked example](#a-worked-example) below:
+
+| `maxConcurrent` | Control message at | Handled after | Whole batch |
+|---:|---:|---:|---:|
+| 3 | index 3 | **965 ms** | 9.1 s |
+| 10 | index 10 | **967 ms** | 2.0 s |
+| 3, no priority | index 30 | **9,993 ms** | 10.0 s |
+
+The index tripled with the prefetch. The wait moved by two milliseconds, which
+is noise — and two milliseconds is the *floor*, not a coincidence: in a flood
+every slot starts at once and so frees at once, one task duration later. In
+steady state, with completions staggered across the slots, a slot frees more
+often than that and the control message is picked up sooner still.
+
+So `maxConcurrent` is the width of the window priority cannot see into measured
+*in messages* — and that width costs no time. Tune it for throughput; it is not
+a priority knob, and turning it down to "tighten" the bound buys a smaller
+number and a slower service.
+
+**Where priority genuinely does nothing is the other end**: a prefetch large
+enough that the entire backlog has already been dispatched. Nothing is left in
+the queue, so there is nothing to reorder and the control message is handled in
+publish order like everything else. protobus-py measured this directly —
+`max_concurrent=100` against a 50-message backlog put the control message at
+index 50, priority fully inert. The condition is not "a large prefetch", it is
+"a prefetch that is large relative to the backlog", and a backlog smaller than
+the prefetch is by definition not the problem this feature solves.
+
 Two more limits worth knowing:
 
 - **Priority is per queue, not global.** It orders one service's own queue and
@@ -164,6 +238,78 @@ Two more limits worth knowing:
   traffic never stops, the bulk backlog never drains. This is fine for control
   traffic, which is rare by definition, and a hazard if you promote a whole
   traffic class.
+
+## A worked example
+
+The numbers above come from `test/integration/message_priority_latency.test.ts`,
+which is written to be read as the example for this page. Run it with a broker
+up:
+
+```bash
+docker compose up -d --wait
+npx jest --config jest.integration.config.js test/integration/message_priority_latency.test.ts
+```
+
+The service is the shape the feature exists for: one expensive method that
+fills the queue and one cheap one that has to get through anyway, sharing the
+single queue a protobus service has.
+
+```typescript
+class WorkService extends MessageService {
+    constructor(context: IContext, prefetch: number, maxPriority?: number) {
+        super(context, { maxConcurrent: prefetch, maxPriority });
+    }
+
+    /** The bulk work: a second of it, per message. */
+    public async slow(request: any): Promise<any> {
+        await sleep(1000);
+        return { tag: request.tag };
+    }
+
+    /** The control call: cheap, and latency-sensitive. */
+    public async fast(request: any): Promise<any> {
+        return { tag: request.tag };
+    }
+}
+```
+
+Flood the slow method, wait until every prefetch slot is genuinely busy — the
+test asserts this rather than assuming it, because an unsaturated consumer just
+drains the backlog and the run measures nothing — then send the control call:
+
+```typescript
+for (let i = 0; i < 30; i++) {
+    await proxy.slow(
+        { tag: `bulk-${i}` }, undefined, false, undefined,
+        { priority: Config.PRIORITY_NORMAL },
+    );
+}
+// ... 30 seconds of work, three slots, all three busy ...
+
+await proxy.fast(
+    { tag: 'CONTROL' }, undefined, false, undefined,
+    { priority: Config.PRIORITY_CONTROL },
+);
+```
+
+Measured against RabbitMQ 3, one replica:
+
+```
+prefetch 3, priority:     control handled after   965ms, at index  3 of 31; whole batch  9055ms
+prefetch 10, priority:    control handled after   967ms, at index 10 of 31; whole batch  2031ms
+prefetch 3, no priority:  control handled after  9993ms, at index 30 of 31; whole batch 10040ms
+```
+
+Which is the whole feature in three lines: **about a second**, because that is
+how long it takes for one of the parallel slots to free, against ten seconds of
+waiting for the batch to finish. Tripling the prefetch tripled the index and
+left the wait alone.
+
+The third line is also the mutation check — the identical scenario with the
+priority taken off the call — and it is a real test, not a snippet: dropping
+`{ priority: Config.PRIORITY_CONTROL }` from the first case takes it from 965 ms
+to 9,999 ms and fails its assertion, and so does leaving the priority on the
+call while dropping `maxPriority` from the queue. Both halves are load-bearing.
 
 ## Backward compatibility
 

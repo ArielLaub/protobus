@@ -10,6 +10,13 @@
  *     ignored, not rejected (new publisher → old consumer), and
  *   - adding `x-max-priority` to a queue that already exists is a 406 that
  *     closes the channel (which is why enabling it needs an operator).
+ *
+ * Everything here is measured in message ORDER: how many bulk messages are
+ * handled before the control message. That is the right unit for the ordering
+ * guarantee and the wrong unit for "how long did the caller wait", because the
+ * messages ahead of it run concurrently. message_priority_latency.test.ts
+ * measures the clock instead; read the two together before concluding anything
+ * about what a prefetch costs.
  */
 
 import * as amqplib from 'amqplib';
