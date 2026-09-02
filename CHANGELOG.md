@@ -60,6 +60,32 @@ that appear in public signatures are now exported.
 
 ### Fixed
 
+- **A streaming call that times out idle returns its bytes to the process-wide
+  allowance.** The idle-timeout handler set `stream.bufferedBytes = 0` and then
+  called `cancel()` — but `cancel()` is what performs the release, so it
+  subtracted zero. The memory itself was freed, so nothing leaked in the heap;
+  what leaked was the *accounting*. `totalBufferedBytes` kept counting every
+  abandoned stream forever, and once enough had timed out, healthy streams
+  started failing with `StreamBackpressureError` against a process-wide bound
+  they were nowhere near. Measured against a real broker in
+  [#28](https://github.com/ArielLaub/protobus/issues/28): `0 → 2076 → 2076`,
+  the count never dropping after the timeout. A reconnection resets the counter,
+  which is what made this look intermittent and environment-dependent rather
+  than monotonic. One function now owns the release. The other four release
+  sites were checked and were already correct.
+- **`stopConsuming()` cannot be undone by a reconnection.** It opened with
+  `if (!this.consumerTag) return;`, and only past that guard cleared
+  `_wasStarted` and detached the restorer. But `_onDisconnected()` deliberately
+  clears `consumerTag` while preserving `_wasStarted`, so that a listener comes
+  back when the broker does — which meant a SIGTERM arriving while RabbitMQ was
+  disconnected returned immediately, leaving the listener still enrolled in
+  restoration. A reconnection inside the drain window then saw
+  `_wasStarted === true` and started consuming again, in a process that was
+  shutting down — violating the first step of `RunnableService`'s shutdown
+  contract, "stop taking new work". The shutdown state is now recorded
+  unconditionally and first; only the broker-side `cancel()` is conditional on
+  there being a tag and a channel to use. Still safe to call more than once and
+  safe when already disconnected, as its contract promises.
 - **Every error class sets its own `name`.** Twenty-four did not: declared as
   `class Foo extends Error {}`, they inherited `name` from `Error.prototype`
   and reported the literal string `'Error'`. That is the first thing
@@ -164,6 +190,33 @@ stack trace.
   is now dropped. Forwarding it is not expressible while this package compiles
   against `lib: ES2020`, where `Error` takes one argument and `ErrorOptions`
   does not exist; it will come back with the lib bump.
+
+### Documentation
+
+- **The security guide no longer claims that ordinary RabbitMQ permissions
+  restrict routing keys.** `set_permissions`'s configure/write/read regexes
+  match **resource names** — exchanges and queues — and every RPC publisher
+  writes to the one shared `proto.bus` exchange, so write access to that
+  exchange authorises any `REQUEST.*` key for any service. Restricting routing
+  keys needs `set_topic_permissions`, a separate mechanism that must be
+  configured explicitly; with none defined, publishing to a topic exchange is
+  always authorised once resource access passes
+  ([RabbitMQ access control](https://www.rabbitmq.com/docs/access-control)).
+  The guide had been recommending per-service users as though isolation
+  followed automatically. It now names both controls, with an example, and says
+  how they compose with the routing-key/method binding added in 2.1.0 — which
+  is real defence in depth, but only once the broker side is actually
+  configured. Five other places in the repo already said "topic permissions"
+  correctly; the security guide was the lone dissenter.
+- **Known Issues records that a failing event handler loses the event.** Event
+  listeners ack late but register no retry options, so a throw takes the
+  no-retry branch and the delivery is rejected without requeue: no retry ladder,
+  no DLQ. This is deliberate — rejecting is what keeps the consumer alive
+  instead of stalling the whole listener behind one permanently-failing event —
+  and was already set out under delivery guarantees, but Known Issues listed
+  only cooperative cancellation and missing tracing, and this is more
+  consequential than either. Recorded as a limitation, with a pointer to the
+  full treatment.
 
 ### Assessed and rejected
 
