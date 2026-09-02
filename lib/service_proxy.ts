@@ -56,9 +56,35 @@ export default class ServiceProxy {
      */
     private resolveContract(): string {
         const factory = this.context.factory;
+        // An uninitialised factory has no root, so hasService() answers false
+        // for everything and the trim below would blame the .proto for a
+        // schema that was simply never loaded.
+        if (!factory.root) {
+            throw new InvalidServiceNameError(
+                `cannot resolve '${this.serviceName}': the message factory has not been ` +
+                'initialised, so no schema is loaded yet. Await Context.init() before ' +
+                'constructing a proxy.',
+            );
+        }
         let candidate = this.serviceName;
         for (;;) {
-            if (factory.hasService(candidate)) return candidate;
+            if (factory.hasService(candidate)) {
+                if (candidate !== this.serviceName) {
+                    // Said out loud, because trimming is a guess. A name whose
+                    // intended service is absent but which has an unrelated
+                    // service as a prefix resolves to that ancestor and takes
+                    // ITS method set — every call then fails with
+                    // UnroutableError, because the server binds
+                    // REQUEST.<ServiceName>.* and that is a single-segment
+                    // wildcard. One line at startup is the difference between
+                    // that and a mystery.
+                    Logger.info(
+                        `service proxy '${this.serviceName}' resolved to contract ` +
+                        `'${candidate}'; requests will route to REQUEST.${this.serviceName}.*`,
+                    );
+                }
+                return candidate;
+            }
             const cut = candidate.lastIndexOf('.');
             if (cut <= 0) {
                 throw new InvalidServiceNameError(

@@ -64,6 +64,9 @@ export interface CallOptions {
     messageId?: string;
 }
 
+/** AMQP carries `message-id` as a shortstr: one length byte, so 255 max. */
+const MAX_MESSAGE_ID_BYTES = 255;
+
 /** A `messageId` was supplied that cannot identify anything. */
 export class InvalidMessageIdError extends Error {
     constructor(message: string) {
@@ -85,6 +88,19 @@ function validateMessageId(messageId: unknown): string | undefined {
         throw new InvalidMessageIdError(
             `messageId must be a non-empty string, got ${JSON.stringify(messageId)}. `
             + 'Leave it unset to have one generated.',
+        );
+    }
+    // AMQP carries message-id as a shortstr. amqplib refuses anything longer
+    // from deep inside the publish path, as a bare TypeError with no
+    // correlationId and no routing key — so the bound is checked here, where
+    // the caller's own value is still in hand. Bytes, not characters: an id
+    // with any non-ASCII in it is longer on the wire than it looks.
+    const bytes = Buffer.byteLength(messageId, 'utf8');
+    if (bytes > MAX_MESSAGE_ID_BYTES) {
+        throw new InvalidMessageIdError(
+            `messageId is ${bytes} bytes; AMQP carries message-id as a shortstr, `
+            + `so it must be at most ${MAX_MESSAGE_ID_BYTES}. Hash a long key rather than `
+            + 'concatenating it.',
         );
     }
     return messageId;

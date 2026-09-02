@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import MessageDispatcher from '../../lib/message_dispatcher';
+import Connection from '../../lib/connection';
 import { InvalidPriorityError } from '../../lib/priority';
 import Config from '../../lib/config';
 
@@ -72,18 +73,59 @@ describe('CallOptions.messageId', () => {
         expect(published.map((p: any) => p.props.messageId)).toEqual([id, id]);
     });
 
-    it('still mints a fresh id when the caller supplies none', async () => {
+    it('sets no messageId property when the caller supplies none', async () => {
+        // The dispatcher must leave the property ABSENT rather than setting
+        // undefined or a constant, because the connection layer's
+        // `properties.messageId || randomUUID()` is what mints the default and
+        // it only runs when nothing is there. The minting itself is asserted
+        // against the real publish path below, not against this fake.
         const published: any[] = [];
         const dispatcher = await dispatcherWith(published);
 
         await dispatcher.publish(Buffer.from('body'), 'REQUEST.Svc.Api.doThing', false);
-        await dispatcher.publish(Buffer.from('body'), 'REQUEST.Svc.Api.doThing', false);
 
-        // Minted by the connection layer, which this fake stands in for, so
-        // the property is simply absent here — the point is that nothing is
-        // pinned to a constant.
-        expect(published[0].props.messageId).toBeUndefined();
-        expect(published[1].props.messageId).toBeUndefined();
+        expect(Object.prototype.hasOwnProperty.call(published[0].props, 'messageId')).toBe(false);
+    });
+
+    it('the connection layer mints a distinct id per publish when none is given', async () => {
+        // The real minting path, driven through Connection.publish with a fake
+        // channel, so the documented default is actually exercised somewhere.
+        const conn = new Connection();
+        const seen: any[] = [];
+        const channel: any = {
+            publish(_e: string, _rk: string, _c: Buffer, options: any, cb?: any) {
+                seen.push(options);
+                if (cb) { setImmediate(() => cb(null)); }
+                return true;
+            },
+            once() { return this; },
+        };
+
+        await conn.publish(channel, 'proto.bus', 'REQUEST.Svc.Api.doThing', Buffer.from('a'), {});
+        await conn.publish(channel, 'proto.bus', 'REQUEST.Svc.Api.doThing', Buffer.from('b'), {});
+
+        expect(typeof seen[0].messageId).toBe('string');
+        expect(seen[0].messageId).not.toBe(seen[1].messageId);
+    });
+
+    it('the connection layer keeps a caller supplied id instead of minting', async () => {
+        const conn = new Connection();
+        const seen: any[] = [];
+        const channel: any = {
+            publish(_e: string, _rk: string, _c: Buffer, options: any, cb?: any) {
+                seen.push(options);
+                if (cb) { setImmediate(() => cb(null)); }
+                return true;
+            },
+            once() { return this; },
+        };
+
+        await conn.publish(
+            channel, 'proto.bus', 'REQUEST.Svc.Api.doThing', Buffer.from('a'),
+            { messageId: 'caller-chosen' } as any,
+        );
+
+        expect(seen[0].messageId).toBe('caller-chosen');
     });
 
     it('refuses an empty id rather than silently minting a UUID instead', async () => {
@@ -108,5 +150,48 @@ describe('CallOptions.messageId', () => {
             { priority: 999, messageId: 'x' } as any,
         )).rejects.toThrow(InvalidPriorityError);
         expect(Config.PRIORITY_NORMAL).toBe(0);
+    });
+});
+
+/**
+ * AMQP carries `message-id` as a shortstr, so amqplib refuses anything over
+ * 255 bytes with `TypeError: Field 'messageId' is the wrong type; must be a
+ * string (up to 255 chars)` — raised deep inside the publish path and reported
+ * as an opaque TypeError. The whole point of validating here is that a bad
+ * caller-derived id fails at the API boundary with a typed error, and an id
+ * built by concatenating request fields or base64-ing a hash goes over 255
+ * easily.
+ */
+describe('CallOptions.messageId length', () => {
+    it('refuses an id longer than the AMQP shortstr limit', async () => {
+        const published: any[] = [];
+        const dispatcher = await dispatcherWith(published);
+
+        await expect(dispatcher.publish(
+            Buffer.from('body'), 'REQUEST.Svc.Api.doThing', false, undefined,
+            { messageId: 'x'.repeat(256) },
+        )).rejects.toThrow(/255/);
+        expect(published).toHaveLength(0);
+    });
+
+    it('measures the limit in BYTES, not characters', async () => {
+        // 200 Hebrew characters are 400 bytes on the wire. Counting characters
+        // would let this through to fail at the broker instead.
+        const published: any[] = [];
+        const dispatcher = await dispatcherWith(published);
+
+        await expect(dispatcher.publish(
+            Buffer.from('body'), 'REQUEST.Svc.Api.doThing', false, undefined,
+            { messageId: 'ש'.repeat(200) },
+        )).rejects.toThrow(/255/);
+    });
+
+    it('accepts an id exactly at the limit', async () => {
+        const published: any[] = [];
+        const dispatcher = await dispatcherWith(published);
+        const id = 'x'.repeat(255);
+
+        await dispatcher.publish(Buffer.from('body'), 'REQUEST.Svc.Api.doThing', false, undefined, { messageId: id });
+        expect(published[0].props.messageId).toBe(id);
     });
 });

@@ -28,7 +28,18 @@ function sourceFiles(dir: string): string[] {
 
 const FILES = sourceFiles(LIB);
 const SOURCES = new Map(FILES.map((f) => [f, fs.readFileSync(f, 'utf8')]));
-const ALL_SOURCE = [...SOURCES.values()].join('\n');
+
+/**
+ * Comments stripped before the "is it constructed" scan, so a class that only
+ * appears in a JSDoc `@example` does not count as thrown. Several of these
+ * classes are documented with an example that constructs them, which would
+ * have made the check pass for a name nothing raises — the exact thing it
+ * exists to catch.
+ */
+function withoutComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+const ALL_SOURCE = [...SOURCES.values()].map(withoutComments).join('\n');
 
 interface Declared { file: string; name: string; base: string }
 
@@ -58,14 +69,25 @@ function constructedAnywhere(name: string, seen = new Set<string>()): boolean {
         .some((c) => constructedAnywhere(c.name, seen));
 }
 
-/** Is the declaration preceded by an `@deprecated` JSDoc tag? */
+/**
+ * Is the declaration's OWN doc comment marked `@deprecated`?
+ *
+ * The comment has to be the one immediately above the class, with nothing but
+ * whitespace between where it ends and the declaration begins. Otherwise an
+ * unrelated comment further up the file could vouch for a class it has nothing
+ * to do with.
+ */
 function isDeprecated(c: Declared): boolean {
     const src = SOURCES.get(c.file)!;
     const at = src.indexOf(`export class ${c.name} extends`);
-    const preceding = src.slice(Math.max(0, at - 1200), at);
-    const lastComment = preceding.lastIndexOf('/**');
-    if (lastComment === -1) return false;
-    return preceding.slice(lastComment).includes('@deprecated');
+    if (at === -1) return false;
+    const preceding = src.slice(0, at);
+    const closes = preceding.lastIndexOf('*/');
+    if (closes === -1) return false;
+    if (preceding.slice(closes + 2).trim() !== '') return false; // not adjacent
+    const opens = preceding.lastIndexOf('/**', closes);
+    if (opens === -1) return false;
+    return preceding.slice(opens, closes).includes('@deprecated');
 }
 
 describe('exported error classes are reachable by a catch', () => {

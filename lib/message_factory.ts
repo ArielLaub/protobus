@@ -131,6 +131,18 @@ export {
 export { BigIntMessage, TimestampMessage };
 export { bigintToBytes, bytesToBigint, BigIntType, TimestampType } from './custom_types';
 
+/**
+ * A detached copy of a built-in custom type's protobuf definition.
+ *
+ * Roots take ownership of what is added to them, so anything shared between
+ * factories has to be copied rather than added. Round-tripping through JSON is
+ * how protobufjs itself clones a type, and the definition is two fields deep.
+ */
+function builtinTypeCopy(MessageClass: typeof Message): protoBuf.Type {
+    const declared = (MessageClass as any).$type as protoBuf.Type;
+    return protoBuf.Type.fromJSON(declared.name, declared.toJSON());
+}
+
 // Helper to preprocess objects before encoding - converts custom type values
 function preprocessForEncode(obj: any, messageType: protoBuf.Type, registeredTypes: Map<string, typeof Message>): any {
     if (obj === null || obj === undefined) return obj;
@@ -412,6 +424,14 @@ export default class MessageFactory {
         const known = this.registeredTypes.get(customType.name);
         if (known) {
             refreshCustomTypeCodec(customType);
+            // The map is bookkeeping; the ROOT is what can actually encode.
+            // Returning without checking would let registerType report success
+            // on a factory whose root does not hold the type — and since the
+            // docs point people here to make sure a type is registered, that
+            // is the one place a silent no-op would be believed.
+            if (this.isInitialized && this.root && !this.hasType(customType.name)) {
+                this.root.add((known as any).$type);
+            }
             return known;
         }
 
@@ -443,10 +463,26 @@ export default class MessageFactory {
         // the "already parsed" memo must start empty alongside it.
         this.parsedSchemas.clear();
 
-        this.root.add((BigIntMessage as any).$type);
+        // A COPY of each built-in, never the shared object itself.
+        //
+        // BigIntMessage.$type and TimestampMessage.$type are module-level
+        // singletons, and protobufjs's Namespace.add reparents — it removes
+        // the object from its previous parent. Adding the singleton meant the
+        // second MessageFactory.init() in a process took `bigint` and
+        // `timestamp` out of the FIRST factory's root. Schemas that factory
+        // had already parsed kept working, because protobufjs resolves fields
+        // eagerly, so nothing failed until it parsed a new one — which then
+        // died at encode time with `no such Type or Enum 'bigint'`, in a
+        // factory that had done nothing wrong. Two Contexts in one process is
+        // all it takes.
+        //
+        // The registeredTypes map still holds the singleton CLASS, which is
+        // what preprocessForEncode instantiates; only the root's copy of the
+        // type definition is per factory.
+        this.root.add(builtinTypeCopy(BigIntMessage));
         this.registeredTypes.set('bigint', BigIntMessage);
 
-        this.root.add((TimestampMessage as any).$type);
+        this.root.add(builtinTypeCopy(TimestampMessage));
         this.registeredTypes.set('timestamp', TimestampMessage);
 
         // Register any types that were added before init
@@ -477,6 +513,22 @@ export default class MessageFactory {
 
         this.isInitialized = true;
         Logger.debug('message factory initialized');
+    }
+
+    /**
+     * True if the given fully-qualified type is in this factory's root.
+     *
+     * The counterpart of `hasService`, and the only way to ask whether a
+     * custom type is actually usable here: `registerType` returning a class
+     * says a name is known to the process, not that this root can encode it.
+     */
+    public hasType(fullName: string): boolean {
+        if (!this.root) return false;
+        try {
+            return !!this.root.lookupType(fullName);
+        } catch {
+            return false;
+        }
     }
 
     /** True if the given fully-qualified service is already in the root. */

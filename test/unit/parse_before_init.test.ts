@@ -31,17 +31,21 @@ describe('MessageFactory.parse before init', () => {
         expect(() => factory.parse(proto, 'Silent.Service')).toThrow(/init/i);
     });
 
-    it('is why the schema was missing afterwards', () => {
-        // The behaviour the throw replaces, kept as the reason it exists: a
-        // schema parsed before init() is nowhere to be found once init() runs.
+    it('leaves the factory untouched, rather than half-registering the schema', () => {
+        // The throw must happen BEFORE any bookkeeping, or a caller who
+        // catches it is left with a factory that believes it holds a schema
+        // its root has never seen — the same map-versus-root divergence the
+        // built-in types suffered.
         const factory = new MessageFactory();
-        try {
-            factory.parse(proto, 'Silent.Service');
-        } catch {
-            // expected now; was silent before
-        }
+        expect(() => factory.parse(proto, 'Silent.Service')).toThrow(NotInitializedError);
+
         factory.init([]);
         expect(factory.hasService('Silent.Service')).toBe(false);
+
+        // And re-parsing in the right order still works: the failed attempt
+        // must not have memoised the schema text as already registered.
+        factory.parse(proto, 'Silent.Service');
+        expect(factory.hasService('Silent.Service')).toBe(true);
     });
 
     it('works in the supported order', () => {

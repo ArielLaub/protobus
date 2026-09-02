@@ -9,9 +9,14 @@ import Connection, { MessageHandler, ConsumeRetryOptions } from '../../lib/conne
  * 2.2.0 fixed `priority` this way. `contentType` was lost in exactly the same
  * place and for exactly the same reason, which says the republish sites were
  * never audited as a *set*. So this suite asserts the whole set: every
- * property present on the original either survives the hop, or appears in
- * DELIBERATELY_DROPPED with a reason. A property added later to the publish
- * path fails here until someone decides which it is.
+ * property in ORIGINAL_PROPERTIES either survives the hop, or appears in
+ * DELIBERATELY_DROPPED with a reason.
+ *
+ * Note the limit of that guard. ORIGINAL_PROPERTIES is written out by hand
+ * here, so it catches a property that stops being carried — not one that is
+ * newly added to the publish path, which stays invisible until someone adds
+ * it here too. AMQP 0-9-1 has a closed set of message properties, so the list
+ * only has to move when amqplib does.
  */
 
 class FakeChannel {

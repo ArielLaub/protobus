@@ -76,12 +76,19 @@ describe('dead-letter metadata', () => {
             client.slowMethod({ action: 'hang' }, undefined, true, 2500, { messageId: CALLER_MESSAGE_ID }),
         ).rejects.toThrow();
 
-        // Give the DLQ hop time to land after the second failure.
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
+        // Polled rather than slept on. The DLQ hop lands some time after the
+        // second failure, and a fixed wait is the usual first thing to break
+        // on a loaded CI box — too short and the suite fails for a reason that
+        // has nothing to do with what it asserts.
         const raw = await amqplib.connect(AMQP);
         const ch = await raw.createChannel();
-        dlqMessage = await ch.get(`${SERVICE}.DLQ`, { noAck: true });
+        const deadline = Date.now() + 15000;
+        dlqMessage = false;
+        while (Date.now() < deadline) {
+            dlqMessage = await ch.get(`${SERVICE}.DLQ`, { noAck: true });
+            if (dlqMessage !== false) break;
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
         await ch.close();
         await raw.close();
     }, 30000);

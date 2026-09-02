@@ -27,7 +27,7 @@ describe('MessageFactory.registerType is idempotent', () => {
         expect(second).toBe(first);
     });
 
-    it('a second factory can register the same custom type', () => {
+    it('a second factory can register the same custom type, and neither loses anything', () => {
         const uuid: ICustomType<string> = {
             name: 'idem_uuid',
             wireType: 'bytes',
@@ -42,6 +42,15 @@ describe('MessageFactory.registerType is idempotent', () => {
         const b = new MessageFactory();
         b.init([]);
         expect(() => b.registerType(uuid)).not.toThrow();
+
+        // Not just "did not throw". protobufjs's Namespace.add REPARENTS, so
+        // the second factory can quietly take a type out of the first one's
+        // root — which is exactly what the built-ins used to suffer, and what
+        // a bare not.toThrow() here failed to catch.
+        expect(a.hasType('idem_uuid')).toBe(true);
+        expect(b.hasType('idem_uuid')).toBe(true);
+        expect(a.hasType('bigint')).toBe(true);
+        expect(a.hasType('timestamp')).toBe(true);
     });
 
     it('a later registration still replaces the codec', () => {

@@ -78,6 +78,26 @@ that appear in public signatures are now exported.
   properties had gone the same way. They are now one named list,
   `CARRIED_PROPERTIES`, with `deliveryMode`, `expiration` and `userId`
   deliberately excluded for reasons recorded beside it.
+- **A second `MessageFactory` no longer steals the built-in custom types from
+  the first.** `BigIntMessage.$type` and `TimestampMessage.$type` are
+  module-level singletons and protobufjs's `Namespace.add` *reparents*, so the
+  second `init()` in a process took `bigint` and `timestamp` out of the first
+  factory's root. Schemas that factory had already parsed kept working, because
+  protobufjs resolves fields eagerly — so nothing failed until it parsed a new
+  one, which then died at encode time with `no such Type or Enum 'bigint'`, in
+  a factory that had done nothing wrong. Two `Context`s in one process is all
+  it takes: a gateway bridging two vhosts, a test harness, a service rebuilding
+  its context. Each root now gets its own copy of the built-ins, so there is
+  nothing shared left to reparent. Found reviewing the `registerType` change
+  above, which had removed the accidental repair the old code performed.
+- **`registerType` verifies the root, not just its own bookkeeping.** Its
+  return value is the caller's only signal that a type is usable, and the docs
+  now point people here to make sure one is registered, so it must not report
+  success while the root lacks the type.
+- **`CallOptions.messageId` is bounded at 255 bytes**, which is what AMQP's
+  `shortstr` holds. A longer id — easy to produce by concatenating request
+  fields — was refused by amqplib from deep inside the publish path as a bare
+  `TypeError` naming neither the call nor the id.
 - **A failed error reply can no longer strand a message short of the DLQ.**
   Every terminal path answered the caller and then settled the message — reply,
   DLQ, ack; or reply, reject — on one `await` chain, so a reply publish that
@@ -116,6 +136,34 @@ that appear in public signatures are now exported.
   rather than raising, and iterating after `return()` reports `done` because the
   async-iterator protocol requires it. Repurposing any of those would change
   behaviour callers already depend on.
+
+### Also worth knowing
+
+Small consequences of the above that are unlikely to affect anyone, listed
+because they are the kind of thing that is annoying to discover from a
+stack trace.
+
+- **A dead-lettered message now carries the original publish `timestamp`**, not
+  the time it was dead-lettered, since `timestamp` is one of the properties now
+  carried across the hop. `x-dlq-time` in the headers is the dead-letter time
+  and always was.
+- **On the no-retry branch** (retries disabled, or a `HandledError`), a failed
+  error reply no longer leaves the message unacknowledged, so there is no
+  longer a redelivery that gets a second chance to publish that reply. The
+  caller learns of the failure by RPC timeout instead. The redelivery would
+  also have re-run the handler's side effects, which is why this is the right
+  way round.
+- **`resolveContract` and `contractServiceName` are now reserved names** on
+  `ServiceProxy`, so a `.proto` declaring an `rpc` with either name fails at
+  `init()` with the existing collision error rather than silently clobbering a
+  proxy member.
+- **The rewritten error constructors declare `(message?: string)`.** Previously
+  they were bare `class Foo extends Error {}`, whose implicit constructor
+  forwarded every argument — so a consumer compiling against `lib: ES2022`
+  could pass `{ cause }` as a second argument and have it stick. That argument
+  is now dropped. Forwarding it is not expressible while this package compiles
+  against `lib: ES2020`, where `Error` takes one argument and `ErrorOptions`
+  does not exist; it will come back with the lib bump.
 
 ### Assessed and rejected
 
