@@ -149,9 +149,14 @@ The handler takes **three** arguments, not one:
 
 <!-- doc-check: compile -->
 ```typescript
-// lib/event_listener.ts. Not exported from the package root, so declare it
-// yourself if you need a named handler rather than an inline arrow function.
-type EventHandler = (event: any, type: string, topic: string) => Promise<void>;
+// Exported from the package root since 2.3.0. Before that it was declared in
+// lib/event_listener.ts only, and every caller who wanted a named handler
+// rather than an inline arrow function had to write the type out by hand.
+import { EventHandler } from 'protobus';
+
+const onShipped: EventHandler = async (event, type, topic) => {
+    console.log(type, topic, event);
+};
 ```
 
 | Argument | What it is |

@@ -12,9 +12,24 @@ import {
     safeErrorSummary,
 } from './errors';
 
-export class AlreadyConnectedError extends Error {}
-export class TimeoutError extends Error {}
-export class ReconnectionError extends Error {}
+export class AlreadyConnectedError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'AlreadyConnectedError';
+    }
+}
+export class TimeoutError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'TimeoutError';
+    }
+}
+export class ReconnectionError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'ReconnectionError';
+    }
+}
 
 /**
  * The connection is not carrying traffic: it is reconnecting, has been closed,
@@ -231,6 +246,54 @@ export function applyHeartbeat(url: string): string {
     } catch {
         return url;
     }
+}
+
+/**
+ * AMQP properties a republish copies from the original delivery.
+ *
+ * Protobus does not let the broker move a failed message: the retry and DLQ
+ * hops RE-PUBLISH it, building a fresh properties object by hand. Anything not
+ * named here is therefore dropped, silently, on a path only reachable after
+ * something else has already gone wrong — which is why it went unnoticed
+ * twice. `priority` was restored in 2.2.0; `contentType`, `contentEncoding`,
+ * `timestamp`, `type` and `appId` had been lost the same way and were restored
+ * in 2.3.0.
+ *
+ * Three properties are deliberately NOT here, each for a reason about the hop
+ * rather than about the property:
+ *
+ * - `deliveryMode` — re-expressed at every site as `persistent: true`, which
+ *   amqplib maps back to deliveryMode 2.
+ * - `expiration` — a per-message TTL. On the retry queue it would race that
+ *   queue's own `x-message-ttl` and fire an early redelivery; on the DLQ it
+ *   would quietly delete the very evidence an operator is meant to find.
+ * - `userId` — RabbitMQ validates `user-id` against the publishing
+ *   connection's user and closes the channel on a mismatch. A republish is
+ *   made by the CONSUMER's connection, which need not be the original
+ *   publisher's.
+ *
+ * `correlationId`, `messageId`, `replyTo` and `headers` are set explicitly at
+ * each site instead, because the sites disagree about them: the DLQ hop
+ * deliberately carries no `replyTo`, and the two hops write different headers.
+ */
+const CARRIED_PROPERTIES = [
+    'contentType',
+    'contentEncoding',
+    'priority',
+    'timestamp',
+    'type',
+    'appId',
+] as const;
+
+function carriedProperties(properties: amqplib.MessageProperties): PublishOptions {
+    const carried: Record<string, unknown> = {};
+    for (const key of CARRIED_PROPERTIES) {
+        const value = (properties as any)?.[key];
+        // Absent stays absent: a message that carried no priority must not
+        // gain one, and the same goes for every other property here.
+        if (value !== undefined && value !== null) { carried[key] = value; }
+    }
+    return carried as PublishOptions;
 }
 
 export default class Connection extends EventEmitter implements IConnection {
@@ -904,30 +967,46 @@ export default class Connection extends EventEmitter implements IConnection {
                 // reply to the caller on terminal paths (DLQ / no-retry-config).
                 // See message_service.ts handleUnaryError for the contract.
                 const errorReplyBuffer: Buffer | undefined = (err as any)?.__PROTOBUS_RESPONSE_BUFFER;
+                //
+                // BEST EFFORT, deliberately. Every terminal path answers the
+                // caller and THEN settles the message — reply, DLQ, ack; or
+                // reply, reject. Awaiting the reply bare put both on one chain,
+                // so a reply publish that rejected took the settlement with it:
+                // the message was neither dead-lettered nor rejected, stayed
+                // unacknowledged holding a prefetch slot, and came back on the
+                // next channel to fail in the same place with its retry budget
+                // already spent — so it could never reach the DLQ, the one
+                // place an operator would look for it.
+                //
+                // Of the two, the reply is what may be lost: the caller has a
+                // timeout, while the DLQ is the only durable record that the
+                // message existed at all.
                 const publishErrorReply = async () => {
-                    if (replyTo && errorReplyBuffer) {
+                    if (!replyTo || !errorReplyBuffer) return;
+                    try {
                         await this.publish(channel, Config.callbacksExchangeName, replyTo, errorReplyBuffer, {
                             contentType: 'application/octet-stream',
                             correlationId,
                         });
+                    } catch (replyErr: any) {
+                        Logger.error(
+                            `failed to publish the error reply for ${correlationId} to ${replyTo}: ` +
+                            `${replyErr?.message || replyErr}. The caller will time out; ` +
+                            'settling the message anyway so it reaches the DLQ.',
+                        );
                     }
                 };
 
-                // Protobus re-publishes a failed message rather than letting
-                // the broker move it, building a fresh properties object by
-                // hand at each hop — so every property that matters has to be
-                // copied explicitly. `priority` is one of them: without this a
-                // control message that failed once comes back at priority 0 and
-                // queues behind the whole bulk backlog, which is the exact
-                // failure the priority feature exists to prevent. It is only
-                // reachable after something else has already gone wrong, so
-                // nothing in normal operation would surface it.
+                // Everything the original delivery carried that this hop must
+                // preserve. See CARRIED_PROPERTIES: the republish builds its
+                // properties by hand, so anything not listed there is dropped,
+                // and that has bitten twice — `priority` (fixed in 2.2.0) and
+                // `contentType` (fixed in 2.3.0, along with contentEncoding,
+                // timestamp, type and appId, which had gone the same way).
                 //
-                // Spread rather than assigned, so a message that carried no
-                // priority does not gain one.
-                const carriedPriority = msg.properties.priority !== undefined
-                    ? { priority: msg.properties.priority }
-                    : {};
+                // Spread rather than assigned, so a message that carried none
+                // of them does not gain any.
+                const carried = carriedProperties(msg.properties);
 
                 if (!options.noAck && lateAck) {
                     // Check if retry is configured and error is retryable
@@ -975,7 +1054,7 @@ export default class Connection extends EventEmitter implements IConnection {
                                         messageId: msg.properties.messageId,
                                         replyTo,
                                         headers: retryHeaders,
-                                        ...carriedPriority,
+                                        ...carried,
                                     },
                                 );
                             } else {
@@ -988,7 +1067,7 @@ export default class Connection extends EventEmitter implements IConnection {
                                     messageId: msg.properties.messageId,
                                     replyTo,
                                     headers: retryHeaders,
-                                    ...carriedPriority,
+                                    ...carried,
                                 });
                             }
                             await this.ack(channel, msg);
@@ -1019,7 +1098,7 @@ export default class Connection extends EventEmitter implements IConnection {
                                 // No ordering value on a plain DLQ, but a
                                 // dead-lettered message should still read back
                                 // as what it was.
-                                ...carriedPriority,
+                                ...carried,
                             });
                             await this.ack(channel, msg);
                         }

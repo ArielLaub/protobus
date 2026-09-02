@@ -23,14 +23,31 @@ function routingKeyOf(context?: { routingKey?: string } | string): string | unde
     return typeof context === 'string' ? context : context?.routingKey;
 }
 
-export class InvalidResultError extends Error {}
+export class InvalidResultError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'InvalidResultError';
+    }
+}
 /**
  * The request named a method this service does not serve. A ProtocolError so
  * the connection layer answers the caller instead of retrying: the same body
  * names the same absent method on every redelivery.
  */
-export class InvalidMethodError extends ProtocolError {}
-export class MissingProto extends Error {}
+export class InvalidMethodError extends ProtocolError {
+    constructor(message: string) {
+        super(message);
+        // Reset after ProtocolError's own assignment, or every unknown-method
+        // rejection reads as a generic ProtocolError in the x-last-error header.
+        this.name = 'InvalidMethodError';
+    }
+}
+export class MissingProto extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'MissingProto';
+    }
+}
 
 export interface IContextConstructable {
     new (context: IContext): IMessageService;

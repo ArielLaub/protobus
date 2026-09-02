@@ -4,6 +4,151 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] — 2026-09-02
+
+Twelve findings from the documentation audit in
+[#34](https://github.com/ArielLaub/protobus/pull/34), each of which came out of
+executing a documented example against a real broker rather than reading the
+code. Two of them turned out to be wrong about the library and are recorded
+below as assessed and rejected; one was right but describes a deliberate design
+decision, so it is documented rather than changed.
+
+A minor rather than a patch: `CallOptions.messageId` is new API, and five types
+that appear in public signatures are now exported.
+
+### Added
+
+- **`messageId` on `CallOptions`.** The package root and the 2.0 changelog both
+  tell a caller to deduplicate on `messageId` after an ambiguous publish
+  outcome, but there was no public way to set one — a republish minted a fresh
+  UUID, so the second copy was unrecognisable as the same logical message and
+  the documented recovery could not be carried out. The connection layer had
+  always honoured a caller-supplied `properties.messageId`; only the public
+  route was missing. Accepted as a trailing `options` argument by proxy
+  methods, `Context.publishMessage()` and `MessageDispatcher.publish()`, and
+  carried unchanged across every redelivery and every retry and DLQ hop. A
+  blank id is refused with the new `InvalidMessageIdError` rather than falling
+  back to a generated one, because an id derived from a field that turned out
+  to be empty would give every attempt a different identity and no
+  deduplication at all — silently.
+- **`ServiceProxy` can address an instance-named service.** `MessageService`
+  has always resolved `Combat.Player.player6` to the contract `Combat.Player`
+  by trimming trailing segments; the proxy looked the name up verbatim and
+  failed at `init()`, so the only way to reach one instance was to build the
+  routing key by hand and give up the typed proxy entirely. It now resolves the
+  same way. The routing key carries the **runtime** name, so the broker reaches
+  that instance's queue, while the request envelope carries the **contract**
+  method name, which is what the receiving service validates the body against —
+  the two cannot be one string, which is why this was not a one-line change.
+- **`MessageHandlerContext`, `MessageHandler`, `MessageHandlerResult`,
+  `EventHandler` and `MissingProto` are exported from the package root.** All
+  five appear in public signatures — `MessageHandlerContext` is the fourth
+  argument of every service method, `EventHandler` the second argument of
+  `subscribeEvent` — so every user was re-declaring them by hand against types
+  the library was free to change underneath them. `MissingProto` is the first
+  error a new service hits and could not be caught by type at all.
+- **`registerType()` is idempotent.** Re-registering a name a factory already
+  holds returns the message class it already generated and refreshes the
+  codec, so the last definition of a name still wins. It previously failed with
+  protobufjs's `duplicate name '<name>' in Root`, which meant
+  `factory.registerType(BigIntType)` — the "to be safe" line, and the shape the
+  README showed — broke startup instead of being the no-op it looks like. The
+  one re-registration still refused is one that changes `wireType`, now with
+  the new `CustomTypeConflictError`: the generated protobuf message is fixed at
+  first registration, so accepting it would go on encoding in the original wire
+  format while the caller believed it had changed.
+
+### Fixed
+
+- **Every error class sets its own `name`.** Twenty-four did not: declared as
+  `class Foo extends Error {}`, they inherited `name` from `Error.prototype`
+  and reported the literal string `'Error'`. That is the first thing
+  `safeErrorSummary()` reads, so `x-last-error` on every retried and
+  dead-lettered message reported `Error` for a whole family of distinct
+  failures — the header exists to classify, and an unnamed class silently
+  defeated it. Verified on the wire: a dead-lettered message now carries
+  `x-last-error: TimeoutError`. `InvalidMethodError` had the subtler version of
+  the same bug, inheriting `'ProtocolError'` from its base.
+- **Retry and DLQ republishes keep `contentType`** — and `contentEncoding`,
+  `timestamp`, `type` and `appId`, all lost the same way. Protobus does not let
+  the broker move a failed message; it re-publishes it, building a fresh
+  properties object by hand, so anything not copied is dropped on a path only
+  reachable after something else has already gone wrong. 2.2.0 restored
+  `priority` here; the sites were never audited as a set, and five more
+  properties had gone the same way. They are now one named list,
+  `CARRIED_PROPERTIES`, with `deliveryMode`, `expiration` and `userId`
+  deliberately excluded for reasons recorded beside it.
+- **A failed error reply can no longer strand a message short of the DLQ.**
+  Every terminal path answered the caller and then settled the message — reply,
+  DLQ, ack; or reply, reject — on one `await` chain, so a reply publish that
+  rejected took the settlement with it. The message was then neither
+  dead-lettered nor rejected: it stayed unacknowledged holding a prefetch slot,
+  and came back on the next channel to fail in the same place with its retry
+  budget already spent, so it could never reach the DLQ — the one place an
+  operator would look for it. The reply is now best-effort and logged; of the
+  two, it is the one that may be lost, because the caller has a timeout while
+  the DLQ is the only durable record.
+- **`factory.parse()` before `factory.init()` fails loudly.** `init()` is what
+  creates the root; before it, protobufjs was handed an undefined root, quietly
+  made one of its own, parsed into it and dropped it on return. The call
+  returned normally and the schema simply was not there, surfacing much later
+  as a `no such Service` or a `MissingProto` in code that had plainly
+  registered it. It now throws `NotInitializedError` naming the ordering.
+- **`ServiceProxy.init()` raises `InvalidServiceNameError` for an unknown
+  service.** protobufjs's `lookupService` throws its own `no such Service`
+  before the guard meant to raise it could run, so the documented error was
+  unreachable.
+
+### Removed
+
+- **`PublishMessageError`.** Never a root export, and nothing had constructed it
+  since 2.1.0 stopped `ServiceProxy` collapsing every publish failure into it.
+  A `catch` on it could not match anything. Match `PublishError` or a specific
+  subclass.
+
+### Deprecated
+
+- **`StreamClosedError`** — never thrown, and scheduled for removal in 3.0. It
+  is a root export, so it stays until a major. It was not revived because every
+  ending it was meant to describe already has a defined outcome and none of them
+  is this one: a disconnect raises `DisconnectedError`, a stall raises
+  `StreamTimeoutError`, an `AbortSignal` cancellation deliberately ends the loop
+  rather than raising, and iterating after `return()` reports `done` because the
+  async-iterator protocol requires it. Repurposing any of those would change
+  behaviour callers already depend on.
+
+### Assessed and rejected
+
+Recorded here because a rejected finding that travels onward as a "known issue"
+is how a false claim ends up in two codebases.
+
+- **`PROTOBUS_EXPOSE_INTERNAL_ERRORS` defaulting to `true` is not a defect.**
+  The rationale is written above the setting in `lib/config.ts`. A protobus
+  caller is another of your own services, inside the trust boundary and already
+  holding the broker credentials; an error crossing service to service is an
+  internal detail moving between components that already trust each other, not
+  a disclosure. The genuinely leaky surfaces — headers, retention, dashboards,
+  queue browsers — are redacted unconditionally through `safeErrorSummary`,
+  independent of this flag, and the escape hatch exists for the one case that
+  matters. Flipping it would make errors opaque in every existing deployment to
+  defend a boundary that is not crossed.
+- **A failing event handler is not "dropped silently" through an oversight.**
+  It is discarded deliberately, and the docs have said so since #34. Measured
+  against a real broker in `test/integration/event_failure_semantics.test.ts`:
+  five events whose handler throws are each delivered exactly once, the
+  `.Events` queue is empty afterwards, no `.Events.DLQ` exists, and a healthy
+  event published after all five is still processed. The reject is what keeps
+  the consumer alive — leaving the message unacknowledged instead would hold
+  the prefetch (`DEFAULT_PREFETCH`, **1** unless `maxConcurrent` is set) and
+  stall the listener completely behind the first permanent failure. Losing the
+  event is the deliberate trade for not deadlocking the subscriber. It remains
+  a real gap — a durable queue and a persistent message, and a transient
+  failure still loses the event — but giving events a retry ladder would
+  declare new queues in every existing deployment and change delivery semantics
+  for every consumer running against the current behaviour. That belongs in an
+  opt-in or a major, not in a minor. The behaviour is now pinned by that test,
+  so the day it changes, it changes deliberately.
+
 ## [2.2.0] — 2026-09-01
 
 Opt-in RabbitMQ message priority, so a control message can overtake bulk traffic

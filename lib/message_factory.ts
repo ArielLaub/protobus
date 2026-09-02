@@ -6,6 +6,8 @@ import { Logger } from './logger';
 import {
     ICustomType,
     registerCustomType,
+    refreshCustomTypeCodec,
+    CustomTypeConflictError,
     getCustomType,
     isCustomType,
     getCustomTypeNames,
@@ -13,12 +15,32 @@ import {
     TimestampMessage
 } from './custom_types';
 
-export class MessageTypeRequiredError extends Error {}
-export class NotInitializedError extends Error {}
+export class MessageTypeRequiredError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'MessageTypeRequiredError';
+    }
+}
+export class NotInitializedError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'NotInitializedError';
+    }
+}
 /** A name that is not of the form `<package>.<Service>.<method>`. */
-export class InvalidMethodNameError extends Error {}
+export class InvalidMethodNameError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'InvalidMethodNameError';
+    }
+}
 /** A well-formed name whose method is not declared by the named service. */
-export class UnknownMethodError extends Error {}
+export class UnknownMethodError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'UnknownMethodError';
+    }
+}
 
 /**
  * Every parse this module performs passes `keepCase: true` explicitly — the
@@ -102,7 +124,10 @@ function messageNeedsPreprocess(
 }
 
 // Re-export custom types functionality
-export { ICustomType, registerCustomType, getCustomType, isCustomType, getCustomTypeNames };
+export {
+    ICustomType, registerCustomType, refreshCustomTypeCodec, CustomTypeConflictError,
+    getCustomType, isCustomType, getCustomTypeNames,
+};
 export { BigIntMessage, TimestampMessage };
 export { bigintToBytes, bytesToBigint, BigIntType, TimestampType } from './custom_types';
 
@@ -372,6 +397,24 @@ export default class MessageFactory {
      * ```
      */
     public registerType<T>(customType: ICustomType<T>): typeof Message {
+        // Idempotent. Registering a name this factory already holds — the
+        // built-in `bigint`/`timestamp`, or a type re-registered on a reload —
+        // used to fail with protobufjs's "duplicate name '<name>' in Root",
+        // because a second message class was generated and added to a root
+        // that already had one under that name. There was no way to ask
+        // whether a name was taken, so the throw was unavoidable rather than
+        // merely inconvenient.
+        //
+        // The codec is still refreshed, so the last definition of a name wins
+        // exactly as it did before; only the redundant type generation is
+        // skipped. A definition that disagrees about `wireType` is refused
+        // instead — see CustomTypeConflictError.
+        const known = this.registeredTypes.get(customType.name);
+        if (known) {
+            refreshCustomTypeCodec(customType);
+            return known;
+        }
+
         const MessageClass = registerCustomType(customType);
         this.registeredTypes.set(customType.name, MessageClass);
 
@@ -463,6 +506,20 @@ export default class MessageFactory {
      * a different definition of the same type is not.
      */
     public parse(proto: string, moduleName?: string): void {
+        // init() is what creates the root. Without it, protobufjs is handed an
+        // undefined root, quietly makes one of its own, parses into that and
+        // drops it on return — so the call succeeds and the schema is simply
+        // not there. The failure then surfaces somewhere else entirely, as a
+        // `no such Service` or a MissingProto in code that plainly registered
+        // it. Refuse the call instead, at the point the mistake was made.
+        if (!this.isInitialized || !this.root) {
+            throw new NotInitializedError(
+                `cannot parse schema${moduleName ? ` for ${moduleName}` : ''} before `
+                + 'MessageFactory.init() has run: there is no root to parse into, and the '
+                + 'schema would be silently discarded. Call Context.init() (or '
+                + 'MessageFactory.init()) first.',
+            );
+        }
         if (moduleName && this.hasService(moduleName)) {
             Logger.debug(`schema for ${moduleName} already registered, skipping`);
             return;

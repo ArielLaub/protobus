@@ -246,7 +246,7 @@ message Account {
 ```
 
 `BigIntType` and `TimestampType` ship with the library and are **already
-registered** — registering either again throws `duplicate name`. Details, and the
+registered**; registering either again is a no-op. Details, and the
 rules that make this work:
 **[Custom Types](https://github.com/ArielLaub/protobus/blob/master/docs/reference/custom-types.md)**.
 

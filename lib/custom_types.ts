@@ -59,6 +59,20 @@ export interface ICustomType<T = any> {
     tsType: string;
 }
 
+/**
+ * A custom type name was re-registered with a different wire type.
+ *
+ * Registration is idempotent for an identical definition; this is the one case
+ * that cannot be, because the protobuf message generated for the name is fixed
+ * at first registration.
+ */
+export class CustomTypeConflictError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'CustomTypeConflictError';
+    }
+}
+
 // Registry of custom type implementations
 const customTypeRegistry = new Map<string, ICustomType>();
 
@@ -92,8 +106,51 @@ function createMessageClass(customType: ICustomType): typeof Message {
  * nowhere else for it to live.
  */
 export function registerCustomType(customType: ICustomType): typeof Message {
+    assertNoWireTypeConflict(customType);
     const MessageClass = createMessageClass(customType);
+    installCodec(customType);
+    return MessageClass;
+}
 
+/**
+ * Two registrations of one name are only interchangeable if they agree on the
+ * wire type.
+ *
+ * The generated protobuf message is fixed at first registration, so a second
+ * registration with a different `wireType` would go on encoding in the FIRST
+ * one's format while the caller believes it changed — a silently wrong wire
+ * format, which is the one failure mode worth refusing outright.
+ *
+ * Checked against the process-wide registry rather than per factory, because
+ * `protoBuf.wrappers` is keyed by name for the whole process: two factories
+ * genuinely cannot hold two wire types for one name.
+ */
+function assertNoWireTypeConflict(customType: ICustomType): void {
+    const previous = customTypeRegistry.get(customType.name);
+    if (previous && previous.wireType !== customType.wireType) {
+        throw new CustomTypeConflictError(
+            `custom type '${customType.name}' is already registered with wire type ` +
+            `'${previous.wireType}'; re-registering it as '${customType.wireType}' would keep ` +
+            'encoding in the original wire format. Use a different name, or keep the original ' +
+            'wire type.',
+        );
+    }
+}
+
+/**
+ * Point the name at this definition's codec, leaving any message class already
+ * generated for it alone.
+ *
+ * This is the half of registration that is safe to repeat: the last definition
+ * of a name wins, as documented, without generating a second protobuf type
+ * that would collide in whichever root the first one was added to.
+ */
+export function refreshCustomTypeCodec(customType: ICustomType): void {
+    assertNoWireTypeConflict(customType);
+    installCodec(customType);
+}
+
+function installCodec(customType: ICustomType): void {
     // Register wrapper for protobufjs
     (protoBuf.wrappers as any)[`.${customType.name}`] = {
         fromObject(this: protoBuf.Type, object: any): protoBuf.Message {
@@ -122,8 +179,6 @@ export function registerCustomType(customType: ICustomType): typeof Message {
 
     // Store in registry
     customTypeRegistry.set(customType.name, customType);
-
-    return MessageClass;
 }
 
 /**

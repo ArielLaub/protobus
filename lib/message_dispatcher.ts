@@ -28,6 +28,8 @@ export interface StreamOptions {
      * to confuse at a call site.
      */
     priority?: never;
+    /** Not supported on streaming calls, for the same reason as `priority`. */
+    messageId?: never;
 }
 
 /** Per-call options for a unary RPC / fire-and-forget publish. */
@@ -38,12 +40,66 @@ export interface CallOptions {
      * which is what lets a new publisher talk to an old consumer.
      */
     priority?: number;
+    /**
+     * The message's identity, as the consumer will see it in
+     * `MessageHandlerContext.messageId`. Defaults to a fresh UUID.
+     *
+     * Set it to make a **caller-driven republish** recognisable. A
+     * `PublishConfirmTimeoutError` or a `ChannelClosedError` leaves the
+     * outcome genuinely unknown — the broker may have stored the message and
+     * lost only the confirm — so calling again can produce two copies. Passing
+     * the same `messageId` on the second attempt is what lets an idempotent
+     * consumer see them as one message; the library carries the id unchanged
+     * across every redelivery and every retry and DLQ hop.
+     *
+     * It is an identity, so make it identify the work rather than the attempt:
+     * derive it from the request (an order id, a request id from upstream),
+     * never from a clock or a counter.
+     *
+     * Rejected if empty or blank, rather than quietly falling back to a UUID:
+     * an id derived from a field that turned out to be empty would give every
+     * attempt a different identity and no deduplication at all — the exact
+     * failure this option exists to prevent, arriving silently.
+     */
+    messageId?: string;
 }
 
-export class NotConnectedError extends Error {}
+/** A `messageId` was supplied that cannot identify anything. */
+export class InvalidMessageIdError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'InvalidMessageIdError';
+    }
+}
+
+/**
+ * A caller-supplied messageId, or undefined to let the publish path mint one.
+ *
+ * Blank is refused rather than treated as absent: `properties.messageId ||
+ * randomUUID()` in the connection layer reads '' as "none supplied", so an id
+ * that came out empty would silently become a fresh UUID per attempt.
+ */
+function validateMessageId(messageId: unknown): string | undefined {
+    if (messageId === undefined || messageId === null) return undefined;
+    if (typeof messageId !== 'string' || messageId.trim() === '') {
+        throw new InvalidMessageIdError(
+            `messageId must be a non-empty string, got ${JSON.stringify(messageId)}. `
+            + 'Leave it unset to have one generated.',
+        );
+    }
+    return messageId;
+}
+
+export class NotConnectedError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'NotConnectedError';
+    }
+}
 export class DisconnectedError extends Error {
     constructor() {
         super('Connection lost during RPC call');
+        this.name = 'DisconnectedError';
     }
 }
 
@@ -339,6 +395,7 @@ export default class MessageDispatcher implements IMessageDispatcher {
         content: any, routingKey: string, rpc: boolean, timeoutMs?: number, options?: CallOptions,
     ): Promise<Buffer> {
         const priority = validatePriority(options?.priority);
+        const callerMessageId = validateMessageId(options?.messageId);
         await this._awaitPublishable();
 
         if (rpc !== false) {
@@ -365,6 +422,11 @@ export default class MessageDispatcher implements IMessageDispatcher {
         // `!== undefined` rather than a truthy test: PRIORITY_NORMAL is 0.
         if (priority !== undefined) {
             properties.priority = priority;
+        }
+        // Same rule: assigned only when asked for, so an unset messageId is
+        // still minted by the connection layer exactly as before.
+        if (callerMessageId !== undefined) {
+            properties.messageId = callerMessageId;
         }
         if (!rpc) {
             // Nothing to wait for beyond the broker confirming receipt.

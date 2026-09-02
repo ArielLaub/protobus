@@ -151,16 +151,11 @@ Earlier versions of this page listed only the first three. The fourth is what a 
 
 <!-- doc-check: compile -->
 ```typescript
-import { MessageService } from 'protobus';
+import { MessageService, MessageHandlerContext } from 'protobus';
 
-// MessageHandlerContext is not re-exported from the package index, so the
-// shape is written out here. It lives in lib/connection.ts.
-interface HandlerContext {
-    signal: AbortSignal;
-    routingKey: string;
-    messageId?: string;
-    redelivered: boolean;
-}
+// Exported from the package root since 2.3.0. Before that the shape had to be
+// written out by hand in every service, against a type the library was free to
+// change underneath it.
 
 export class ReportService extends MessageService {
     public get ServiceName(): string { return 'Reports.Service'; }
@@ -170,7 +165,7 @@ export class ReportService extends MessageService {
         request: { rows: number },
         actor?: string,
         correlationId?: string,
-        context?: HandlerContext,
+        context?: MessageHandlerContext,
     ): Promise<{ written: number }> {
         if (context?.redelivered) {
             // This exact message has been delivered before. messageId is stable
