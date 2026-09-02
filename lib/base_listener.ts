@@ -301,18 +301,27 @@ export abstract class BaseListener extends EventEmitter {
      * Safe to call more than once, and safe when already disconnected.
      */
     async stopConsuming(): Promise<void> {
-        if (!this.consumerTag) return;
-
         const tag = this.consumerTag;
+
+        // The shutdown decision is recorded first and unconditionally, before
+        // any early return. A consumerTag is not evidence that there is
+        // anything to stop: _onDisconnected() clears the tag while
+        // deliberately keeping _wasStarted, so that the listener comes back
+        // when the broker does. Returning early on an empty tag therefore left
+        // a SIGTERM that landed while the broker was away with _wasStarted
+        // still true and the restorer still attached — and a reconnection
+        // inside the drain window put the consumer back, in a process that had
+        // already begun shutting down.
         this.consumerTag = '';
-        // Cleared too, or a reconnection landing mid-drain restores the
-        // consumer and the shutdown starts taking new work again.
         this._wasStarted = false;
         // And stop taking part in restoration at all: a reconnection between
         // here and close() would otherwise open a fresh channel for a listener
         // that is being shut down.
         this._detachRestorer();
 
+        // Only the broker-side cancel is conditional, because it is the only
+        // part that needs something to talk to.
+        if (!tag) return;
         if (!this.connection.isConnected || !this.channel) return;
 
         try {
