@@ -2,20 +2,98 @@ import { IContext } from './context';
 import { StreamOptions, CallOptions } from './message_dispatcher';
 import { Logger } from './logger';
 
-export class InvalidServiceNameError extends Error {}
-export class AlreadyInitializedError extends Error {}
-export class PublishMessageError extends Error {}
-export class InvalidRequestError extends Error {}
-export class InvalidResponseError extends Error {}
+export class InvalidServiceNameError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'InvalidServiceNameError';
+    }
+}
+export class AlreadyInitializedError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'AlreadyInitializedError';
+    }
+}
+export class InvalidRequestError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'InvalidRequestError';
+    }
+}
+export class InvalidResponseError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'InvalidResponseError';
+    }
+}
 
 export default class ServiceProxy {
     private context: IContext;
     private isInitialized = false;
     private serviceName: string;
+    /**
+     * The service as the .proto declares it, which is not always the name the
+     * proxy was constructed with: instances sharing one schema are addressed
+     * under distinct runtime names, so `Combat.Player.player6` serves the
+     * contract `Combat.Player`. Resolved the same way MessageService resolves
+     * its own, so the two agree by construction.
+     */
+    private contractServiceName: string | undefined;
 
     constructor(context: IContext, serviceName: string) {
         this.serviceName = serviceName;
         this.context = context;
+    }
+
+    /**
+     * Find the contract this proxy addresses, by trimming runtime segments off
+     * the name until one names a service in the root.
+     *
+     * `Combat.Player.player6` is in no schema; `Combat.Player` is. Looking the
+     * name up verbatim meant an instance-named service could not be proxied at
+     * all — the only way to reach one was a hand-built routing key through
+     * `context.publishMessage`, giving up the typed proxy entirely.
+     */
+    private resolveContract(): string {
+        const factory = this.context.factory;
+        // An uninitialised factory has no root, so hasService() answers false
+        // for everything and the trim below would blame the .proto for a
+        // schema that was simply never loaded.
+        if (!factory.root) {
+            throw new InvalidServiceNameError(
+                `cannot resolve '${this.serviceName}': the message factory has not been ` +
+                'initialised, so no schema is loaded yet. Await Context.init() before ' +
+                'constructing a proxy.',
+            );
+        }
+        let candidate = this.serviceName;
+        for (;;) {
+            if (factory.hasService(candidate)) {
+                if (candidate !== this.serviceName) {
+                    // Said out loud, because trimming is a guess. A name whose
+                    // intended service is absent but which has an unrelated
+                    // service as a prefix resolves to that ancestor and takes
+                    // ITS method set — every call then fails with
+                    // UnroutableError, because the server binds
+                    // REQUEST.<ServiceName>.* and that is a single-segment
+                    // wildcard. One line at startup is the difference between
+                    // that and a mystery.
+                    Logger.info(
+                        `service proxy '${this.serviceName}' resolved to contract ` +
+                        `'${candidate}'; requests will route to REQUEST.${this.serviceName}.*`,
+                    );
+                }
+                return candidate;
+            }
+            const cut = candidate.lastIndexOf('.');
+            if (cut <= 0) {
+                throw new InvalidServiceNameError(
+                    `no service in the schema matches '${this.serviceName}' or any prefix of it; ` +
+                    'the .proto must declare the service this proxy addresses',
+                );
+            }
+            candidate = candidate.slice(0, cut);
+        }
     }
 
     async init() {
@@ -23,9 +101,13 @@ export default class ServiceProxy {
             Logger.error(`already initialized service proxy ${this.serviceName}`);
             throw new AlreadyInitializedError();
         }
+        // hasService() first, then lookupService(): protobufjs THROWS a plain
+        // `no such Service` from lookupService, so the `if (!TService)` guard
+        // below could never run and InvalidServiceNameError was unreachable.
+        this.contractServiceName = this.resolveContract();
         const root = this.context.factory.root;
-        const TService = root.lookupService(this.serviceName);
-        if (!TService) throw new InvalidServiceNameError();
+        const TService = root.lookupService(this.contractServiceName);
+        if (!TService) throw new InvalidServiceNameError(`no such service ${this.contractServiceName}`);
 
         const TMethods = Object.keys(TService.methods);
         TMethods.forEach((name) => {
@@ -39,7 +121,17 @@ export default class ServiceProxy {
                     `proto method '${this.serviceName}.${name}' collides with a ServiceProxy member; rename it in the .proto`,
                 );
             }
-            const methodFullName = `${this.serviceName}.${TMethod.name}`; // <package>.<service>.<method>
+            // The two names play different parts and cannot be one string.
+            //
+            // The ENVELOPE carries the contract method name, because that is
+            // what the receiving MessageService validates the body against and
+            // what selects the schema the payload is read with.
+            //
+            // The ROUTING KEY carries the runtime name, because that is what
+            // reaches this instance's queue. They are identical whenever the
+            // proxy was constructed with a plain contract name.
+            const methodFullName = `${this.contractServiceName}.${TMethod.name}`; // <package>.<service>.<method>
+            const routingKey = `REQUEST.${this.serviceName}.${TMethod.name}`;
 
             // Branch at build time on whether the method is declared
             // server-streaming in its .proto. Streaming methods are exposed
@@ -54,7 +146,8 @@ export default class ServiceProxy {
                     idleTimeoutMs?: number,
                     options?: StreamOptions,
                 ) => this._buildStreamingCall(
-                    methodFullName, TMethod.requestType, requestMessage, actor, idleTimeoutMs, options,
+                    methodFullName, routingKey, TMethod.requestType, requestMessage,
+                    actor, idleTimeoutMs, options,
                 );
             } else {
                 // `options` is appended last, so every existing call signature
@@ -84,7 +177,7 @@ export default class ServiceProxy {
                     // ambiguous and retrying either can duplicate. The
                     // messageId that makes deduplication possible rides on the
                     // error too. See docs/advanced/security.md.
-                    return this.context.publishMessage(buffer, `REQUEST.${methodFullName}`, rpc, timeoutMs, options)
+                    return this.context.publishMessage(buffer, routingKey, rpc, timeoutMs, options)
                         .then((responseData) => {
                             if (rpc === false) {
                                 Logger.debug('recieved non rpc result sending back empty answer');
@@ -125,6 +218,7 @@ export default class ServiceProxy {
      */
     private _buildStreamingCall(
         methodFullName: string,
+        routingKey: string,
         requestType: string,
         requestMessage: any,
         actor: string | undefined,
@@ -159,7 +253,7 @@ export default class ServiceProxy {
 
         const chunks = context.publishStreamingMessage(
             buffer,
-            `REQUEST.${methodFullName}`,
+            routingKey,
             idleTimeoutMs,
             options,
         );

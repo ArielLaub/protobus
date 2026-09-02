@@ -6,6 +6,8 @@ import { Logger } from './logger';
 import {
     ICustomType,
     registerCustomType,
+    refreshCustomTypeCodec,
+    CustomTypeConflictError,
     getCustomType,
     isCustomType,
     getCustomTypeNames,
@@ -13,12 +15,32 @@ import {
     TimestampMessage
 } from './custom_types';
 
-export class MessageTypeRequiredError extends Error {}
-export class NotInitializedError extends Error {}
+export class MessageTypeRequiredError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'MessageTypeRequiredError';
+    }
+}
+export class NotInitializedError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'NotInitializedError';
+    }
+}
 /** A name that is not of the form `<package>.<Service>.<method>`. */
-export class InvalidMethodNameError extends Error {}
+export class InvalidMethodNameError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'InvalidMethodNameError';
+    }
+}
 /** A well-formed name whose method is not declared by the named service. */
-export class UnknownMethodError extends Error {}
+export class UnknownMethodError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'UnknownMethodError';
+    }
+}
 
 /**
  * Every parse this module performs passes `keepCase: true` explicitly — the
@@ -102,9 +124,24 @@ function messageNeedsPreprocess(
 }
 
 // Re-export custom types functionality
-export { ICustomType, registerCustomType, getCustomType, isCustomType, getCustomTypeNames };
+export {
+    ICustomType, registerCustomType, refreshCustomTypeCodec, CustomTypeConflictError,
+    getCustomType, isCustomType, getCustomTypeNames,
+};
 export { BigIntMessage, TimestampMessage };
 export { bigintToBytes, bytesToBigint, BigIntType, TimestampType } from './custom_types';
+
+/**
+ * A detached copy of a built-in custom type's protobuf definition.
+ *
+ * Roots take ownership of what is added to them, so anything shared between
+ * factories has to be copied rather than added. Round-tripping through JSON is
+ * how protobufjs itself clones a type, and the definition is two fields deep.
+ */
+function builtinTypeCopy(MessageClass: typeof Message): protoBuf.Type {
+    const declared = (MessageClass as any).$type as protoBuf.Type;
+    return protoBuf.Type.fromJSON(declared.name, declared.toJSON());
+}
 
 // Helper to preprocess objects before encoding - converts custom type values
 function preprocessForEncode(obj: any, messageType: protoBuf.Type, registeredTypes: Map<string, typeof Message>): any {
@@ -372,6 +409,32 @@ export default class MessageFactory {
      * ```
      */
     public registerType<T>(customType: ICustomType<T>): typeof Message {
+        // Idempotent. Registering a name this factory already holds — the
+        // built-in `bigint`/`timestamp`, or a type re-registered on a reload —
+        // used to fail with protobufjs's "duplicate name '<name>' in Root",
+        // because a second message class was generated and added to a root
+        // that already had one under that name. There was no way to ask
+        // whether a name was taken, so the throw was unavoidable rather than
+        // merely inconvenient.
+        //
+        // The codec is still refreshed, so the last definition of a name wins
+        // exactly as it did before; only the redundant type generation is
+        // skipped. A definition that disagrees about `wireType` is refused
+        // instead — see CustomTypeConflictError.
+        const known = this.registeredTypes.get(customType.name);
+        if (known) {
+            refreshCustomTypeCodec(customType);
+            // The map is bookkeeping; the ROOT is what can actually encode.
+            // Returning without checking would let registerType report success
+            // on a factory whose root does not hold the type — and since the
+            // docs point people here to make sure a type is registered, that
+            // is the one place a silent no-op would be believed.
+            if (this.isInitialized && this.root && !this.hasType(customType.name)) {
+                this.root.add((known as any).$type);
+            }
+            return known;
+        }
+
         const MessageClass = registerCustomType(customType);
         this.registeredTypes.set(customType.name, MessageClass);
 
@@ -400,10 +463,26 @@ export default class MessageFactory {
         // the "already parsed" memo must start empty alongside it.
         this.parsedSchemas.clear();
 
-        this.root.add((BigIntMessage as any).$type);
+        // A COPY of each built-in, never the shared object itself.
+        //
+        // BigIntMessage.$type and TimestampMessage.$type are module-level
+        // singletons, and protobufjs's Namespace.add reparents — it removes
+        // the object from its previous parent. Adding the singleton meant the
+        // second MessageFactory.init() in a process took `bigint` and
+        // `timestamp` out of the FIRST factory's root. Schemas that factory
+        // had already parsed kept working, because protobufjs resolves fields
+        // eagerly, so nothing failed until it parsed a new one — which then
+        // died at encode time with `no such Type or Enum 'bigint'`, in a
+        // factory that had done nothing wrong. Two Contexts in one process is
+        // all it takes.
+        //
+        // The registeredTypes map still holds the singleton CLASS, which is
+        // what preprocessForEncode instantiates; only the root's copy of the
+        // type definition is per factory.
+        this.root.add(builtinTypeCopy(BigIntMessage));
         this.registeredTypes.set('bigint', BigIntMessage);
 
-        this.root.add((TimestampMessage as any).$type);
+        this.root.add(builtinTypeCopy(TimestampMessage));
         this.registeredTypes.set('timestamp', TimestampMessage);
 
         // Register any types that were added before init
@@ -436,6 +515,22 @@ export default class MessageFactory {
         Logger.debug('message factory initialized');
     }
 
+    /**
+     * True if the given fully-qualified type is in this factory's root.
+     *
+     * The counterpart of `hasService`, and the only way to ask whether a
+     * custom type is actually usable here: `registerType` returning a class
+     * says a name is known to the process, not that this root can encode it.
+     */
+    public hasType(fullName: string): boolean {
+        if (!this.root) return false;
+        try {
+            return !!this.root.lookupType(fullName);
+        } catch {
+            return false;
+        }
+    }
+
     /** True if the given fully-qualified service is already in the root. */
     public hasService(fullName: string): boolean {
         if (!this.root) return false;
@@ -463,6 +558,20 @@ export default class MessageFactory {
      * a different definition of the same type is not.
      */
     public parse(proto: string, moduleName?: string): void {
+        // init() is what creates the root. Without it, protobufjs is handed an
+        // undefined root, quietly makes one of its own, parses into that and
+        // drops it on return — so the call succeeds and the schema is simply
+        // not there. The failure then surfaces somewhere else entirely, as a
+        // `no such Service` or a MissingProto in code that plainly registered
+        // it. Refuse the call instead, at the point the mistake was made.
+        if (!this.isInitialized || !this.root) {
+            throw new NotInitializedError(
+                `cannot parse schema${moduleName ? ` for ${moduleName}` : ''} before `
+                + 'MessageFactory.init() has run: there is no root to parse into, and the '
+                + 'schema would be silently discarded. Call Context.init() (or '
+                + 'MessageFactory.init()) first.',
+            );
+        }
         if (moduleName && this.hasService(moduleName)) {
             Logger.debug(`schema for ${moduleName} already registered, skipping`);
             return;

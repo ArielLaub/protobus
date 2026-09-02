@@ -34,7 +34,9 @@ Every row is verified against the class in [`lib/errors.ts`](../../lib/errors.ts
 | `StreamTimeoutError` | — | the caller's stream iterator, on the idle deadline | no | the producer stalled, or nothing was ever produced |
 | `StreamBackpressureError` | — | the dispatcher, when a stream's buffer bound is exceeded | no | consume faster, or raise the bound |
 | `StreamSequenceError` | — | the dispatcher, on a gap in `x-protobus-seq` | no | a chunk was lost; the partial stream is deliberately not yielded |
-| `StreamClosedError` | — | **nothing in the library raises it today** | — | see [Streaming errors](#streaming-errors) |
+| `StreamClosedError` | — | **nothing raises it; deprecated in 2.3.0** | — | see [Streaming errors](#streaming-errors) |
+| `InvalidMessageIdError` | — | `MessageDispatcher`, on a blank `CallOptions.messageId` | no | pass a non-empty id, or none at all |
+| `CustomTypeConflictError` | — | `registerCustomType`, on a name re-registered with a different `wireType` | no | use a different name, or keep the original wire type |
 | `InvalidPriorityError` | — | `validatePriority` / `validateMaxPriority`, before any broker I/O | no | fix the integer |
 | `RetryQueueMismatchError` | — | `MessageListener` at queue declare | no | you changed `retryDelayMs` on a service that has already run |
 | `MissingProto` | — | `MessageService`, at `init()` or on the `Proto` getter | no | the `.proto` is missing or declares no matching service |
@@ -42,7 +44,10 @@ Every row is verified against the class in [`lib/errors.ts`](../../lib/errors.ts
 \* `HANDLED_ERROR` is the default. The second constructor argument is the code, and in practice you always pass one.
 
 > [!NOTE]
-> `MissingProto` is **not exported from the package root**. It is declared in [`lib/message_service.ts`](../../lib/message_service.ts) and reachable only via a deep import. Match on the message or on `err.constructor.name`, not on `instanceof` against something imported from `protobus`.
+> `MissingProto` is exported from the package root **since 2.3.0**, so `instanceof MissingProto` works against an import from `protobus`. Before that it was reachable only by a deep import into [`lib/message_service.ts`](../../lib/message_service.ts), and callers matched on the message or on `err.constructor.name`.
+
+> [!NOTE]
+> **Every error class sets its own `name` since 2.3.0.** Twenty-four of them did not: declared as `class Foo extends Error {}`, they inherited `name` from `Error.prototype` and reported the literal string `'Error'`. That is what `safeErrorSummary()` reads, so a whole family of distinct failures arrived in the `x-last-error` header of a dead-lettered message indistinguishable from one another. If you have DLQ entries from 2.2.x or earlier, `x-last-error: Error` is that bug, not a nameless error.
 
 ---
 
@@ -224,12 +229,14 @@ All four extend `StreamingError`, none of them sets a `code`, and all are raised
 | `StreamTimeoutError` | no chunk within the idle window; also cancels the producer | 60000 ms |
 | `StreamBackpressureError` | this call exceeded 1024 chunks or 64 MiB, or all calls together exceeded 256 MiB | `STREAM_MAX_BUFFERED_CHUNKS` / `_BYTES` / `STREAM_MAX_TOTAL_BUFFERED_BYTES` |
 | `StreamSequenceError` | `x-protobus-seq` jumped, so at least one chunk was lost | — |
-| `StreamClosedError` | — | — |
+| `StreamClosedError` | **deprecated, never thrown** | — |
 
 `StreamSequenceError` discards the chunks already buffered rather than yielding them. That is deliberate: a short stream that looks complete is worse than a visibly broken one.
 
 > [!WARNING]
-> **`StreamClosedError` is exported but never thrown.** Nothing in `lib/` constructs it as of 2.2.0 — a stream torn down by a disconnect fails with `DisconnectedError` instead. Do not write a `catch` that depends on it.
+> **`StreamClosedError` is exported but never thrown, and is deprecated as of 2.3.0** — it will be removed in 3.0. Do not write a `catch` that depends on it.
+>
+> It was not revived, because every ending it was meant to describe already has a defined outcome and none of them is this one: a disconnect raises `DisconnectedError`, a stall raises `StreamTimeoutError`, an `AbortSignal` cancellation [deliberately ends the loop rather than raising](../guide/streaming.md#cancellation), and iterating after `return()` reports `done` because the async-iterator protocol requires it. Repurposing any of those would change behaviour callers already depend on.
 
 <!-- doc-check: compile id=stream-errors -->
 ```typescript

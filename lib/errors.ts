@@ -262,8 +262,23 @@ export class StreamSequenceError extends StreamingError {
 }
 
 /**
- * Raised when iterating a stream after it has been closed (e.g. due to
- * a disconnection or explicit cleanup).
+ * @deprecated Never thrown, and scheduled for removal in 3.0. Do not write a
+ * `catch` that depends on it.
+ *
+ * It was added for "iterating a stream after it has been closed", but each of
+ * those endings already has a defined outcome, and none of them is this one:
+ *
+ * - a stream torn down by a disconnection raises `DisconnectedError`
+ *   (`MessageDispatcher._onDisconnected`);
+ * - a stalled stream raises `StreamTimeoutError`;
+ * - a stream cancelled through its `AbortSignal` *ends the loop rather than
+ *   raising*, which is a deliberate, documented choice — see
+ *   `docs/guide/streaming.md`;
+ * - iterating after `return()` reports `done`, because that is what the
+ *   async-iterator protocol requires.
+ *
+ * Repurposing any of those to throw this instead would change behaviour
+ * callers already depend on, so the class is retired rather than revived.
  */
 export class StreamClosedError extends StreamingError {
     constructor(message: string) {

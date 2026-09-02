@@ -10,7 +10,7 @@
 | **Next** | [Errors](../errors.md) · [Streaming](../../guide/streaming.md) · [Message Priority](../../guide/priority.md) |
 | **Source** | [`lib/service_proxy.ts`](../../../lib/service_proxy.ts) · [`lib/message_dispatcher.ts`](../../../lib/message_dispatcher.ts) · [`lib/proxied_service.ts`](../../../lib/proxied_service.ts) |
 
-**On this page** — [The class](#the-class) · [Typing the call sites](#typing-the-call-sites) · [Unary calls](#unary-calls) · [Streaming calls](#streaming-calls) · [Timeouts](#timeouts) · [Errors](#errors) · [ProxiedService](#proxiedservicet) · [What it cannot address](#what-it-cannot-address)
+**On this page** — [The class](#the-class) · [Typing the call sites](#typing-the-call-sites) · [Unary calls](#unary-calls) · [Streaming calls](#streaming-calls) · [Timeouts](#timeouts) · [Errors](#errors) · [ProxiedService](#proxiedservicet) · [Instance names](#instance-names)
 
 ---
 
@@ -115,6 +115,7 @@ methodName(
 | `rpc` | `true` | `false` means fire-and-forget: publish and do not wait |
 | `timeoutMs` | `Config.rpcCallTimeoutMs` (`RPC_CALL_TIMEOUT_MS`, 600000) | rejects with `RpcTimeoutError` |
 | `options.priority` | unset | AMQP priority, integer 0-255 |
+| `options.messageId` | a fresh UUID | the message identity the consumer sees. Set it to make a caller-driven republish recognisable after an ambiguous outcome — see [Deduplicating a caller own republish](../../concepts/delivery-guarantees.md#deduplicating-a-callers-own-republish). Blank is refused with `InvalidMessageIdError` |
 
 > [!WARNING]
 > **With `rpc: false` the returned promise resolves with `{}`**, not with the service's response. Nothing is waited for and nothing is decoded. Destructuring the result of a fire-and-forget call gives you `undefined` for every field, silently.
@@ -355,16 +356,37 @@ The right use is a service calling its own interface: fanning work out to siblin
 
 ---
 
-## What it cannot address
+## Instance names
 
-`ServiceProxy` looks `serviceName` up in the schema **verbatim**. Unlike [`MessageService.resolveContract`](./message-service.md#instance-names-and-the-contract-they-resolve-to), it does no trimming.
+A service's runtime name is not always the name its `.proto` declares. Several instances share one contract and are addressed under distinct names — `Combat.Player.player6` serving the contract `Combat.Player` — which is how [`MessageService`](./message-service.md#instance-names-and-the-contract-they-resolve-to) has always resolved its own `ServiceName`.
 
-That means a service whose `ServiceName` carries instance segments — `Combat.Player.player6`, serving the contract `Combat.Player` — has no reachable proxy:
+Since 2.3.0 `ServiceProxy` resolves the same way, by trimming trailing segments until one names a service in the schema, so an instance-named service is reached like any other:
 
-- `new ServiceProxy(context, 'Combat.Player.player6')` fails at `init()`: no such service in the schema.
-- `new ServiceProxy(context, 'Combat.Player')` initialises, and then publishes to `REQUEST.Combat.Player.<method>` — a key nothing is bound to, because the instance bound `REQUEST.Combat.Player.player6.*`. Every call fails with `UnroutableError`.
+<!-- doc-check: compile -->
+```typescript
+import { ServiceProxy, IContext } from 'protobus';
 
-Build the routing key by hand and go through [`context.publishMessage`](./context.md#publishmessagecontent-routingkey-rpc-timeoutms-options): encode against the contract name, route against the instance name. [`sample/combatGame/BasePlayer.ts`](../../../sample/combatGame/BasePlayer.ts) has a working version in `callPlayerMethod`.
+interface IPlayer { shoot(request: { target: string }): Promise<{ shooter: string }> }
+
+async function shootAt(context: IContext, target: string) {
+    const player6 = new ServiceProxy(context, 'Combat.Player.player6') as ServiceProxy & IPlayer;
+    await player6.init();
+    return player6.shoot({ target });
+}
+```
+
+The two names play different parts, which is why one string could not serve both:
+
+| | Name used | Why |
+|---|---|---|
+| routing key | the **runtime** name — `REQUEST.Combat.Player.player6.shoot` | it has to reach *this instance's* queue |
+| request envelope | the **contract** method — `Combat.Player.shoot` | it is what the receiving `MessageService` validates the body against, and what selects the schema the payload is read with |
+
+They are identical whenever the proxy was constructed with a plain contract name, so nothing changes for the ordinary case.
+
+A name matching no service at any prefix still fails at `init()`, now with `InvalidServiceNameError` rather than protobufjs's raw `no such Service` — the lookup used to throw before the guard that was meant to raise it could run.
+
+Before 2.3.0 the only working path was to build the routing key by hand and go through [`context.publishMessage`](./context.md#publishmessagecontent-routingkey-rpc-timeoutms-options), encoding against the contract name and routing against the instance name. [`sample/combatGame/BasePlayer.ts`](../../../sample/combatGame/BasePlayer.ts) still does it that way in `callPlayerMethod`.
 
 ---
 

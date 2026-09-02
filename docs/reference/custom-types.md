@@ -159,12 +159,24 @@ A service that supplies its own schema through `ProtoFileName` rather than a pro
 >
 > The source comment at [`lib/custom_types.ts:79`](../../lib/custom_types.ts) explains why it has to be this way: protobufjs resolves a wrapper by fully-qualified type name at encode and decode time, with no per-root table to put it in.
 
-Only the addition to `root` is per instance — which produces one sharp edge:
+Only the addition to `root` is per instance.
 
-> [!WARNING]
-> **Registering the same name twice on one factory throws.** `registerType` ends in `root.add(...)`, and protobufjs rejects a duplicate: `duplicate name 'money' in Root`. This also means `factory.registerType(BigIntType)` throws — `bigint` and `timestamp` are already in every root — so re-registering a built-in "to be safe" breaks startup rather than being the no-op it looks like.
+> [!NOTE]
+> **Registering the same name twice is a no-op, since 2.3.0.** `registerType`
+> returns the message class already generated for the name and refreshes its
+> codec, so the last definition of a name still wins. Re-registering a built-in
+> "to be safe" — `factory.registerType(BigIntType)` — now does what it looks
+> like it does.
 >
-> Registering the same type on a *second* factory is fine; each has its own root.
+> Before 2.3.0 it threw `duplicate name 'money' in Root`: `registerType` ended
+> in `root.add(...)` and generated a second protobuf type for a name the root
+> already held. Registering the same type on a *second* factory was always fine;
+> each has its own root.
+>
+> One re-registration is still refused, with `CustomTypeConflictError`: one that
+> changes `wireType`. The generated message is fixed at first registration, so
+> accepting it would go on encoding in the original wire format while the caller
+> believed it had changed.
 
 ---
 

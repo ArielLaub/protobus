@@ -4,8 +4,18 @@ import { IConnection, Channel, PublishOptions, attachRestorer } from './connecti
 import { Logger } from './logger';
 import Config from './config';
 
-export class NotConnectedError extends Error {}
-export class InvalidMessageError extends Error {}
+export class NotConnectedError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'NotConnectedError';
+    }
+}
+export class InvalidMessageError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'InvalidMessageError';
+    }
+}
 
 export default class EventDispatcher {
     private messageFactory: MessageFactory;

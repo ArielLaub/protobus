@@ -157,12 +157,12 @@ function describe(error: unknown): string {
 }
 ```
 
-Every publish carries a `messageId`, stable across redeliveries and every retry and DLQ hop, so a consumer can recognise a duplicate. Note the limit: `ServiceProxy` and `Context.publishMessage()` take no `messageId` argument, so a caller that republishes after an ambiguous outcome sends a *new* id — deduplicating that needs an idempotency key of your own inside the request payload. `PUBLISH_CONFIRM_TIMEOUT_MS` (default 30000) and `MAX_OUTSTANDING_CONFIRMS` (default 256) bound how long a confirm is awaited and how much unconfirmed work may be in flight per channel.
+Every publish carries a `messageId`, stable across redeliveries and every retry and DLQ hop, so a consumer can recognise a duplicate. In 2.2.x a caller could not *set* one, so a caller-driven republish after an ambiguous outcome sent a new id and was unrecognisable as the same request; `CallOptions.messageId` closes that in 2.3.0 — see [Deduplicating a caller's own republish](./concepts/delivery-guarantees.md#deduplicating-a-callers-own-republish). `PUBLISH_CONFIRM_TIMEOUT_MS` (default 30000) and `MAX_OUTSTANDING_CONFIRMS` (default 256) bound how long a confirm is awaited and how much unconfirmed work may be in flight per channel.
 
 Full treatment in [Delivery Guarantees](./concepts/delivery-guarantees.md).
 
 > [!NOTE]
-> **If you were catching `PublishMessageError`** — only reachable by importing from `protobus/dist/lib/service_proxy`, since it was never a root export — it no longer wraps anything. 2.1.0 stopped `ServiceProxy` replacing every failure with it, because doing so discarded the very distinction the publish path exists to report, along with the `messageId` that makes deduplication possible. Match on `PublishError` or a specific subclass instead.
+> **If you were catching `PublishMessageError`** — only reachable by importing from `protobus/dist/lib/service_proxy`, since it was never a root export — it stopped wrapping anything in 2.1.0, when `ServiceProxy` stopped replacing every failure with it: doing so discarded the very distinction the publish path exists to report, along with the `messageId` that makes deduplication possible. **2.3.0 deletes the class**, since nothing had constructed it for two minor versions and a `catch` on it could never match. Match on `PublishError` or a specific subclass instead.
 
 ---
 

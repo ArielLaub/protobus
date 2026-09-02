@@ -83,11 +83,11 @@ Every publish carries a `messageId`, minted as a UUID by the publish path unless
 >
 > — [`index.ts`](../../index.ts)
 
-A handler reads it off the framework context, which arrives as the fourth argument to a service method alongside `redelivered`. The context type itself is `MessageHandlerContext` in [`lib/connection.ts`](../../lib/connection.ts) and is not re-exported from the package root, so declare the shape you need inline:
+A handler reads it off the framework context, which arrives as the fourth argument to a service method alongside `redelivered`. The context type is `MessageHandlerContext`, exported from the package root since 2.3.0 ([`lib/connection.ts`](../../lib/connection.ts)):
 
 <!-- doc-check: compile -->
 ```typescript
-import { MessageService } from 'protobus';
+import { MessageService, MessageHandlerContext } from 'protobus';
 
 const alreadyDone = new Set<string>();
 
@@ -99,7 +99,7 @@ class OrdersService extends MessageService {
         request: { customerId: string },
         actor: string,
         correlationId: string,
-        ctx?: { messageId?: string; redelivered: boolean },
+        ctx?: MessageHandlerContext,
     ): Promise<{ ok: boolean }> {
         // messageId is stable across every redelivery and every retry hop.
         const key = ctx?.messageId;
@@ -115,8 +115,37 @@ class OrdersService extends MessageService {
 > [!NOTE]
 > An in-memory `Set` is shown for brevity. In a real service the deduplication key belongs in the same store as the side effect, written in the same transaction — otherwise the process restarts and forgets what it applied.
 
-> [!WARNING]
-> **`messageId` covers redeliveries and retries, not a caller's own republish.** `ServiceProxy` and `Context.publishMessage()` take no `messageId` argument, so a caller that reacts to an ambiguous outcome by calling the method again produces a message with a *new* `messageId` and a new `correlationId` — which the consumer cannot recognise as the same request. Deduplicating a caller-driven republish needs an idempotency key you put in the request payload yourself.
+### Deduplicating a caller's own republish
+
+Redeliveries and retries carry the id for you. A caller's *own* republish — reacting to a `PublishConfirmTimeoutError` or a `ChannelClosedError` by calling the method again — does not, unless you say so: without an id of your own, the second attempt mints a fresh UUID and a fresh `correlationId`, and the consumer has no way to see the two as one request.
+
+Since 2.3.0, `CallOptions.messageId` is that id. It is the last argument of a proxy method and of `Context.publishMessage()`:
+
+<!-- doc-check: compile -->
+```typescript
+import { ServiceProxy, PublishConfirmTimeoutError, ChannelClosedError } from 'protobus';
+
+interface Orders { create(request: { customerId: string }, actor?: string, rpc?: boolean, timeoutMs?: number, options?: { messageId?: string }): Promise<{ ok: boolean }> }
+
+async function createOnce(orders: ServiceProxy & Orders, customerId: string, requestId: string) {
+    // Identify the WORK, not the attempt: derive it from the request, never
+    // from a clock or a counter, or the two attempts get two identities.
+    const options = { messageId: `create-order-${requestId}` };
+    try {
+        return await orders.create({ customerId }, undefined, true, undefined, options);
+    } catch (error) {
+        if (error instanceof PublishConfirmTimeoutError || error instanceof ChannelClosedError) {
+            // AMBIGUOUS: the broker may already hold the first copy. The same
+            // messageId is what lets an idempotent consumer collapse them.
+            return await orders.create({ customerId }, undefined, true, undefined, options);
+        }
+        throw error;
+    }
+}
+```
+
+> [!NOTE]
+> A blank `messageId` is refused with `InvalidMessageIdError` rather than falling back to a generated one. An id derived from a field that turned out to be empty would give every attempt a different identity and no deduplication at all — silently, which is the one outcome this option exists to prevent.
 
 ---
 
@@ -145,6 +174,8 @@ Two other consumers in the library behave differently, and both are worth knowin
 
 - **The callback queue** (replies) acks on delivery, not late — `BaseListener` defaults `lateAck` to `false` and `CallbackListener` does not change it. The queue is exclusive and auto-deleting, so a caller that died has nowhere for a reply to be redelivered to anyway.
 - **Event listeners** do ack late, but they register no retry options ([`lib/event_listener.ts`](../../lib/event_listener.ts) never overrides `getRetryOptions`), so a failing event handler takes the no-retry branch: the delivery is rejected without requeue and the event is gone. **Events do not climb the ladder and never reach a DLQ.** If an event handler's work matters, it has to retry internally.
+
+  The reject is also what keeps the consumer *alive*, which is easy to miss when reading this as a pure loss. Measured against a real broker in [`test/integration/event_failure_semantics.test.ts`](../../test/integration/event_failure_semantics.test.ts): five events whose handler throws are each delivered exactly once, the `.Events` queue is empty afterwards, no `.Events.DLQ` exists, and a healthy event published after all five is still processed. Leaving them unacknowledged instead would hold the prefetch — `DEFAULT_PREFETCH`, **1** unless `maxConcurrent` is set — and stall the listener completely behind the first permanent failure. Losing the event is the deliberate trade for not deadlocking the subscriber.
 
 ---
 

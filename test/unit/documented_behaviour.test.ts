@@ -87,12 +87,14 @@ describe('docs/reference/custom-types.md — a custom type needs syntax = "proto
             .not.toThrow();
     });
 
-    it('the built-in types are already registered, so registering one again throws', () => {
+    it('the built-in types are already registered, and registering one again is a no-op', () => {
         // README.md used to tell readers to call registerCustomType('BigInt',
         // BigIntType) as a first step. Besides being the wrong arity and not
-        // exported from the package root, it is not idempotent.
+        // exported from the package root, it threw `duplicate name 'bigint' in
+        // Root` until 2.3.0. It is idempotent now, and the docs say so.
         const factory = factoryOf(new Context());
-        expect(() => factory.registerType(BigIntType)).toThrow(/duplicate name/);
+        expect(() => factory.registerType(BigIntType)).not.toThrow();
+        expect(factory.registerType(BigIntType)).toBe(factory.registerType(BigIntType));
     });
 });
 

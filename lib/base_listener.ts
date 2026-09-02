@@ -5,11 +5,36 @@ import { IConnection, Channel, ConsumeOptions, ConsumeRetryOptions, MessageHandl
 import Config from './config';
 import { Logger } from './logger';
 
-export class ConnectionError extends Error {}
-export class NotConnectedError extends Error {}
-export class NotInitializedError extends Error {}
-export class AlreadyStartedError extends Error {}
-export class MissingExchangeError extends Error {}
+export class ConnectionError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'ConnectionError';
+    }
+}
+export class NotConnectedError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'NotConnectedError';
+    }
+}
+export class NotInitializedError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'NotInitializedError';
+    }
+}
+export class AlreadyStartedError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'AlreadyStartedError';
+    }
+}
+export class MissingExchangeError extends Error {
+    constructor(message?: string) {
+        super(message);
+        this.name = 'MissingExchangeError';
+    }
+}
 
 export abstract class BaseListener extends EventEmitter {
     protected connection: IConnection;
