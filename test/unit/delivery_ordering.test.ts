@@ -204,4 +204,50 @@ describe('streaming resource bounds', () => {
         expect((await iterator.next()).done).toBe(true);
         expect((d as any).pendingStreams.size).toBe(0);
     });
+
+    it('returns a timed-out stream\'s bytes to the process-wide allowance', async () => {
+        // Generous per-call bounds and a tiny aggregate one, so the only thing
+        // that can fail a stream here is the process-wide total.
+        process.env.STREAM_MAX_BUFFERED_CHUNKS = '1000';
+        process.env.STREAM_MAX_BUFFERED_BYTES = String(1024 * 1024);
+        process.env.STREAM_MAX_TOTAL_BUFFERED_BYTES = '64';
+
+        const d = new MessageDispatcher(new StreamConnection() as any);
+        await d.init();
+
+        // A first call takes the whole allowance and is then abandoned: the
+        // caller never iterates, so the idle deadline is what ends it.
+        const abandoned = d.publishStreaming(Buffer.from('req'), 'REQUEST.A.B.c', 30);
+        const abandonedIterator = abandoned[Symbol.asyncIterator]();
+        const abandonedId = onlyStreamId(d);
+        for (let i = 0; i < 4; i++) {
+            await d._onResult(Buffer.alloc(16, i), abandonedId, {});
+        }
+        expect((d as any).totalBufferedBytes).toBe(64);
+
+        await new Promise((r) => setTimeout(r, 90));
+        await expect(abandonedIterator.next()).rejects.toBeInstanceOf(StreamTimeoutError);
+
+        // The chunks are gone, so the running total has to have let go of them
+        // too. Zeroing the per-stream count before cancellation ran left
+        // cancellation nothing to hand back, and only a reconnect — which
+        // resets the counter — ever returned it.
+        expect((d as any).totalBufferedBytes).toBe(0);
+
+        // The symptom that reaches an operator: a healthy later call can no
+        // longer use the allowance the abandoned one was holding.
+        const healthy = d.publishStreaming(Buffer.from('req'), 'REQUEST.A.B.c', 5000);
+        const healthyIterator = healthy[Symbol.asyncIterator]();
+        const healthyId = onlyStreamId(d);
+        for (let i = 0; i < 4; i++) {
+            await d._onResult(Buffer.alloc(16, i), healthyId, {});
+            const next = await healthyIterator.next();
+            expect(next.done).toBe(false);
+            expect(next.value).toHaveLength(16);
+        }
+
+        await d._onResult(Buffer.alloc(0), healthyId, { 'x-protobus-final': true });
+        expect((await healthyIterator.next()).done).toBe(true);
+        expect((d as any).totalBufferedBytes).toBe(0);
+    });
 });

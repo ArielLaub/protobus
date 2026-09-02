@@ -547,12 +547,16 @@ export default class MessageDispatcher implements IMessageDispatcher {
                     `No streaming chunk received within ${timeoutMs}ms`,
                 );
                 stream.ended = true;
-                stream.chunks.length = 0;
-                stream.bufferedBytes = 0;
                 // The producer is still generating for a caller that has
                 // stopped listening, so tell it to stop — the same courtesy
                 // return() and throw() extend. Without this an abandoned
                 // stream ran to completion at the server's expense.
+                //
+                // cancel() is what discards the buffer, because it is also
+                // what returns those bytes to the process-wide allowance.
+                // Zeroing bufferedBytes here first meant it had nothing left
+                // to return, so every timed-out stream permanently consumed
+                // its share until the aggregate bound rejected everything.
                 cancel({ notifyOnly: true });
                 const fail = stream.rejectNext;
                 stream.resolveNext = undefined;
