@@ -38,6 +38,39 @@ and then disconnect. See [RunnableService](../reference/api/runnable-service.md)
 
 ---
 
+### A failing event handler loses the event
+
+**Severity:** Medium
+
+**Description:**
+Event listeners ack late, but they register no retry options
+([`lib/event_listener.ts`](../../lib/event_listener.ts) never overrides
+`getRetryOptions`), so a handler that throws takes the no-retry branch: the
+delivery is rejected without requeue and the event is gone. Events do not climb
+the retry ladder and never reach a DLQ. RPC requests do both — this asymmetry
+applies to events only.
+
+This is deliberate, not a defect. Rejecting is what keeps the consumer alive:
+leaving the delivery unacknowledged would hold the prefetch — **1** unless
+`maxConcurrent` is set — and stall the listener completely behind the first
+permanently-failing event. Losing that event is the trade for not deadlocking
+the subscriber. The behaviour is measured against a real broker in
+[`test/integration/event_failure_semantics.test.ts`](../../test/integration/event_failure_semantics.test.ts)
+and set out in full under
+[Ack ordering](../concepts/delivery-guarantees.md#ack-ordering).
+
+It is listed here because the consequence is easy to miss when reading events as
+"fire and forget": there is no retry, no dead letter, and no record afterwards
+that anything was dropped.
+
+**Workaround:**
+If an event handler's work matters, make the handler responsible for it —
+retry inside the handler, or write the work to a store the handler owns and
+drive it from there. For work that must not be lost, use an RPC, which does
+retry and does dead-letter.
+
+---
+
 ### No Request Tracing
 
 **Description:**
