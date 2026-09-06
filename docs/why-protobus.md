@@ -1,74 +1,175 @@
 # Why ProtoBus
 
-> The case for choosing it, the case against, and how it compares with Moleculer, NestJS and Seneca.
+> The case for choosing it, the case against, and how it compares with direct gRPC, NestJS, Moleculer, Seneca and raw AMQP.
 
-**Read this if** you are deciding whether to adopt protobus, or explaining that decision to someone else.
+**Read this if** you are deciding whether to adopt ProtoBus, or explaining that decision to someone else.
 
 | | |
 |---|---|
 | **Prerequisites** | none |
-| **Next** | [Getting Started](./guide/getting-started.md) · [Architecture](./concepts/architecture.md) |
+| **Next** | [Design Principles](./design-principles.md) · [Getting Started](./guide/getting-started.md) · [Architecture](./concepts/architecture.md) |
 | **Source** | [`lib/`](../lib) |
 
-**On this page** — [The gap](#the-gap-in-nodejs-microservices) · [Framework comparison](#framework-comparison) · [When to choose it](#summary-when-to-choose-protobus) · [Performance](#performance)
+**On this page** — [The short version](#the-short-version) · [Not the application](#the-other-half-of-the-idea-do-not-become-the-application) · [Why not NestJS](#why-not-just-use-nestjs-microservices) · [Why not gRPC](#why-not-direct-grpc) · [Why not raw AMQP](#why-not-raw-amqplib--protobufjs) · [Framework comparison](#framework-comparison) · [Reliability philosophy](#reliability-philosophy) · [The intended niche](#the-intended-niche) · [Performance](#performance)
 
 ---
 
-## The Gap in Node.js Microservices
+ProtoBus is for developers who like **small composable libraries** and want
+**Protobuf-style RPC with RabbitMQ semantics**.
 
-The Node.js ecosystem has no shortage of microservices frameworks. Yet most share a common philosophy: **transport agnosticism**. They abstract away the message broker to support pluggable transports—RabbitMQ today, Redis tomorrow, Kafka next week.
+It is not trying to be NestJS, Moleculer, gRPC, or a generic broker abstraction.
+Those projects solve different problems.
 
-This flexibility comes at a cost. To support every broker, these frameworks reduce them all to a lowest common denominator: a dumb pipe that moves bytes. The sophisticated features that make each broker powerful—RabbitMQ's topic exchanges, Kafka's partitioning, NATS's simplicity—get ignored or reimplemented (poorly) at the application layer.
+## The short version
 
-**ProtoBus takes a different path.**
+Direct gRPC gives you an excellent schema-first, cross-language RPC model:
 
-We made a deliberate choice: build exclusively for RabbitMQ and leverage everything it offers. No abstraction layers. No "works everywhere, optimized nowhere." Just direct access to battle-tested broker features that have powered mission-critical systems for over a decade.
+```text
+Service A ───── HTTP/2 + Protobuf ─────> Service B
+```
 
-### Why This Matters
+ProtoBus keeps the Protobuf contract but inserts a durable broker:
 
-When a transport-agnostic framework does "load balancing," it tracks service instances in memory and picks one. If that instance dies between selection and delivery, your message is lost.
+```text
+Service A ─────> RabbitMQ ─────> Service B
+                    │
+                    ├─ queue owns outstanding work
+                    ├─ competing consumers
+                    ├─ acknowledgements / redelivery
+                    ├─ topic routing
+                    ├─ retry / DLQ topology
+                    └─ publisher confirms
+```
 
-When ProtoBus does load balancing, messages sit in a RabbitMQ queue. Consumers pull work. If a consumer crashes before acknowledging, the message automatically requeues for another consumer. The broker handles it—because that's what brokers are designed to do.
+That makes ProtoBus useful when "the callee is temporarily unavailable" should
+not necessarily mean "the work ceased to exist."
 
-This isn't a minor implementation detail. It's the difference between "usually works" and "guaranteed delivery."
+## The other half of the idea: do not become the application
 
-There's also a performance angle: app-level routing in JavaScript means routing logic runs on your event loop, competing with your business logic for CPU time. Every message routes through your Node.js process before reaching a handler. RabbitMQ's Erlang runtime, by contrast, was purpose-built for telecom-grade message switching—lightweight processes, preemptive scheduling, and pattern matching optimized over decades. Why reimplement that in JavaScript?
+A messaging library should not force a dependency-injection container, controller
+model, ORM, logger, HTTP framework or module system on the application.
 
-### True Polyglot Support
+ProtoBus deliberately stops at the messaging boundary.
 
-Here's something transport-agnostic frameworks don't tell you: their "flexibility" creates lock-in. To call a Moleculer service from Python, you'd need to reimplement Moleculer's entire protocol—service registry, load balancing, request/response correlation, serialization format. Good luck.
+```text
+your application
+├─ your DI choice
+├─ your HTTP choice
+├─ your database choice
+├─ your validation choice
+├─ your logger/metrics choice
+└─ ProtoBus
+   ├─ RabbitMQ transport semantics
+   └─ Protobuf contracts
+```
 
-ProtoBus is different. Because we use:
-- **Protocol Buffers** for serialization (supported in every language)
-- **RabbitMQ** for routing and load balancing (standard AMQP clients everywhere)
-- **No app-level protocol** beyond "serialize protobuf, publish to queue"
+This is a feature, not an incomplete framework.
 
-...implementing a compatible client in Go, Rust, Java, or any language takes days, not months. The `.proto` files are your contract. The broker handles the rest.
+## Why not just use NestJS microservices?
 
-We already have [protobus-py](https://github.com/ArielLaub/protobus-py) for Python, fully compatible with the TypeScript version. A Go or Rust implementation would follow the same pattern.
+NestJS is a much broader application framework. Its strengths are exactly the
+things ProtoBus chooses not to own: modules, DI, decorators, controllers,
+interceptors, guards, application lifecycle and a large integrated ecosystem.
 
-### Why RabbitMQ?
+If you want those conventions, Nest is a strong choice.
 
-RabbitMQ is boring technology—and that's a compliment. It's been battle-tested since 2007, powers systems at scale across every industry, and isn't going anywhere. In our experience, it's remarkably hard to find a project that RabbitMQ can't serve well.
+If you want messaging to be one replaceable library among other independently
+chosen libraries, ProtoBus is intentionally a better fit.
 
-By building exclusively for RabbitMQ, ProtoBus can leverage:
+The RabbitMQ difference matters too. ProtoBus is not designed around a
+lowest-common-denominator transport abstraction. RabbitMQ topology and settlement
+semantics are part of the model.
 
-- **Topic exchanges** with powerful wildcard routing (`orders.*.created`, `orders.#`)
-- **Competing consumers** for natural load distribution
-- **Message acknowledgments** for guaranteed processing
-- **Dead-letter exchanges** for handling failures gracefully
-- **Durable queues** that survive broker restarts
-- **Publisher confirms** for reliable publishing
-- **Priority queues** when some messages matter more
-- **TTL and expiration** for time-sensitive workloads
+## Why not direct gRPC?
 
-Transport-agnostic frameworks can't use most of these—they're RabbitMQ-specific. ProtoBus uses all of them.
+Use gRPC when direct point-to-point RPC is the right architecture. It is mature,
+fast, polyglot and has first-class Protobuf support.
+
+ProtoBus is interesting when you additionally want:
+
+- durable broker ownership of queued work
+- competing consumers without client-side discovery/load balancing
+- broker acknowledgements and redelivery
+- topic-based events
+- RabbitMQ priority and DLQ features
+- caller and callee decoupling in time
+
+The shorthand "gRPC on steroids" is useful conversationally, but the precise
+description is:
+
+> **gRPC-style contracts over a durable message bus.**
+
+ProtoBus is not wire-compatible with gRPC and does not claim to replace it.
+
+## Why not raw `amqplib + protobufjs`?
+
+That is the real lower bound, and for some systems it is the right answer.
+
+Raw libraries give you maximum control, but every application then has to decide
+and implement:
+
+- service/routing conventions
+- RPC correlation
+- request timeouts
+- reply publication
+- publisher confirms
+- unroutable messages
+- reconnect restoration
+- graceful draining
+- retry hand-off
+- errors
+- streams and cancellation
+- cross-language protocol details
+
+ProtoBus exists so those invariants can be implemented once, tested once and
+documented once without adding an application framework around them.
+
+## Why RabbitMQ-native?
+
+RabbitMQ is not just a byte pipe. Its useful semantics include queues, competing
+consumers, topic exchanges, acknowledgements, redelivery, priorities, TTL/DLX and
+publisher confirms.
+
+A transport-agnostic abstraction has to either hide those features or model them
+indirectly. ProtoBus makes the opposite trade: it intentionally commits to
+RabbitMQ so it can use RabbitMQ correctly.
+
+There is also a performance angle: app-level routing in JavaScript means routing
+logic runs on your event loop, competing with your business logic for CPU time.
+RabbitMQ's Erlang runtime was purpose-built for message switching.
+
+## Why Protobuf-native?
+
+The schema does three jobs at once:
+
+1. wire encoding
+2. service contract
+3. language-neutral type definition
+
+That is more important than "binary is smaller than JSON." The real benefit is
+that the contract is external to any one runtime.
+
+The same `.proto` is consumed by TypeScript, Python and Go implementations.
+
+## Cross-language is a core property
+
+ProtoBus does not call itself cross-language merely because another language
+could theoretically publish AMQP messages.
+
+There are first-party compatible implementations:
+
+- [protobus](https://github.com/ArielLaub/protobus) — TypeScript / Node.js
+- [protobus-py](https://github.com/ArielLaub/protobus-py) — Python
+- [protobus-go](https://github.com/ArielLaub/protobus-go) — Go, experimental
+
+That constraint is healthy for the TypeScript implementation: wire behavior
+cannot casually depend on JavaScript-only object conventions. Where the ports
+differ, the difference is recorded per feature — see
+[Priority → Cross-language](./guide/priority.md#cross-language).
 
 ---
 
-## Framework Comparison
-
-### Overview
+## Framework comparison
 
 | Aspect | ProtoBus | Moleculer | NestJS | Seneca |
 |--------|----------|-----------|--------|--------|
@@ -78,91 +179,68 @@ Transport-agnostic frameworks can't use most of these—they're RabbitMQ-specifi
 | **Schema** | Required `.proto` | Optional | Optional (DTOs) | None |
 | **Routing** | Broker-native | App-level | App-level | Pattern matching |
 | **Load balancing** | Broker-level | App-level | App-level | App-level |
-| **Message delivery** | Guaranteed | Best effort | Best effort | Best effort |
+| **Message delivery** | At-least-once, broker-acknowledged | Best effort | Best effort | Best effort |
 | **Cross-language** | Native (proto + AMQP) | Reimplement protocol | Reimplement protocol | Reimplement protocol |
-| **Learning curve** | Low | Medium | High | Low |
+| **App framework included** | No | Partly (gateway, caching) | Yes | No |
 | **Dependencies** | 3 | 15+ | 50+ | 10+ |
 
----
+"At-least-once, broker-acknowledged" is defined precisely in
+[Delivery Guarantees](./concepts/delivery-guarantees.md); it is not "guaranteed
+delivery" and this documentation avoids that phrase.
 
 ### Moleculer
 
-[Moleculer](https://moleculer.services/) is one of the most popular Node.js microservices frameworks, known for its extensive feature set and transport flexibility.
+[Moleculer](https://moleculer.services/) is one of the most popular Node.js
+microservices frameworks, known for its extensive feature set and transport
+flexibility.
 
-**How it works:**
-Moleculer implements its own service registry, load balancer, and routing layer. The transporter (RabbitMQ, NATS, Redis, etc.) is just a message pipe—Moleculer handles everything else in application code.
-
-**Strengths:**
-- Extensive built-in features (caching, API gateway, tracing, metrics)
-- Many transport options
-- Active community and ecosystem
-- Good documentation
-
-**Trade-offs vs ProtoBus:**
+**How it works:** Moleculer implements its own service registry, load balancer
+and routing layer. The transporter (RabbitMQ, NATS, Redis, etc.) is a message
+pipe — Moleculer handles everything else in application code.
 
 | Aspect | Moleculer | ProtoBus |
 |--------|-----------|----------|
 | Routing | App-level service registry | Native RabbitMQ topic exchanges |
-| Load balancing | Tracks instances, picks one | Competing consumers on queue |
-| On consumer crash | Message may be lost | Auto-requeue, another consumer picks up |
-| Serialization | JSON by default (larger, slower) | Protobuf binary (3-10x smaller) |
+| Load balancing | Tracks instances, picks one | Competing consumers on a queue |
+| On consumer crash | Message may be lost | Redelivered to another consumer |
+| Serialization | JSON by default | Protobuf binary |
 | Schema | Runtime validation (optional) | Compile-time `.proto` contracts |
 | Persistence | Depends on transporter config | Native durable queues |
 
-**When to choose Moleculer:**
-- You need to switch brokers without code changes
-- You want batteries-included (built-in API gateway, caching, etc.)
-- You're building a monolith that might become microservices later
+**When to choose Moleculer:** you need to switch brokers without code changes,
+you want batteries included (API gateway, caching, tracing), or you are building
+a monolith that might become microservices later.
 
----
+### NestJS microservices
 
-### NestJS Microservices
+[NestJS](https://nestjs.com/) is a full-featured framework for server-side
+applications, with a microservices module that supports multiple transports.
 
-[NestJS](https://nestjs.com/) is a full-featured framework for building server-side applications, with a microservices module that supports multiple transports.
-
-**How it works:**
-NestJS microservices use a request-response or event-based pattern over various transports. Like Moleculer, routing and load balancing happen at the application level. NestJS adds an opinionated architecture with decorators, modules, and dependency injection.
-
-**Strengths:**
-- Comprehensive framework (HTTP, WebSockets, GraphQL, microservices)
-- Strong TypeScript support with decorators
-- Angular-inspired architecture (familiar to many)
-- Enterprise adoption
-
-**Trade-offs vs ProtoBus:**
+**How it works:** request-response or event-based patterns over various
+transports, with routing and load balancing at the application level, inside an
+opinionated architecture of decorators, modules and dependency injection.
 
 | Aspect | NestJS | ProtoBus |
 |--------|--------|----------|
-| Scope | Full framework | Microservices messaging only |
-| Architecture | Opinionated (modules, decorators) | Minimal (just services + proxies) |
-| Learning curve | Steep | Gentle |
+| Scope | Full framework | Messaging only |
+| Architecture | Opinionated (modules, decorators) | Ordinary classes, your DI or none |
 | Transport usage | Abstracted | Native RabbitMQ features |
 | Serialization | JSON | Protobuf binary |
 | Dependencies | 50+ packages | 3 packages |
-| Message reliability | Transport-dependent | Guaranteed with acks |
+| Message reliability | Transport-dependent | Broker-acknowledged, at-least-once |
 
-**When to choose NestJS:**
-- You want one framework for everything (HTTP API + microservices)
-- You like Angular-style architecture
-- You're building an enterprise application with many developers
-- You need extensive documentation and community support
-
----
+**When to choose NestJS:** you want one framework for everything (HTTP API plus
+microservices), you like Angular-style architecture, or you need its ecosystem
+and community.
 
 ### Seneca
 
-[Seneca](https://senecajs.org/) is a microservices toolkit focused on pattern matching and plugin architecture.
+[Seneca](https://senecajs.org/) is a microservices toolkit focused on pattern
+matching and a plugin architecture.
 
-**How it works:**
-Seneca routes messages based on pattern matching rather than service names. You define patterns like `{ role: 'math', cmd: 'sum' }` and Seneca routes to matching handlers. Transport is pluggable.
-
-**Strengths:**
-- Simple mental model (patterns, not services)
-- Flexible plugin system
-- Been around since 2010
-- Good for decomposing monoliths
-
-**Trade-offs vs ProtoBus:**
+**How it works:** messages are routed by pattern matching rather than service
+names. You define patterns like `{ role: 'math', cmd: 'sum' }` and Seneca routes
+to matching handlers. Transport is pluggable.
 
 | Aspect | Seneca | ProtoBus |
 |--------|--------|----------|
@@ -170,49 +248,76 @@ Seneca routes messages based on pattern matching rather than service names. You 
 | Schema | None (dynamic patterns) | Required `.proto` contracts |
 | Type safety | Runtime only | Compile-time |
 | Serialization | JSON | Protobuf binary |
-| Message delivery | Best effort | Guaranteed |
-| Complexity | Can get messy with many patterns | Explicit service contracts |
+| Message delivery | Best effort | Broker-acknowledged, at-least-once |
 
-**When to choose Seneca:**
-- You prefer pattern-based over service-based thinking
-- You're decomposing a monolith incrementally
-- You want maximum flexibility in message routing
-
----
+**When to choose Seneca:** you prefer pattern-based over service-based thinking,
+you are decomposing a monolith incrementally, or you want maximum flexibility in
+message routing.
 
 ### MassTransit (.NET)
 
-While not a Node.js framework, [MassTransit](https://masstransit.io/) deserves mention as it shares ProtoBus's philosophy—it's primarily RabbitMQ-native (with other transports added later) and leverages broker features directly.
-
-If you're in the .NET ecosystem, MassTransit is the closest equivalent to what ProtoBus provides for Node.js. It's mature, widely used, and proves that the "broker-native" approach works at scale.
+While not a Node.js framework, [MassTransit](https://masstransit.io/) deserves
+mention because it shares ProtoBus's philosophy: primarily RabbitMQ-native, with
+other transports added later, and leveraging broker features directly. If you
+are in the .NET ecosystem, it is the closest equivalent, and it proves the
+broker-native approach works at scale.
 
 ---
 
-## Summary: When to Choose ProtoBus
+## Reliability philosophy
 
-Choose ProtoBus when:
+ProtoBus asks a simple question repeatedly:
 
-- **Reliability is non-negotiable** — Financial systems, healthcare, anything where "message lost" isn't acceptable
-- **Performance matters** — Binary serialization, no app-level routing overhead
-- **You want RabbitMQ's full power** — Topic exchanges, DLX, priority queues, not just pub/sub
-- **Type safety is important** — Compile-time contracts, not runtime surprises
-- **You prefer simplicity** — 3 dependencies, minimal API surface, does one thing well
-- **RabbitMQ is already in your stack** — Or you're happy to adopt it
+> **What does success actually prove?**
 
-Choose something else when:
+Examples:
 
-- **Transport flexibility is required** — You might need to switch brokers
-- **You need a full framework** — HTTP, GraphQL, WebSockets, the works
-- **JSON is fine** — You don't need binary serialization benefits
-- **You prefer conventions over contracts** — Pattern matching over `.proto` files
+- A publish resolving should mean the broker confirmed it, not merely that bytes
+  entered a local buffer.
+- Retry hand-off should not acknowledge the old delivery before the replacement
+  publication is confirmed.
+- Reconnection should mean topology/consumers are restored, not only that a TCP
+  socket exists.
+- Graceful shutdown should stop intake and drain in-flight settlement before
+  disconnecting.
+- Ambiguous outcomes should stay ambiguous instead of being mislabeled success or
+  failure.
+
+This does not create exactly-once execution. RabbitMQ systems remain at-least-once
+where redelivery is possible, and idempotency is still an application concern —
+which is why a caller can pin a stable `messageId` on a publish and deduplicate
+on it.
+
+See [Delivery Guarantees](./concepts/delivery-guarantees.md).
+
+## The intended niche
+
+Choose ProtoBus when these statements sound like you:
+
+- "The `.proto` should be the contract."
+- "I want RabbitMQ because I actually want a broker."
+- "I want the same service contract across languages."
+- "I care what an acknowledgement or publisher confirm really means."
+- "I do not want my messaging library to choose my DI/HTTP/ORM/logger."
+- "I prefer a small dependency graph and a small conceptual surface."
+
+Choose something broader when you want a framework to make many of those choices
+for you.
+
+Choose direct gRPC when you do not need broker semantics.
+
+Choose raw AMQP when ProtoBus's RPC conventions themselves are more abstraction
+than you want.
+
+That boundary is the point.
 
 ---
 
 ## Performance
 
-In the authors' measurements, ProtoBus outperformed Moleculer in every scenario tested. Both ran on the same hardware against the same RabbitMQ, using a single shared publisher context:
-
-### Benchmark Results
+In the authors' measurements, ProtoBus outperformed Moleculer in every scenario
+tested. Both ran on the same hardware against the same RabbitMQ, using a single
+shared publisher context:
 
 | Scenario | Payload | ProtoBus | Moleculer | Difference |
 |----------|---------|----------|-----------|------------|
@@ -220,22 +325,15 @@ In the authors' measurements, ProtoBus outperformed Moleculer in every scenario 
 | **Complex Order** | ~5 KB | 8,880 msg/sec | 8,032 msg/sec | **+10%** |
 | **Metrics Batch** | ~139 KB | 637 msg/sec | 567 msg/sec | **+12%** |
 
-### Why ProtoBus is Faster
+Why the gap: binary serialization reduces network I/O, message type analysis is
+cached so plain messages skip object traversal, and routing happens in the broker
+rather than on the Node event loop.
 
-1. **Binary serialization** — Protobuf encodes smaller payloads than JSON, reducing network I/O
-2. **No preprocessing overhead** — ProtoBus caches message type analysis, skipping object traversal when no custom types are present
-3. **Broker-native routing** — No JavaScript event loop overhead for routing decisions; Erlang handles it
-4. **Direct AMQP** — Messages go straight to RabbitMQ queues without app-level indirection
-
-### Methodology
-
-- **Transport**: RabbitMQ 3.x (same for both)
-- **Pattern**: Single shared publisher context (realistic usage)
-- **Services**: 10 competing consumer instances
-- **Warm-up**: 50 messages before measurement
-- **Messages**: 10,000 (simple/complex), 5,000 (metrics)
-
-The "Complex Order" benchmark uses a realistic e-commerce order with nested objects, arrays, and a ~3KB text field. The "Metrics" benchmark simulates time-series ingestion with 3,200 data points per message.
+**Methodology:** RabbitMQ 3.x for both; a single shared publisher context; 10
+competing consumer instances; 50 warm-up messages; 10,000 messages
+(simple/complex) or 5,000 (metrics). "Complex Order" is a realistic e-commerce
+order with nested objects, arrays and a ~3 KB text field. "Metrics" simulates
+time-series ingestion with 3,200 data points per message.
 
 > [!WARNING]
 > **These numbers are not reproducible from this repository.** The benchmark
@@ -256,6 +354,6 @@ The "Complex Order" benchmark uses a realistic e-commerce order with nested obje
 
 <div align="center">
 
-**[← Docs index](./README.md)** · **[Docs index](./README.md)** · **[Getting Started →](./guide/getting-started.md)**
+**[← Docs index](./README.md)** · **[Design Principles →](./design-principles.md)** · **[Getting Started →](./guide/getting-started.md)**
 
 </div>
