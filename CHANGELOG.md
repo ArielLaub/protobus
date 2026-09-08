@@ -4,6 +4,132 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] — unreleased
+
+Eight findings from an external audit of 2.3.0. Four were reproduced defects,
+one was a documented design limitation now given an opt-in remedy, and three
+were documentation that had drifted away from — or overstated — what the code
+does.
+
+A minor rather than a patch: `eventRetry` is new API, and 64-bit scalars now
+decode to a different type.
+
+### Added
+
+- **`eventRetry` — opt-in retry and dead-lettering for event handlers.** A
+  failing event handler dropped its event, with no retry and no DLQ. The
+  rationale for that was real — an unacknowledged delivery holds the prefetch
+  and stalls the subscriber behind the first permanently-failing event — but it
+  was presented as the only alternative to loss, and bounded retry with durable
+  dead-lettering is a third option. Setting `eventRetry` on a service gives its
+  event subscriptions the ladder its RPC queue already has: park on
+  `<Service>.Events.Retry` for `retryDelayMs`, come back, and land on
+  `<Service>.Events.DLQ` once the hops are spent. Off by default, because
+  enabling it declares topology a running deployment does not have.
+
+  The redelivery path is not the request path. A request's retry dead-letters
+  back to `proto.bus`, which routes to one service queue; events fan out, so
+  returning them through `proto.bus.events` would redeliver to every subscriber
+  bound to the topic, including the ones that succeeded. The expired event goes
+  to a per-subscriber topic exchange bound only to that listener's own queue.
+
+  What it does not fix: handlers sharing a topic share one delivery, so a retry
+  re-runs the ones that already succeeded. The event's `messageId` is preserved
+  across every hop, which is what makes an idempotent handler possible.
+
+### Fixed
+
+- **An RPC deadline expiring during a publish confirm no longer kills the
+  process.** The reply promise is created and its timeout armed before
+  `publish()` is awaited, so a slow broker confirm let the timeout reject a
+  promise nobody was holding yet. Under Node's default unhandled-rejection
+  handling that terminates the caller, whether or not it catches `publish()`.
+  The promise is now observed at creation and still returned intact, so every
+  outcome reaches the caller. Arming the callback after the confirm instead
+  would have reintroduced the fast-reply race it exists to prevent. The
+  deadline's reach over the confirm, and the precedence between a publish
+  failure, a disconnect and an expired deadline, are now documented on
+  `publish()`.
+
+- **Generated types describe what the runtime returns.** Three separate
+  contradictions, all in code nothing had ever compiled:
+  - `type Long = number` collapsed every 64-bit scalar to a number while
+    decoding produced a protobufjs `Long` object.
+  - A server-streaming method was declared `Promise<T>`, so
+    `await proxy.watch()` type-checked and then returned an async iterator.
+    Signatures now follow the schema's `responseStream` flag and carry the
+    optional arguments `ServiceProxy` actually accepts.
+  - The per-method type aliases were never exported, so the `Service` interface
+    referred to members TypeScript could not see and the file did not compile
+    at all. A consumer is now type-checked against generated output, including
+    two cases that must fail.
+
+- **`exportTS()` no longer throws on a schema containing an enum**, and carries
+  the same corrections: enums as the string union the decoder produces, maps as
+  records, server-streaming methods as iterables.
+
+- **Custom types held as map values encode.** A map field's declared type is its
+  *value* type, so `map<string, bigint>` looked like a plain bigint field and
+  the whole map object went to the codec — `Cannot convert [object Object] to a
+  BigInt`, and the request never left. Maps now convert per value, recursing
+  into messages held in one. Keys are untouched and an empty map stays empty.
+
+### Changed
+
+- **BREAKING: 64-bit scalars decode to a decimal string.** `int64`, `uint64`,
+  `sint64`, `fixed64` and `sfixed64` previously decoded to a protobufjs `Long`
+  object, which no generated type described honestly and which compares and
+  serialises unlike a number. Converting to `number` instead would corrupt
+  anything past `Number.MAX_SAFE_INTEGER`. A decimal string is exact across the
+  whole range and is what protobuf's canonical JSON mapping uses, so a peer in
+  another language reads the same representation. Encoding still accepts a
+  number or a string.
+
+  Migration: `Number(value)` where the range is safe, `BigInt(value)` where it
+  is not, and regenerate with `npx protobus generate`.
+
+### Documentation
+
+- **Comparative and performance claims that could not be backed are gone.** The
+  framework comparison asserted "Message delivery: Guaranteed" for protobus and
+  "Best effort" for three other projects, in configurations nobody had run —
+  and it was not true of protobus either, which drops failed events by default
+  and has one unconfirmed hop in its retry ladder. "Transport-agnostic
+  frameworks can't use most of these" is contradicted by Nest's own RabbitMQ
+  documentation. "3-10x smaller", "50+ packages" and "days, not months" had no
+  measurement behind them. These are deleted rather than restated: replacing a
+  wrong claim about someone else's library means owning a claim that ages every
+  time they ship. Each alternative now links to its own documentation.
+
+- **"No app-level protocol beyond serialize protobuf, publish to queue" was
+  false by this repository's own source**, and was the most damaging line on
+  the page — a reader porting to another language would have found the
+  envelopes, the routing-key rule, the error encoding and the streaming headers
+  the hard way. The porting argument is restated as what actually supports it:
+  a small dependency surface and messaging behaviour that lives in RabbitMQ
+  rather than in the library. The protocol is named and linked, and the fact
+  that the cross-language test is excluded from the CI integration job is now
+  disclosed where the interoperability claim is made.
+
+- **The one hop protobus does not confirm is named.** A retried message crosses
+  the broker twice; the second crossing is RabbitMQ's own dead-letter
+  republish, which runs without internal publisher confirms and removes the
+  message from the retry queue whether or not the target accepts it. Adds the
+  transfer-by-transfer failure matrix, and records what RabbitMQ's at-least-once
+  dead-lettering would require and why a classic retry queue does not have it.
+  Not reproduced against a cluster; the section says so.
+
+- **The streaming guide matches the implementation again.** The gRPC comparison
+  listed server cancellation as roadmap while `CancelListener` ships; the
+  backpressure section called client memory unreachable while the dispatcher
+  enforces three bounds and fails a stream that crosses one; and the advice to
+  use several proxy instances for independent reply queues does nothing,
+  because the callback listener belongs to the Context's dispatcher.
+
+- **64-bit decoding, map support for custom types, and `eventRetry`** are
+  documented where each is used, with the generated-output example in the CLI
+  reference regenerated from the generator rather than transcribed.
+
 ## [2.3.0] — 2026-09-02
 
 Twelve findings from the documentation audit in
