@@ -155,7 +155,27 @@ function preprocessForEncode(obj: any, messageType: protoBuf.Type, registeredTyp
     for (const key of Object.keys(obj)) {
         const field = messageType.fields[key];
         if (field) { ensureResolved(field); }
-        if (field && isCustomType(field.type)) {
+        if (field instanceof protoBuf.MapField && obj[key] !== null && obj[key] !== undefined) {
+            // A map is an object whose VALUES carry the field's type. Falling
+            // through to the branches below handed the whole map to the codec,
+            // so `map<string, bigint>` failed on the container itself.
+            const entries = obj[key];
+            const converted: any = {};
+            const customType = isCustomType(field.type) ? getCustomType(field.type) : undefined;
+            const MessageClass = customType ? registeredTypes.get(field.type) : undefined;
+            const nested = field.resolvedType instanceof protoBuf.Type ? field.resolvedType : undefined;
+            for (const entryKey of Object.keys(entries)) {
+                const val = entries[entryKey];
+                if (customType && MessageClass && val !== null && val !== undefined) {
+                    converted[entryKey] = (MessageClass as any).create({ value: customType.encode(val) });
+                } else if (nested) {
+                    converted[entryKey] = preprocessForEncode(val, nested, registeredTypes);
+                } else {
+                    converted[entryKey] = val;
+                }
+            }
+            result[key] = converted;
+        } else if (field && isCustomType(field.type)) {
             // Convert using custom type's encode function
             const customType = getCustomType(field.type);
             const MessageClass = registeredTypes.get(field.type);

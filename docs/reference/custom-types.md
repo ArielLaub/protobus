@@ -247,6 +247,25 @@ Decoding handles protobufjs's `Long` representation `{ low, high }` as well as a
 > [!TIP]
 > Write `decode` defensively about the container it receives. For `bytes` protobufjs may hand you a `Buffer` or a `Uint8Array` depending on the path; `Buffer.from(data)` normalises both. For `int64` it may hand you a number or a `Long`.
 
+Custom types work as map values, both directly and inside a message held in a map:
+
+<!-- doc-check: proto -->
+```protobuf
+syntax = "proto3";
+package Wallet;
+
+message Balances {
+    map<string, bigint> by_address = 1;   // converted per value
+    map<string, Holding> holdings  = 2;   // converted per value, recursively
+}
+
+message Holding {
+    bigint amount = 1;
+}
+```
+
+Map keys are untouched; an empty map stays empty.
+
 Custom types nest. A `bigint` three messages deep round-trips correctly, including inside self-referential messages — there is a dedicated regression suite for it, because an earlier version reported such messages as "no custom types", skipped preprocessing, and sent the nested value out as zero with the decision cached for the life of the process ([`test/unit/custom_type_encoding.test.ts:59`](../../test/unit/custom_type_encoding.test.ts)).
 
 ---
