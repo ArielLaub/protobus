@@ -4,7 +4,11 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.4.0] — unreleased
+## [2.4.0] — 2026-09-08
+
+The first release to carry 2.3.0's contents as well: 2.3.0 was tagged in this
+file but never published, so anyone upgrading from 2.2.0 gets both sets of
+changes at once.
 
 Eight findings from an external audit of 2.3.0. Four were reproduced defects,
 one was a documented design limitation now given an opt-in remedy, and three
@@ -131,7 +135,7 @@ decode to a different type.
   documented where each is used, with the generated-output example in the CLI
   reference regenerated from the generator rather than transcribed.
 
-## [2.3.0] — 2026-09-02
+## [2.3.0] — 2026-09-02 (never published; shipped in 2.4.0)
 
 Twelve findings from the documentation audit in
 [#34](https://github.com/ArielLaub/protobus/pull/34), each of which came out of
