@@ -24,6 +24,10 @@ Every part of that sentence is load-bearing:
 - **With publisher confirms** — a `publish()` that resolves means RabbitMQ said it has the message, not that a local buffer accepted the bytes.
 - **Nothing stronger** — there is no exactly-once, no transactional handoff between the message and your database, and no ordering guarantee across replicas.
 
+At-least-once holds for the transfers protobus performs itself. One transfer in
+the retry ladder is performed by the broker instead, and it is not confirmed —
+see [Where a message can still be lost](#where-a-message-can-still-be-lost).
+
 The rest of this page is what that costs you and what the library does to keep the cost small.
 
 ---
@@ -309,6 +313,86 @@ Two consequences worth planning around:
 - **The DLQ error reply may land on nobody.** It is published unconditionally, but the dispatcher deletes its callback entry when the timeout fires, so a reply arriving afterwards is dropped.
 
 Raise `retryDelayMs` and you make the first consequence worse, not better. A minute of delay across three retries is three minutes of a caller parked on a promise, or an `RpcTimeoutError` and three minutes of invisible retrying.
+
+---
+
+## Where a message can still be lost
+
+A retried message crosses the broker twice, and only the first crossing is
+protobus's to confirm.
+
+```mermaid
+flowchart LR
+    A["handler throws"] --> B["publish to Service.Retry.Exchange"]
+    B -->|"publisher confirm"| C["Service.Retry<br/>(parks for retryDelayMs)"]
+    C -->|"TTL expiry, broker DLX republish<br/><b>no confirm</b>"| D["proto.bus → main queue"]
+    D --> E["handler runs again"]
+
+    style C fill:#f0ad4e,color:#000,stroke:#f0ad4e
+```
+
+The second hop is RabbitMQ's dead-letter mechanism, not a protobus publish.
+RabbitMQ documents its behaviour plainly:
+
+> By default, dead-lettered messages are re-published *without* publisher
+> confirms turned on internally. Therefore using DLX in a clustered RabbitMQ
+> environment is not guaranteed to be safe. Messages are removed from the
+> original queue immediately after publishing to the DLX target queue.
+>
+> — [RabbitMQ, Dead Letter Exchanges](https://www.rabbitmq.com/docs/dlx#safety)
+
+So a message that has been parked for retry is removed from `<Service>.Retry`
+whether or not it arrives on the other side. If the target cannot accept it at
+that moment, it is gone, and nothing in protobus observes this: the original
+delivery was acked one hop earlier, and the caller is waiting on a reply that
+will now only arrive as a timeout.
+
+### The failure matrix
+
+| Transfer | Who performs it | Confirmed | On failure |
+|---|---|---|---|
+| Caller → `proto.bus` → service queue | protobus | yes, and `mandatory` for RPC | the caller sees `PublishNackedError` / `UnroutableError` (definite) or `PublishConfirmTimeoutError` / `ChannelClosedError` (ambiguous) |
+| Service queue → handler | RabbitMQ | acked late | a dead replica's delivery is redelivered |
+| Failed delivery → `<Service>.Retry.Exchange` | protobus | yes — the original is acked only after the confirm | the original stays unacked and is redelivered |
+| `<Service>.Retry` → `proto.bus` on TTL expiry | **RabbitMQ** | **no** | **silent loss; the caller sees only an RPC timeout** |
+| Exhausted retries → `<Service>.DLQ` | protobus | yes — a fresh publish, not a dead-lettering | the original stays unacked and is redelivered |
+| Reply → caller's callback queue | protobus | yes | the caller sees an RPC timeout |
+
+Only one row is unconfirmed, and it is reached only by a message that has
+already failed at least once.
+
+### What would close it
+
+RabbitMQ offers
+[at-least-once dead-lettering](https://www.rabbitmq.com/docs/quorum-queues#dead-lettering)
+on quorum queues, which republishes with internal confirms. It requires the
+source queue to be a quorum queue with `dead-letter-strategy` set to
+`at-least-once` and `overflow` set to `reject-publish`, costs more memory and
+CPU, and introduces duplicates at the target because the dead-letter consumer
+retries periodically.
+
+**Protobus does not declare its retry queue that way.** `<Service>.Retry` is a
+classic durable queue, so the default `at-most-once` strategy applies. Changing
+it is not currently configurable, and a queue's type cannot be changed in place
+— see [Queue Migration](../operations/queue-migration.md) for what changing
+retry-queue arguments already costs today.
+
+This is a source-and-documentation finding. It has not been reproduced against
+a cluster here, and no measurement of how often the hop actually fails is
+offered.
+
+### What to do if the retry hop matters to you
+
+1. **Set `maxRetries: 0`** for work that must not be lost, and handle failure in
+   the handler — a message that never enters the retry ladder never crosses the
+   unconfirmed hop.
+2. **Treat an RPC timeout as ambiguous**, which it already is for other reasons
+   ([the parked caller](#the-parked-caller)). The reconciliation you need for a
+   lost retry is the reconciliation you already need.
+3. **Alert on the gap.** A retry that vanishes leaves `<Service>.Retry` at
+   zero, `<Service>.DLQ` at zero, and a caller with a timeout — the same
+   signature as a slow handler, which is why it needs the caller-side signal to
+   be visible at all.
 
 ---
 

@@ -118,11 +118,37 @@ message OrderCreatedEvent {
 |------------|------------|---------|
 | `string` | `string` | Text, IDs, UUIDs |
 | `int32` | `number` | Small integers |
-| `int64` | `number` | Timestamps, large integers |
+| `int64` | `string` | Timestamps, large integers |
 | `bool` | `boolean` | Flags |
 | `bytes` | `Buffer` | Binary data |
 | `double` | `number` | Floating point |
 | `bigint` | `bigint` | Large integers (uint256, etc.) |
+
+#### 64-bit integers decode to strings
+
+`int64`, `uint64`, `sint64`, `fixed64` and `sfixed64` hold values wider than the
+integers a JavaScript number represents exactly, so decoding them into one would
+silently corrupt anything past `Number.MAX_SAFE_INTEGER`. They decode to a
+decimal string instead, which is exact across the whole range. Protobuf's own
+canonical JSON mapping reaches for a string here for the same reason.
+
+This is a JavaScript constraint, not a wire change. The bytes on the wire are
+the same, and a peer decodes into whatever its language holds natively —
+`protobus-py` gives you a Python `int`, `protobus-go` an `int64`.
+
+Encoding stays permissive: pass a number or a string.
+
+<!-- doc-check: compile -->
+```typescript
+// A field declared `int64 recorded_at = 1;`, once decoded.
+declare const reading: { recorded_at: string };
+
+const when = new Date(Number(reading.recorded_at));
+const exact = BigInt(reading.recorded_at);   // safe past 2^53
+```
+
+For values that genuinely exceed 64 bits, use protobus's own `bigint` type
+below instead.
 
 ### Built-in Custom Types
 

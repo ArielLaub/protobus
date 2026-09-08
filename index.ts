@@ -11,7 +11,7 @@ export { default as ServiceProxy } from './lib/service_proxy';
 // takes THREE arguments — (event, type, topic) — which is exactly why it needs
 // exporting: every user was redeclaring it by hand, and a hand-written
 // one-argument version compiles fine and silently ignores the other two.
-export { default as EventListener, EventHandler } from './lib/event_listener';
+export { default as EventListener, EventHandler, EventRetryOptions } from './lib/event_listener';
 export { default as RunnableService } from './lib/runnable_service';
 export { set as setLogger, setLevel as setLogLevel, getLevel as getLogLevel, LogLevel, ILogger } from './lib/logger';
 

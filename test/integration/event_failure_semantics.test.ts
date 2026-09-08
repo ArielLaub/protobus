@@ -13,13 +13,12 @@ import Context, { IContext } from '../../lib/context';
  * matter to anyone publishing events, and none of them is documented anywhere
  * else, so they are pinned here.
  *
- * The behaviour is NOT changed in 2.3.0. It is a real gap — a durable queue
- * and a persistent message, and a transient handler failure still loses the
- * event permanently — but retrying events instead would declare new queues in
- * every existing deployment and change delivery semantics for every consumer
- * that has been running against this behaviour. That belongs in an opt-in, or
- * in a major, not in a minor. This test exists so the day it changes, it
- * changes deliberately.
+ * This is the DEFAULT, with no `eventRetry` configured, and it is what every
+ * existing deployment gets. Retrying events unconditionally would declare new
+ * queues everywhere and change delivery semantics for every consumer already
+ * running against this behaviour, so the ladder is opt-in —
+ * `event_retry.test.ts` pins that side. This file exists so the day the default
+ * changes, it changes deliberately.
  */
 
 const proto = `syntax = "proto3";

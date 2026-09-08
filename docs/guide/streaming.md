@@ -309,9 +309,33 @@ public async *completeStream(req: any): AsyncIterable<any> {
 
 ## Backpressure
 
-The reply queue is a per-client anonymous queue (auto-delete, exclusive). If the client iterates slowly, messages buffer there.
+There is no flow control back to the producer. A streaming handler yields as
+fast as it can and the framework publishes each chunk immediately, so a
+producer faster than its consumer piles up in two places.
 
-For chat token streaming neither RabbitMQ-side queue limits nor client-side memory are reachable in practice. If pathological producers become a concern, you can configure queue limits on the reply queue directly via amqplib.
+**In the broker.** The reply queue is a per-client anonymous queue (auto-delete,
+exclusive) and holds whatever the client has not consumed. It carries no length
+limit of its own; set one on the queue directly through amqplib if you need it.
+
+**In the client.** The dispatcher reads from that queue and buffers chunks the
+`for await` loop has not reached yet. Three bounds cap that buffer, and
+crossing any of them fails the stream with `StreamBackpressureError` rather
+than growing the heap:
+
+| Bound | Default | Env var |
+|---|---|---|
+| Chunks buffered for one call | 1024 | `STREAM_MAX_BUFFERED_CHUNKS` |
+| Bytes buffered for one call | 64 MiB | `STREAM_MAX_BUFFERED_BYTES` |
+| Bytes buffered across all calls on one dispatcher | 256 MiB | `STREAM_MAX_TOTAL_BUFFERED_BYTES` |
+
+The aggregate bound exists because the per-call ones say nothing about a
+process holding many calls at once: at the defaults, five concurrent streams
+are each within their limits and 320 MiB into the heap.
+
+Whether these are reachable depends entirely on the workload. LLM token deltas
+arriving at reading speed will not approach them. A handler yielding rows from
+a database as fast as it can read them, to a consumer doing per-row work, will
+— and the failure is loud rather than an out-of-memory kill.
 
 ## Backward compatibility
 
@@ -334,7 +358,7 @@ Protobus streaming intentionally mirrors gRPC's server-streaming model so the me
 | Transport | HTTP/2 with stream frames | AMQP with multiple replies on a correlationId |
 | Ordering guarantee | Per-stream FIFO | Per-stream FIFO (RabbitMQ single-queue/single-consumer) |
 | End-of-stream signal | HTTP/2 END_STREAM frame | `x-protobus-final: true` header |
-| Cancellation | Client closes the stream | v1: client unwinds locally. Server cancellation: roadmap. |
+| Cancellation | Client closes the stream | `break`, or an `AbortSignal`. Both notify the server; cooperative and best effort — see [Cancellation](#cancellation) |
 | Client-streaming / bidi | Supported | Not supported, not planned |
 
 The biggest practical difference: gRPC streams ride on HTTP/2's multiplexed connection, so the cost per stream is low and you can have thousands open. Protobus rides on a single AMQP reply queue per client, multiplexed by `correlationId` — the per-stream cost is the same as a unary call, but very-high-fanout topologies should be benchmarked.
@@ -353,7 +377,11 @@ The biggest practical difference: gRPC streams ride on HTTP/2's multiplexed conn
   from missing information. For idempotent chunks (LLM deltas, log lines) this
   is comfortably enough; for non-idempotent chunks, the caller is responsible.
 - **No chunk-level retry/DLQ.** Standard retry/DLQ applies to the entire RPC, not to individual chunks.
-- **Single reply queue per client.** All in-flight streams to a single proxy share one reply queue. Very-high-concurrency callers may want multiple proxy instances.
+- **Single reply queue per Context.** All in-flight streams share the reply
+  queue of the Context's dispatcher, not of the proxy — so building more
+  `ServiceProxy` instances over the same Context changes nothing. Separate
+  reply queues means separate Contexts, and a Context holds its own
+  connection.
 
 ## Implementation notes
 

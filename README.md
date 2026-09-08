@@ -146,61 +146,59 @@ Full walkthrough, including events and the project layout:
 
 ## Why ProtoBus
 
-### RabbitMQ-native, not RabbitMQ-compatible
+### RabbitMQ only, on purpose
 
-Most Node microservice frameworks (Moleculer, Seneca, NestJS transports) abstract
-the broker away so several transports can be swapped in. The cost is that they
-reimplement routing, load balancing and retries *above* the broker, and cannot
-use what it already does better.
+ProtoBus is built for one broker, so the things a broker is good at stay in the
+broker instead of being reimplemented above it:
 
-| | Transport-agnostic frameworks | ProtoBus |
-|---|---|---|
-| Load balancing | app-level round-robin | broker-level competing consumers |
-| Routing | app-level pattern matching | native topic exchanges |
-| Redelivery | select, send, hope | queue, ack, redeliver on loss |
-| Persistence | often none | durable queues |
-| Dead letters | hand-rolled | native DLX |
-| Priority | rarely | native priority queues |
+| Concern | Where it lives |
+|---|---|
+| Load balancing | competing consumers on one queue |
+| Routing | topic exchange bindings (`REQUEST.<Service>.*`) |
+| Redelivery on consumer loss | late ack — an unacked delivery returns to the queue |
+| Retry delay | the retry queue's `x-message-ttl`, drained by DLX |
+| Persistence | durable queues, persistent messages |
+| Dead letters | a real `<Service>.DLQ` |
+| Priority | native queue priorities |
 
-What that difference looks like when a process dies mid-request:
+A request goes publisher → exchange → queue → consumer. Nothing tracks live
+instances, so nothing holds a stale one, and a consumer that dies mid-request
+leaves its delivery unacked for the next consumer to take.
 
-```
-Transport-agnostic:
-  request -> framework picks instance A -> send -> A crashes -> message lost
+The cost of this is written down rather than glossed over — read
+[Delivery Guarantees](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/delivery-guarantees.md)
+before you rely on any of it.
 
-ProtoBus:
-  request -> queue -> A pulls -> A crashes before ack -> redelivered -> B pulls -> reply
-```
-
-App-level routing also means your event loop does the switching as well as your
-business logic: every message crosses your Node process twice. RabbitMQ's Erlang
-runtime was built for exactly that job.
+If you may need to swap RabbitMQ for another broker, use a transport-agnostic
+framework instead. That is a real feature and protobus does not have it.
 
 ### Protocol Buffers, not JSON
 
-| | JSON | Protocol Buffers |
-|---|---|---|
-| Size | verbose text | compact binary |
-| Decode | parse strings at runtime | generated decoders |
-| Types | runtime surprises | compile-time signatures |
-| Schema | hope the docs are right | contract-first `.proto` |
-| Versioning | breaking changes propagate | field numbers, forward/backward compatible |
+- **Smaller on the wire** — binary rather than text.
+- **Contract-first** — a `.proto` file is the interface between teams, and
+  generated types fail the build when the two drift apart.
+- **Versioning by field number** — adding a field does not break an old peer.
 
-### Polyglot without a proprietary protocol
+The cost: a code-generation step, and no ad-hoc objects.
 
-Because the schema is Protobuf and the routing is AMQP, a client in another
-language needs no reverse-engineering — only a protobuf library and an AMQP
-client. That is how [protobus-py](https://github.com/ArielLaub/protobus-py) and
-[protobus-go](https://github.com/ArielLaub/protobus-go) exist, and why services
-written in different languages share one bus.
+### Cheap to port to another language
 
-| | Transport-agnostic frameworks | ProtoBus |
-|---|---|---|
-| Protocol | custom, must be reimplemented | standard Protobuf over AMQP |
-| Schema | framework-specific or none | language-agnostic `.proto` |
-| Routing logic | embedded in every SDK | in RabbitMQ |
+Three runtime dependencies, and the messaging behaviour that would be hardest
+to reimplement — queueing, consumer distribution, retry delays, dead-lettering —
+is RabbitMQ's, not protobus's. A port swaps the AMQP client and implements a
+small application protocol on top: three envelope messages, a routing-key
+scheme, an error encoding, and the streaming headers, all documented in
+[Message Flow](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/message-flow.md).
+That is real work, but it is bounded, and it is not service discovery or failure
+recovery.
 
-The detailed comparison, with the reasoning:
+[protobus-py](https://github.com/ArielLaub/protobus-py) and
+[protobus-go](https://github.com/ArielLaub/protobus-go) are the existing ports.
+Note that the cross-language test is [excluded from
+CI](https://github.com/ArielLaub/protobus/blob/master/.github/workflows/ci.yml) —
+interoperability is checked by hand.
+
+The longer version:
 **[Why ProtoBus](https://github.com/ArielLaub/protobus/blob/master/docs/why-protobus.md)**.
 
 ---
