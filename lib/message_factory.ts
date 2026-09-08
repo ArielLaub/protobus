@@ -619,6 +619,18 @@ export default class MessageFactory {
                 arrays: true,
                 defaults: true,
                 enums: String,
+                // 64-bit scalars exceed what a JavaScript number can hold, so
+                // there is no lossless numeric form to decode them into. The
+                // untouched alternative hands callers a protobufjs Long
+                // object, which no generated type can honestly describe and
+                // which compares and serialises unlike a number.
+                //
+                // A decimal string is exact across the whole int64 and uint64
+                // range, and is what protobuf's own canonical JSON mapping
+                // uses for these types — so a peer in another language reads
+                // the same representation. Input stays permissive: number,
+                // string and Long are all accepted on encode.
+                longs: String,
             });
         } catch (error) {
             // Deliberately no payload in the log line — message bodies routinely
@@ -786,8 +798,13 @@ export default class MessageFactory {
                     return customType.tsType;
                 }
 
-                if (['double', 'float', 'int32', 'uint32', 'sint32', 'fixed32', 'sfixed32', 'int64', 'uint64', 'sint64', 'fixed64', 'sfixed64'].indexOf(t) !== -1)
+                // 64-bit scalars are excluded deliberately: decodeMessage
+                // converts them to decimal strings, because their range does
+                // not fit a JavaScript number.
+                if (['double', 'float', 'int32', 'uint32', 'sint32', 'fixed32', 'sfixed32'].indexOf(t) !== -1)
                     return 'number';
+                else if (['int64', 'uint64', 'sint64', 'fixed64', 'sfixed64'].indexOf(t) !== -1)
+                    return 'string';
                 else if (t === 'string')
                     return 'string';
                 else if (t === 'bool')
@@ -807,6 +824,17 @@ export default class MessageFactory {
                 const messageName = parts[parts.length - 1];
                 const target = namespaces.get(ns) || namespaces.set(ns, []).get(ns);
 
+                // An enum is not a Type, and looking one up as one threw —
+                // which made every schema declaring an enum unexportable.
+                // decodeMessage converts enums with `enums: String`, so the
+                // union of value names is what a caller actually receives.
+                const declared = this.root.lookup(typeName);
+                if (declared instanceof protoBuf.Enum) {
+                    const names = Object.keys(declared.values).map(n => `'${n}'`).join(' | ');
+                    target.push(`    export type ${modType(messageName)} = (${names});\n`);
+                    return;
+                }
+
                 const T = this.root.lookupType(typeName);
                 if (!T) {
                     throw new Error('could not find the type ' + typeName + ' you are trying to add');
@@ -822,7 +850,14 @@ export default class MessageFactory {
                         }
                         t = modType(field.type);
                     }
-                    target.push(`        ${field.name}${!field.required ? '?' : ''}: (${t}${field.repeated ? '[]' : ''} | null);`);
+                    // A map field is repeated on the wire but is an object in
+                    // hand, so `[]` would describe the wrong shape. Its key is
+                    // always a string once decoded, whatever the declared key
+                    // type, because that is what a JavaScript object holds.
+                    const shape = field instanceof protoBuf.MapField
+                        ? `Record<string, ${t}>`
+                        : `${t}${field.repeated ? '[]' : ''}`;
+                    target.push(`        ${field.name}${!field.required ? '?' : ''}: (${shape} | null);`);
                 });
                 target.push('    }\n');
                 newTypes.forEach(addType);
@@ -835,7 +870,15 @@ export default class MessageFactory {
             methods.forEach(method => {
                 const req = method.requestType;
                 const res = method.responseType;
-                serviceSource.push(`        ${method.name}(request: ${modType(req)}): Promise<${modType(res)}>;`);
+                // ServiceProxy installs a server-streaming method as an async
+                // iterable, not a promise. Declaring it as a promise here made
+                // `await proxy.watch(...)` type-check and then hand back an
+                // iterator.
+                method.resolve();
+                const returns = method.responseStream
+                    ? `AsyncIterable<${modType(res)}>`
+                    : `Promise<${modType(res)}>`;
+                serviceSource.push(`        ${method.name}(request: ${modType(req)}): ${returns};`);
                 addType(req);
                 addType(res);
             });
