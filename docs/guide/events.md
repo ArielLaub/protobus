@@ -10,7 +10,7 @@
 | **Next** | [Error Handling](./error-handling.md) · [Message Flow](../concepts/message-flow.md) — the event on the wire |
 | **Source** | [`lib/event_dispatcher.ts`](../../lib/event_dispatcher.ts) · [`lib/event_listener.ts`](../../lib/event_listener.ts) · [`lib/message_service.ts`](../../lib/message_service.ts) · [`lib/trie.ts`](../../lib/trie.ts) |
 
-**On this page** — [The shape of it](#the-shape-of-it) · [A subscriber needs a service block](#a-subscriber-still-needs-a-service-block) · [Publishing](#publishing) · [Subscribing](#subscribing) · [Topics route, types do not](#topics-route-types-do-not) · [Wildcards](#wildcard-patterns) · [Several handlers](#several-handlers-one-topic) · [When a handler throws](#when-a-handler-throws) · [What survives what](#what-survives-what) · [A subscriber that is not a service](#a-subscriber-that-is-not-a-service) · [Worked example](#worked-example)
+**On this page** — [The shape of it](#the-shape-of-it) · [A subscriber needs a service block](#a-subscriber-still-needs-a-service-block) · [Publishing](#publishing) · [Subscribing](#subscribing) · [Topics route, types do not](#topics-route-types-do-not) · [Wildcards](#wildcard-patterns) · [Several handlers](#several-handlers-one-topic) · [When a handler throws](#when-a-handler-throws) · [Turning retry on](#turning-retry-on) · [What survives what](#what-survives-what) · [A subscriber that is not a service](#a-subscriber-that-is-not-a-service) · [Worked example](#worked-example)
 
 ---
 
@@ -302,7 +302,9 @@ flowchart TD
 ```
 
 > [!CAUTION]
-> **A failed event handler does not retry, and there is no event DLQ.** `MessageListener` declares `<Service>.Retry`, `<Service>.Retry.Exchange` and `<Service>.DLQ` for the RPC queue. `EventListener` declares none of them and does not override `getRetryOptions()`, so the connection layer takes its no-retry branch: the delivery is rejected without requeue and the message is gone. There is also no caller to reply to, so nothing anywhere records that it happened beyond one `rejecting message` line in the log.
+> **By default a failed event handler does not retry, and there is no event DLQ.** `MessageListener` declares `<Service>.Retry`, `<Service>.Retry.Exchange` and `<Service>.DLQ` for the RPC queue. `EventListener` declares none of them unless you ask, so the connection layer takes its no-retry branch: the delivery is rejected without requeue and the message is gone. There is also no caller to reply to, so nothing anywhere records that it happened beyond one `rejecting message` line in the log.
+>
+> Rejecting is what keeps the subscriber alive — an unacknowledged delivery would hold the prefetch and stall everything behind the first permanently-failing event. [Turning retry on](#turning-retry-on) replaces that trade rather than removing it.
 
 Corollaries, all of which contradict what this page used to say:
 
@@ -339,6 +341,60 @@ class BillingService extends RunnableService {
 
 or, when the work genuinely must not be lost, do not model it as an event at all. An RPC has the retry ladder and the DLQ — see [Delivery Guarantees](../concepts/delivery-guarantees.md).
 
+### Turning retry on
+
+`eventRetry` gives a service's event subscriptions the ladder its RPC queue
+already has. It is off by default, because switching it on declares queues and
+exchanges the service did not have before and changes what a handler failure
+means for every subscription on that service.
+
+<!-- doc-check: compile -->
+```typescript
+import { RunnableService, IContext } from 'protobus';
+
+class BillingService extends RunnableService {
+    constructor(context: IContext) {
+        // Four handler runs per event, 2s apart, then the DLQ.
+        super(context, { eventRetry: { maxRetries: 3, retryDelayMs: 2000 } });
+    }
+
+    public get ServiceName(): string { return 'Billing.Service'; }
+}
+```
+
+It declares four objects alongside `<Service>.Events`:
+
+| Object | Purpose |
+|---|---|
+| `<Service>.Events.Retry` | parks the failed event for `retryDelayMs`, then dead-letters it |
+| `<Service>.Events.Retry.Exchange` | topic exchange the failed event is published to, so its routing key survives the hop |
+| `<Service>.Events.Redelivery` | topic exchange bound only to `<Service>.Events` — where the expired event comes back |
+| `<Service>.Events.DLQ` | where an event lands once `maxRetries` hops are spent |
+
+The redelivery exchange is the part worth understanding. A request's retry
+dead-letters back to `proto.bus`, which routes to one service queue. Events fan
+out, so dead-lettering back to `proto.bus.events` would redeliver to *every*
+subscriber bound to that topic, including the ones that succeeded. The
+per-subscriber exchange confines the retry to the service that failed.
+
+Three things to know before switching it on:
+
+- **A retry re-runs every handler that matched, not just the one that threw.**
+  Handlers sharing a topic share one delivery ([Several handlers, one
+  topic](#several-handlers-one-topic)), so a handler that already succeeded runs
+  again. It must be idempotent, keyed on the event's `messageId`, which is
+  preserved across every hop.
+- **`retryDelayMs` becomes the retry queue's `x-message-ttl`** and cannot be
+  changed on a service that has already run, exactly as on the RPC path. A
+  changed value fails startup with `RetryQueueMismatchError`. See
+  [Queue Migration](../operations/queue-migration.md).
+- **`HandledError` starts meaning something.** With retry off it is inert on the
+  event path; with retry on it is what says "do not retry this", and the event
+  goes straight to the DLQ.
+
+Verified against a real broker in
+[`test/integration/event_retry.test.ts`](../../test/integration/event_retry.test.ts).
+
 ---
 
 ## What survives what
@@ -348,7 +404,7 @@ or, when the work genuinely must not be lost, do not model it as an event at all
 | Broker restarts | **survives** — published `deliveryMode: 2`, and `<Service>.Events` is durable |
 | Every replica of a subscriber is down | **survives** — the queue is durable and not auto-delete, so it accumulates |
 | A replica is killed mid-handler | **redelivered** — late ack, so the delivery was never settled |
-| The handler rejects | **lost** — rejected without requeue, no retry, no DLQ |
+| The handler rejects | **lost** by default — rejected without requeue. With [`eventRetry`](#turning-retry-on): retried, then dead-lettered |
 | Nobody has ever subscribed | **lost** — no binding matches, and events are not published `mandatory` |
 
 > [!WARNING]

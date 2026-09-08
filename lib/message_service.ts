@@ -2,7 +2,7 @@ import { Logger } from './logger';
 import { IContext } from './context';
 import MessageFactory from './message_factory';
 import MessageListener from './message_listener';
-import EventListener, { EventHandler } from './event_listener';
+import EventListener, { EventHandler, EventRetryOptions } from './event_listener';
 import CancelListener from './cancel_listener';
 import { isHandledError, sanitizeErrorForClient, ProtocolError } from './errors';
 // HandledError is re-exported for users, isHandledError is used by MessageListener
@@ -95,6 +95,22 @@ export interface IMessageServiceOptions {
      * are byte-identical to every previous version. See docs/advanced/priority.md.
      */
     maxPriority?: number;
+    /**
+     * Retry for this service's EVENT subscriptions, which is separate from
+     * `retry` above and off by default.
+     *
+     * Without it a handler that throws loses its event: the delivery is
+     * rejected without requeue, so one permanently-failing event cannot stall
+     * the subscriber behind its own prefetch. With it, events climb the same
+     * ladder requests do — park, wait `retryDelayMs`, redeliver, and
+     * dead-letter to `<Service>.Events.DLQ` once the hops are spent.
+     *
+     * Opt-in because it changes both behaviour and topology: enabling it
+     * declares queues and exchanges the service did not have before, and a
+     * retried event re-runs every handler that matched it, including the ones
+     * that already succeeded. See docs/guide/events.md.
+     */
+    eventRetry?: EventRetryOptions;
 }
 
 export default abstract class MessageService implements IMessageService {
@@ -129,7 +145,7 @@ export default abstract class MessageService implements IMessageService {
             options.processingTimeoutMs,
             options.maxPriority,
         );
-        this.eventListener = new EventListener(context.connection, context.factory);
+        this.eventListener = new EventListener(context.connection, context.factory, options.eventRetry);
         this.cancelListener = new CancelListener(context.connection);
     }
 
