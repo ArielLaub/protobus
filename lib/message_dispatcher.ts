@@ -520,9 +520,10 @@ export default class MessageDispatcher implements IMessageDispatcher {
      * StreamTimeoutError if no chunk arrives within `idleTimeoutMs`.
      *
      * If the caller breaks out of the iteration, the pending-stream slot is
-     * released and the dispatcher stops buffering chunks. The server keeps
-     * generating (v1 — server cancellation is on the roadmap), but its
-     * subsequent publishes are simply dropped at the dispatcher.
+     * released, the dispatcher stops buffering chunks, and a cancellation
+     * notice goes to the server. That notice is cooperative and best effort: a
+     * handler that ignores its signal runs to completion, and its subsequent
+     * publishes are dropped here.
      *
      * See `docs/advanced/streaming.md` for the full protocol.
      */
