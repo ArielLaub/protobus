@@ -646,10 +646,13 @@ export default class MessageFactory {
                 // which compares and serialises unlike a number.
                 //
                 // A decimal string is exact across the whole int64 and uint64
-                // range, and is what protobuf's own canonical JSON mapping
-                // uses for these types — so a peer in another language reads
-                // the same representation. Input stays permissive: number,
-                // string and Long are all accepted on encode.
+                // range, and is the answer protobuf's own canonical JSON
+                // mapping reaches for the same reason. This is a JavaScript
+                // problem: protobus-py decodes to a Python int and
+                // protobus-go to an int64, both of which hold the range
+                // natively. The wire bytes are identical either way. Input
+                // stays permissive: number, string and Long are all accepted
+                // on encode.
                 longs: String,
             });
         } catch (error) {

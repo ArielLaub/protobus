@@ -129,9 +129,12 @@ message OrderCreatedEvent {
 `int64`, `uint64`, `sint64`, `fixed64` and `sfixed64` hold values wider than the
 integers a JavaScript number represents exactly, so decoding them into one would
 silently corrupt anything past `Number.MAX_SAFE_INTEGER`. They decode to a
-decimal string instead, which is exact across the whole range and is the
-representation protobuf's own canonical JSON mapping uses — a peer written in
-another language reads the same thing.
+decimal string instead, which is exact across the whole range. Protobuf's own
+canonical JSON mapping reaches for a string here for the same reason.
+
+This is a JavaScript constraint, not a wire change. The bytes on the wire are
+the same, and a peer decodes into whatever its language holds natively —
+`protobus-py` gives you a Python `int`, `protobus-go` an `int64`.
 
 Encoding stays permissive: pass a number or a string.
 

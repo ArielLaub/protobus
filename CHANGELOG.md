@@ -81,9 +81,10 @@ decode to a different type.
   object, which no generated type described honestly and which compares and
   serialises unlike a number. Converting to `number` instead would corrupt
   anything past `Number.MAX_SAFE_INTEGER`. A decimal string is exact across the
-  whole range and is what protobuf's canonical JSON mapping uses, so a peer in
-  another language reads the same representation. Encoding still accepts a
-  number or a string.
+  whole range, and is the answer protobuf's canonical JSON mapping reaches for
+  the same reason. The wire bytes do not change — this is a JavaScript
+  constraint, and a peer still decodes into its own native 64-bit type.
+  Encoding still accepts a number or a string.
 
   Migration: `Number(value)` where the range is safe, `BigInt(value)` where it
   is not, and regenerate with `npx protobus generate`.
