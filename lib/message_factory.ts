@@ -677,7 +677,7 @@ export default class MessageFactory {
             const request = RequestContainer.create({
                 method: methodFullName,
                 actor,
-                data: Message.encode(Message.create(processed)).finish()
+                data: Message.encode(Message.fromObject(processed)).finish()
             });
             return uintArrayToBuffer(RequestContainer.encode(request).finish());
         } catch (error) {
@@ -747,7 +747,7 @@ export default class MessageFactory {
                 response = ResponseContainer.create({
                     result: ResponseResult.create({
                         method: methodFullName,
-                        data: Message.encode(Message.create(processed)).finish(),
+                        data: Message.encode(Message.fromObject(processed)).finish(),
                     }),
                 });
             } catch (error) {
@@ -782,7 +782,7 @@ export default class MessageFactory {
             return uintArrayToBuffer(EventContainer.encode(EventContainer.create({
                 type,
                 topic,
-                data: Event.encode(Event.create(processed)).finish(),
+                data: Event.encode(Event.fromObject(processed)).finish(),
             })).finish());
         } catch (err) {
             Logger.error(`failed building event message ${type}: ${(err as any)?.message ?? err}`);

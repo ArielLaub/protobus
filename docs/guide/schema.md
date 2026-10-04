@@ -337,6 +337,10 @@ enum OrderStatus {
 }
 ```
 
+In TypeScript an enum decodes to its value *name* (`'ORDER_STATUS_SHIPPED'`).
+When sending, give either the name or the number: both encode to the same
+value, so a decoded message can be passed on unchanged.
+
 ### Repeated Fields (Arrays)
 
 <!-- doc-check: proto -->
