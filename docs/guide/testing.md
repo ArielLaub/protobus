@@ -124,6 +124,19 @@ docker compose up -d --wait && { jest --config jest.integration.config.js; statu
 > [!WARNING]
 > `docker compose up -d` without `--wait` returns as soon as the container starts, several seconds before RabbitMQ accepts connections. The result is a suite that passes locally and fails on the first run in CI, which is the least useful failure mode there is.
 
+### Pinning the suite to a broker
+
+The suite connects to `amqp://guest:guest@localhost:5672/`, with the management API on `localhost:15672`. Where something else holds those ports — a `kubectl port-forward` to a cluster broker binds `127.0.0.1:5672` and wins for `localhost` — the suite quietly runs against that broker instead, with other tenants' traffic, and fails in ways that look like flakes. Move the compose ports and point the suite at them:
+
+```bash
+export PROTOBUS_AMQP_PORT=35672 PROTOBUS_MGMT_PORT=35673
+export PROTOBUS_TEST_AMQP_URL=amqp://guest:guest@127.0.0.1:35672/
+export PROTOBUS_TEST_MGMT_URL=http://guest:guest@127.0.0.1:35673
+npm run test:integration
+```
+
+These are the variables protobus-go's suites read, so one export serves both repositories.
+
 ### Two jest configs, not one
 
 Unit tests and broker tests want different settings, so they get different configs.
