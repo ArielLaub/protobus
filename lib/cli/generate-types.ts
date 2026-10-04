@@ -150,8 +150,12 @@ ${result}`;
     // Remove interface and service constructors
     result = result.replace(/^.*\b(constructor)\b.*$/gm, '');
 
-    // Convert service classes to interfaces (stop extending $protobuf.rpc.Service)
-    result = result.replace(/class .* extends \$protobuf.rpc.Service /gm, 'interface Service ');
+    // Convert service classes to interfaces (stop extending $protobuf.rpc.Service),
+    // keeping each service's own name. Renaming every one to `Service` made
+    // two services in a package collide, and pinned `service Math` to a name
+    // the bus does not use. The interface merges with the namespace of the
+    // same name that holds its method types.
+    result = result.replace(/class (\w+) extends \$protobuf.rpc.Service /gm, 'interface $1 ');
 
     // Export all interfaces
     result = result.replace(/\binterface /gm, 'export interface ');
@@ -210,19 +214,50 @@ ${result}`;
         },
     );
 
-    // Add ServiceName constants to each namespace that contains a Service interface
-    result = result.replace(
-        /export namespace (\w+) \{([^}]*export interface Service[^}]*)\}/gs,
-        (match, namespaceName, content) => {
-            if (content.includes("export const ServiceName =")) {
-                return match;
-            }
-            const serviceNameConstant = `\n    export const ServiceName = '${namespaceName}.Service' as const;`;
-            return `export namespace ${namespaceName} {${serviceNameConstant}${content}}`;
-        }
-    );
+    return result + serviceNameDeclarations(result);
+}
 
-    return result;
+/**
+ * The bus name of every service, as constants in its package's namespace.
+ *
+ * Each method's type carries `readonly path: "/<package>.<Service>/<method>"`,
+ * which names the service exactly, dotted packages included, so nothing has to
+ * re-parse the schema or guess. The declarations are appended as namespace
+ * blocks of their own: TypeScript merges them with the generated ones, and a
+ * dotted name merges with the nested namespaces pbts emits for it.
+ *
+ * Every service gets `<Service>ServiceName` (`ServiceName` for a service
+ * called `Service`, as before). A package with exactly one service also gets
+ * the established `ServiceName` and a `Service` alias, so code written against
+ * those names keeps compiling, now with the name the bus actually uses.
+ */
+/** The constant holding a service's bus name: `ServiceName` for `Service`, else `<Name>ServiceName`. */
+export function serviceNameConstant(service: string): string {
+    return service === 'Service' ? 'ServiceName' : `${service}ServiceName`;
+}
+
+function serviceNameDeclarations(source: string): string {
+    const byPackage = new Map<string, Set<string>>();
+    for (const m of source.matchAll(/readonly path: "\/([\w.]+)\/\w+";/g)) {
+        const full = m[1];
+        const dot = full.lastIndexOf('.');
+        if (dot < 0) continue;
+        const pkg = full.slice(0, dot);
+        (byPackage.get(pkg) || byPackage.set(pkg, new Set()).get(pkg)!).add(full.slice(dot + 1));
+    }
+    const blocks: string[] = [];
+    for (const [pkg, services] of byPackage) {
+        const lines = [...services].map(name => `    export const ${serviceNameConstant(name)} = '${pkg}.${name}' as const;`);
+        if (services.size === 1) {
+            const [only] = services;
+            if (only !== 'Service') {
+                lines.push(`    export const ServiceName = '${pkg}.${only}' as const;`);
+                lines.push(`    export type Service = ${only};`);
+            }
+        }
+        blocks.push(`export namespace ${pkg} {\n${lines.join('\n')}\n}\n`);
+    }
+    return blocks.length ? `\n${blocks.join('\n')}` : '';
 }
 
 // Allow running directly

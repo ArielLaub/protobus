@@ -39,6 +39,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its package's namespace, and a referenced type in its own package's
   namespace, qualified from wherever it is used
   ([#26](https://github.com/ArielLaub/protobus/issues/26)).
+- **`generate:service` and `generate:types` handle ordinary schemas.**
+  `generate:service` read the schema with regular expressions: an rpc's
+  empty `{}` body ended the service there, silently dropping every later
+  method, and qualified or dotted names were missed. It now loads the schema
+  with the library's own loader and writes a class per service, with an
+  `async *` generator for each server-streaming rpc. `generate:types` renamed
+  every service to `Service` and set `ServiceName` to `'<package>.Service'`,
+  a name the bus does not use for, say, `service Math`; each service now keeps
+  its name and gets a correct `<Name>ServiceName`. A package with one service
+  still gets `ServiceName` and `Service`, now with the right value. The
+  skeleton also stops declaring `implements <package>.Service`: that is the
+  caller's proxy shape, which no server class satisfies, so the generated
+  file never compiled under `strict`. It follows the documented pattern, a
+  `ServiceName` getter, instead
+  ([#27](https://github.com/ArielLaub/protobus/issues/27)).
 
 ## [2.4.0] — 2026-09-08
 
