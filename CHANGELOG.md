@@ -4,7 +4,26 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.5.0] — 2026-10-04
+
+Five fixes, every open issue resolved, and documentation repositioned around
+what protobus is for.
+
+A minor rather than a patch, because two fixes change behaviour that code may
+have relied on, even though the old behaviour was wrong:
+
+- **Values that were silently mis-encoded now throw.** An invalid `timestamp`
+  went out as 1970, and a `bigint` given as an unsafe `number` went out as the
+  wrong amount. Both now raise a `RangeError` at the call site.
+- **Generated names change for services not called `Service`.**
+  `generate:types` declared every service as `Service`, with a `ServiceName`
+  the bus does not use. Each service now keeps its own name and gets
+  `<Name>ServiceName`. A package with one service still has `ServiceName` and
+  `Service`, now with the right value. Regenerate, and update any skeleton
+  that `implements <package>.Service`: that never compiled under `strict`.
+
+protobus-go 2.0.0 is now stable and at parity with this port, and its CI runs
+Go, TypeScript and Python against each other in both directions.
 
 ### Fixed
 
