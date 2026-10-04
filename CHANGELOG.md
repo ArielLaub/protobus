@@ -18,6 +18,42 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   accepts a value name or number, in singular, repeated and map fields.
   Found by the protobus-go cross-language suite
   ([#40](https://github.com/ArielLaub/protobus/issues/40)).
+- **The built-in scalars refuse input they cannot represent.** `timestamp`
+  encoded an invalid `Date`, an unparseable string, `NaN` or `Infinity` as `0`
+  (1970) and truncated a fractional millisecond; `bigint` accepted a `number`
+  above 2^53 - 1, whose precision is already gone, and encoded the wrong
+  value. All of these now throw a `RangeError` saying what to pass instead
+  ([#25](https://github.com/ArielLaub/protobus/issues/25)).
+- **A streaming handler that throws before returning its iterable answers the
+  caller.** Argument validation or an eager `HandledError` in a handler that is
+  a plain function, not a generator, escaped dispatch without the reply the
+  connection layer sends, so the caller heard nothing and waited out its whole
+  idle timeout for a stream that never started. The throw is now answered as
+  the unary path answers one: a `HandledError` at once, anything else through
+  the retry ladder with the error reply on its terminal path
+  ([#29](https://github.com/ArielLaub/protobus/issues/29)).
+- **`exportTS` keeps a dotted package whole.** It split a service's full name
+  at its first dot, so `com.example.billing.Invoice` came out as
+  `namespace com { interface example }`, losing both the package and the
+  service. Every name is now resolved where protobuf puts it: the service in
+  its package's namespace, and a referenced type in its own package's
+  namespace, qualified from wherever it is used
+  ([#26](https://github.com/ArielLaub/protobus/issues/26)).
+- **`generate:service` and `generate:types` handle ordinary schemas.**
+  `generate:service` read the schema with regular expressions: an rpc's
+  empty `{}` body ended the service there, silently dropping every later
+  method, and qualified or dotted names were missed. It now loads the schema
+  with the library's own loader and writes a class per service, with an
+  `async *` generator for each server-streaming rpc. `generate:types` renamed
+  every service to `Service` and set `ServiceName` to `'<package>.Service'`,
+  a name the bus does not use for, say, `service Math`; each service now keeps
+  its name and gets a correct `<Name>ServiceName`. A package with one service
+  still gets `ServiceName` and `Service`, now with the right value. The
+  skeleton also stops declaring `implements <package>.Service`: that is the
+  caller's proxy shape, which no server class satisfies, so the generated
+  file never compiled under `strict`. It follows the documented pattern, a
+  `ServiceName` getter, instead
+  ([#27](https://github.com/ArielLaub/protobus/issues/27)).
 
 ## [2.4.0] — 2026-09-08
 

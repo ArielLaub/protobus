@@ -2,6 +2,7 @@ import * as amqplib from 'amqplib';
 import ServiceProxy from '../../lib/service_proxy';
 import MessageService from '../../lib/message_service';
 import Context, { IContext } from '../../lib/context';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
 /**
  * What an operator actually reads off a dead-lettered message.
@@ -29,7 +30,7 @@ service Service {
     rpc slowMethod(AuditWire.Request) returns(AuditWire.Response);
 }`;
 
-const AMQP = 'amqp://guest:guest@localhost:5672/';
+const AMQP = BROKER_AMQP_URL;
 // Unique per run so parallel runs do not compete for one queue, and so the
 // queues this suite creates are the only ones it deletes.
 const SERVICE = `AuditWire.Service.run${Date.now()}`;

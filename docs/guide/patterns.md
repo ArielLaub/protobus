@@ -33,8 +33,8 @@ By default, services process messages one at a time. For CPU-bound or I/O-bound 
 import { RunnableService, Context } from 'protobus';
 import { ImageProcessor } from './common/types/proto';
 
-class ImageProcessorService extends RunnableService implements ImageProcessor.Service {
-    ServiceName = ImageProcessor.ServiceName;
+class ImageProcessorService extends RunnableService {
+    get ServiceName() { return ImageProcessor.ServiceName; }
 
     async resize(request: ImageProcessor.IResizeRequest): Promise<ImageProcessor.IResizeResponse> {
         // This can take 2-5 seconds per image
@@ -118,8 +118,8 @@ Use `HandledError` for errors that should not be retried (validation errors, not
 ```typescript
 import { HandledError, RunnableService } from 'protobus';
 
-class OrderService extends RunnableService implements Orders.Service {
-    ServiceName = Orders.ServiceName;
+class OrderService extends RunnableService {
+    get ServiceName() { return Orders.ServiceName; }
 
     async getOrder(request: Orders.IGetOrderRequest): Promise<Orders.IGetOrderResponse> {
         const order = await db.findOrder(request.orderId);
@@ -143,8 +143,8 @@ class OrderService extends RunnableService implements Orders.Service {
 
 <!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
-class OrderService extends RunnableService implements Orders.Service {
-    ServiceName = Orders.ServiceName;
+class OrderService extends RunnableService {
+    get ServiceName() { return Orders.ServiceName; }
 
     async createOrder(request: Orders.ICreateOrderRequest): Promise<Orders.ICreateOrderResponse> {
         const order = await db.createOrder(request);
@@ -165,8 +165,8 @@ class OrderService extends RunnableService implements Orders.Service {
 
 <!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
-class NotificationService extends RunnableService implements Notifications.Service {
-    ServiceName = Notifications.ServiceName;
+class NotificationService extends RunnableService {
+    get ServiceName() { return Notifications.ServiceName; }
 
     async init(): Promise<void> {
         await super.init();
@@ -209,8 +209,8 @@ await this.subscribeEvent('Orders.OrderCreated', handler, 'orders.*.*');
 ```typescript
 import { Context, ServiceProxy, RunnableService } from 'protobus';
 
-class CheckoutService extends RunnableService implements Checkout.Service {
-    ServiceName = Checkout.ServiceName;
+class CheckoutService extends RunnableService {
+    get ServiceName() { return Checkout.ServiceName; }
     private inventoryProxy: ServiceProxy;
     private paymentProxy: ServiceProxy;
 
@@ -252,8 +252,8 @@ class CheckoutService extends RunnableService implements Checkout.Service {
 
 <!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
-class DatabaseService extends RunnableService implements Database.Service {
-    ServiceName = Database.ServiceName;
+class DatabaseService extends RunnableService {
+    get ServiceName() { return Database.ServiceName; }
     private dbConnection: Connection;
 
     constructor(context: IContext) {
@@ -302,7 +302,7 @@ Requests are distributed round-robin across all instances automatically.
 <!-- doc-check: ignore why="written against CLI-generated types from your own schema" -->
 ```typescript
 class MyService extends RunnableService {
-    ServiceName = MyProto.ServiceName;
+    get ServiceName() { return MyProto.ServiceName; }
 }
 
 async function main() {

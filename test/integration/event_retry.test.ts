@@ -1,6 +1,7 @@
 import * as amqplib from 'amqplib';
 import MessageService from '../../lib/message_service';
 import Context, { IContext } from '../../lib/context';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
 /**
  * The opt-in event retry ladder, against a real broker.
@@ -19,7 +20,7 @@ message Ping { string id = 1; }
 
 service Sink {}`;
 
-const AMQP = 'amqp://guest:guest@localhost:5672/';
+const AMQP = BROKER_AMQP_URL;
 const STAMP = Date.now();
 const RETRYING = `EvtRetry.Sink.retrying${STAMP}`;
 const BYSTANDER = `EvtRetry.Sink.bystander${STAMP}`;

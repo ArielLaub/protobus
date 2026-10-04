@@ -408,7 +408,18 @@ export default abstract class MessageService implements IMessageService {
         // in a ResponseContainer; the connection layer publishes them with
         // x-protobus-final headers. See docs/advanced/streaming.md.
         if (this.context.factory.isStreamingMethod(request.method)) {
-            const iter = handler.call(this, request.data, request.actor, id, handlerContext);
+            let iter: any;
+            try {
+                iter = handler.call(this, request.data, request.actor, id, handlerContext);
+            } catch (error) {
+                // A throw before the iterable exists (argument validation, an
+                // eager HandledError) is answered as the unary path answers
+                // one: a HandledError replies at once, anything else carries
+                // the pre-encoded reply the connection layer sends on the
+                // terminal path. Without this the caller heard nothing and
+                // waited out its idle timeout.
+                return this.handleUnaryError(request.method, error);
+            }
             if (!iter || typeof iter[Symbol.asyncIterator] !== 'function') {
                 const error = new InvalidResultError(
                     `streaming method ${method} must return an AsyncIterable`,

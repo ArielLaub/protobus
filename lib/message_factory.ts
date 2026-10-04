@@ -801,77 +801,89 @@ export default class MessageFactory {
 
         const namespaces = new Map<string, string[]>();
         const addedTypes = new Set<string>();
+        const declarations = (ns: string) => namespaces.get(ns) || namespaces.set(ns, []).get(ns)!;
+
+        // A declaration's namespace is its PACKAGE: the nearest enclosing
+        // namespace that is not itself a message, so a nested message lands
+        // beside its parent. Splitting the name on dots instead read
+        // `com.example.billing.Invoice` as package `com`, service `example`.
+        const packageOf = (obj: protoBuf.ReflectionObject): string => {
+            let p = obj.parent;
+            while (p instanceof protoBuf.Type) { p = p.parent; }
+            return p ? p.fullName.replace(/^\./, '') : '';
+        };
+
+        const convertType = (t: string) => {
+            // Check custom types first
+            const customType = getCustomType(t);
+            if (customType) {
+                return customType.tsType;
+            }
+
+            // 64-bit scalars are excluded deliberately: decodeMessage
+            // converts them to decimal strings, because their range does
+            // not fit a JavaScript number.
+            if (['double', 'float', 'int32', 'uint32', 'sint32', 'fixed32', 'sfixed32'].indexOf(t) !== -1)
+                return 'number';
+            else if (['int64', 'uint64', 'sint64', 'fixed64', 'sfixed64'].indexOf(t) !== -1)
+                return 'string';
+            else if (t === 'string')
+                return 'string';
+            else if (t === 'bool')
+                return 'boolean';
+            else if (t === 'bytes')
+                return 'Buffer';
+            else
+                return undefined;
+        };
 
         serviceNames.forEach(fullName => {
-            const [ packageName, serviceName ] = fullName.split('.');
+            const service = this.root.lookupService(fullName);
+            const packageName = packageOf(service);
 
-            const modType = (t: string) => {
-                const parts = t.split('.');
-                if (parts.length > 1 && parts[0] !== packageName) {
-                    return `${parts[0]}.I${parts[1]}`;
-                } else {
-                    return `I${parts[parts.length - 1]}`;
-                }
+            // A reference from inside `packageName`: bare for a sibling,
+            // qualified with its own package otherwise.
+            const ref = (obj: protoBuf.ReflectionObject) => {
+                const ns = packageOf(obj);
+                return ns === packageName || ns === '' ? `I${obj.name}` : `${ns}.I${obj.name}`;
             };
 
-            const convertType = (t: string) => {
-                // Check custom types first
-                const customType = getCustomType(t);
-                if (customType) {
-                    return customType.tsType;
-                }
-
-                // 64-bit scalars are excluded deliberately: decodeMessage
-                // converts them to decimal strings, because their range does
-                // not fit a JavaScript number.
-                if (['double', 'float', 'int32', 'uint32', 'sint32', 'fixed32', 'sfixed32'].indexOf(t) !== -1)
-                    return 'number';
-                else if (['int64', 'uint64', 'sint64', 'fixed64', 'sfixed64'].indexOf(t) !== -1)
-                    return 'string';
-                else if (t === 'string')
-                    return 'string';
-                else if (t === 'bool')
-                    return 'boolean';
-                else if (t === 'bytes')
-                    return 'Buffer';
-                else
-                    return undefined;
-            };
-
-            const addType = (typeName: string) => {
-                if (typeName.startsWith('.')) { typeName = typeName.slice(1); }
-                if (addedTypes.has(typeName)) return;
-                addedTypes.add(typeName);
-                const parts = typeName.split('.');
-                const ns = parts.length === 2 ? parts[0] : packageName;
-                const messageName = parts[parts.length - 1];
-                const target = namespaces.get(ns) || namespaces.set(ns, []).get(ns);
+            const addType = (obj: protoBuf.Type | protoBuf.Enum) => {
+                const key = obj.fullName;
+                if (addedTypes.has(key)) return;
+                addedTypes.add(key);
+                const target = declarations(packageOf(obj));
 
                 // An enum is not a Type, and looking one up as one threw —
                 // which made every schema declaring an enum unexportable.
                 // decodeMessage converts enums with `enums: String`, so the
                 // union of value names is what a caller actually receives.
-                const declared = this.root.lookup(typeName);
-                if (declared instanceof protoBuf.Enum) {
-                    const names = Object.keys(declared.values).map(n => `'${n}'`).join(' | ');
-                    target.push(`    export type ${modType(messageName)} = (${names});\n`);
+                if (obj instanceof protoBuf.Enum) {
+                    const names = Object.keys(obj.values).map(n => `'${n}'`).join(' | ');
+                    target.push(`    export type I${obj.name} = (${names});\n`);
                     return;
                 }
 
-                const T = this.root.lookupType(typeName);
-                if (!T) {
-                    throw new Error('could not find the type ' + typeName + ' you are trying to add');
-                }
+                // Field types are written relative to the declaring package,
+                // so a reference to another package's type has to be
+                // qualified from there, not from this service's package.
+                const local = (t: protoBuf.ReflectionObject) => {
+                    const ns = packageOf(t);
+                    return ns === packageOf(obj) || ns === '' ? `I${t.name}` : `${ns}.I${t.name}`;
+                };
 
-                target.push(`    export interface ${modType(messageName)} {`);
-                const newTypes = new Set<string>();
-                T.fieldsArray.forEach(field => {
+                target.push(`    export interface I${obj.name} {`);
+                const referenced: Array<protoBuf.Type | protoBuf.Enum> = [];
+                obj.fieldsArray.forEach(field => {
+                    field.resolve();
                     let t = convertType(field.type);
                     if (!t) {
-                        if (field.type !== typeName) {
-                            newTypes.add(field.type);
+                        const resolved = field.resolvedType;
+                        if (!resolved) {
+                            throw new Error(`could not resolve the type ${field.type} of ${obj.fullName}.${field.name}`);
                         }
-                        t = modType(field.type);
+                        if (resolved !== obj) referenced.push(resolved);
+                        t = local(resolved);
                     }
                     // A map field is repeated on the wire but is an object in
                     // hand, so `[]` would describe the wrong shape. Its key is
@@ -883,36 +895,38 @@ export default class MessageFactory {
                     target.push(`        ${field.name}${!field.required ? '?' : ''}: (${shape} | null);`);
                 });
                 target.push('    }\n');
-                newTypes.forEach(addType);
+                referenced.forEach(addType);
             };
 
             const serviceSource: string[] = [];
-            serviceSource.push(`\n    export interface ${serviceName} {`);
-            const service = this.root.lookupService(fullName);
-            const methods = service.methodsArray;
-            methods.forEach(method => {
-                const req = method.requestType;
-                const res = method.responseType;
+            serviceSource.push(`\n    export interface ${service.name} {`);
+            service.methodsArray.forEach(method => {
                 // ServiceProxy installs a server-streaming method as an async
                 // iterable, not a promise. Declaring it as a promise here made
                 // `await proxy.watch(...)` type-check and then hand back an
                 // iterator.
                 method.resolve();
+                const req = method.resolvedRequestType!;
+                const res = method.resolvedResponseType!;
                 const returns = method.responseStream
-                    ? `AsyncIterable<${modType(res)}>`
-                    : `Promise<${modType(res)}>`;
-                serviceSource.push(`        ${method.name}(request: ${modType(req)}): ${returns};`);
+                    ? `AsyncIterable<${ref(res)}>`
+                    : `Promise<${ref(res)}>`;
+                serviceSource.push(`        ${method.name}(request: ${ref(req)}): ${returns};`);
                 addType(req);
                 addType(res);
             });
             serviceSource.push('    }\n');
-            const nsSource = namespaces.get(packageName);
-            nsSource.push(serviceSource.join('\n'));
-            namespaces.set(packageName, nsSource);
+            declarations(packageName).push(serviceSource.join('\n'));
         });
 
         const source: string[] = [];
         namespaces.forEach((value: string[], key: string) => {
+            // A type with no package is declared at the top level. A dotted
+            // package is a valid TypeScript namespace name as it stands.
+            if (key === '') {
+                source.push(value.join('\n').replace(/^ {4}export /gm, 'export '));
+                return;
+            }
             source.push(`export namespace ${key} {`);
             source.push(value.join('\n'));
             source.push('}\n\n');

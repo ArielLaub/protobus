@@ -190,10 +190,12 @@ Only the addition to `root` is per instance.
 |---|---|
 | Wire type | `bytes` — **32 bytes, fixed width, big-endian, unsigned** (uint256-compatible) |
 | Decodes to | native JavaScript `bigint` |
-| Accepts | `bigint`, decimal string, `0x` hex string, `number` |
+| Accepts | `bigint`, decimal string, `0x` hex string, `number` up to `Number.MAX_SAFE_INTEGER` |
 | Range | `0` … `2^256 - 1` (`BIGINT_MAX`) |
 
 Out-of-range values raise a `RangeError` rather than being coerced. `-5n` is **not** encoded as `5n` and `2^256 + 7` is **not** truncated to `7`; both throw, and both were real defects before the check existed ([`test/unit/custom_type_encoding.test.ts:126`](../../test/unit/custom_type_encoding.test.ts)). For money and on-chain amounts, failing loudly is the only safe behaviour.
+
+A `number` above `Number.MAX_SAFE_INTEGER` (2^53 - 1) is refused with a `RangeError` too: it has already lost precision before the encoder sees it (`9007199254740993` arrives as `...992`), so encoding it would send the wrong amount. Pass a `bigint` or a decimal string for anything that large.
 
 Decoding is bounded too: a wire value longer than 32 bytes throws instead of being decoded. The accumulator shifts once per byte, so its cost is quadratic in the input — a 1 MiB malformed value would occupy the event loop for over a minute before any handler ran.
 
@@ -216,6 +218,8 @@ console.log(bytesToBigint(new Uint8Array(0)));   // 0n — empty decodes to zero
 | Wire type | `int64` — milliseconds since the Unix epoch |
 | Decodes to | `Date` |
 | Accepts | `Date`, `number` (ms), ISO string |
+
+An invalid `Date`, an unparseable string, `NaN`, `Infinity`, a fractional millisecond, or anything beyond the range a `Date` can hold (±8.64e15 ms) is refused with a `RangeError`. Unchecked, each of these went out as `0` — 1970, indistinguishable from an instant somebody meant — or was silently truncated.
 
 Decoding handles protobufjs's `Long` representation `{ low, high }` as well as a plain number. The high word is treated as **signed**, which is what keeps pre-1970 instants working: coercing it with `>>> 0` turns every negative timestamp into a value far enough out of range that the `Date` is `Invalid` rather than merely wrong.
 
