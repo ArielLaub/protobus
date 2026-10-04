@@ -4,6 +4,21 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **An enum given by name is encoded as that value, not as 0.** Decoding
+  returns enums as value names (`enums: String`), but `buildRequest`,
+  `buildResponse` and `buildEvent` encoded through protobufjs `create()`,
+  which copies a name as-is; the encoder then wrote `0`. Every enum set by
+  name silently became its first value, and a service relaying or echoing a
+  decoded message corrupted every enum in it, TypeScript to TypeScript as
+  much as across languages. Encoding now goes through `fromObject()`, which
+  accepts a value name or number, in singular, repeated and map fields.
+  Found by the protobus-go cross-language suite
+  ([#40](https://github.com/ArielLaub/protobus/issues/40)).
+
 ## [2.4.0] — 2026-09-08
 
 The first release to carry 2.3.0's contents as well: 2.3.0 was tagged in this
