@@ -24,6 +24,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   above 2^53 - 1, whose precision is already gone, and encoded the wrong
   value. All of these now throw a `RangeError` saying what to pass instead
   ([#25](https://github.com/ArielLaub/protobus/issues/25)).
+- **A streaming handler that throws before returning its iterable answers the
+  caller.** Argument validation or an eager `HandledError` in a handler that is
+  a plain function, not a generator, escaped dispatch without the reply the
+  connection layer sends, so the caller heard nothing and waited out its whole
+  idle timeout for a stream that never started. The throw is now answered as
+  the unary path answers one: a `HandledError` at once, anything else through
+  the retry ladder with the error reply on its terminal path
+  ([#29](https://github.com/ArielLaub/protobus/issues/29)).
 
 ## [2.4.0] — 2026-09-08
 
