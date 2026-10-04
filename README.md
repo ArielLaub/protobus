@@ -39,7 +39,7 @@ to adopt.
 
 > **Cross-language:** [protobus-py](https://github.com/ArielLaub/protobus-py)
 > (Python, stable) and [protobus-go](https://github.com/ArielLaub/protobus-go)
-> (Go, experimental) speak the same wire protocol and use the same `.proto`
+> (Go, stable) speak the same wire protocol and use the same `.proto`
 > contracts.
 
 ---
@@ -412,7 +412,7 @@ Current ports:
 |---|---|---|
 | TypeScript / Node.js | [protobus](https://github.com/ArielLaub/protobus) | stable |
 | Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
-| Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | experimental |
+| Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
 
 Wire compatibility matters more than matching APIs character-for-character. The
 `.proto` stays the source of truth across languages.

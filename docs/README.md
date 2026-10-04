@@ -156,7 +156,7 @@ client.
 |---|---|---|
 | TypeScript / Node | [protobus](https://github.com/ArielLaub/protobus) | stable |
 | Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
-| Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | experimental |
+| Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
 
 The goal of a port is wire compatibility and equivalent messaging semantics, not
 a line-for-line copy of the TypeScript API. Differences between ports are recorded

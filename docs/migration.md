@@ -25,7 +25,7 @@
 
 The Node floor is real, not aspirational: `engines: { "node": ">=20" }` first appears in the 2.0.0 `package.json`; 1.4.1 declared no engines field at all. TypeScript is not a constraint the package expresses — 1.4.1 and 2.2.0 are both built with typescript 5.x and ship `ES2020`-target declarations.
 
-**Other language ports.** [protobus-py](https://github.com/ArielLaub/protobus-py) tracks this port and its wire compatibility is verified against a live broker in both directions — streaming since 1.4.0, message priority since 2.2.0. [protobus-go](https://github.com/ArielLaub/protobus-go) is experimental and makes no parity claim.
+**Other language ports.** [protobus-py](https://github.com/ArielLaub/protobus-py) tracks this port and its wire compatibility is verified against a live broker in both directions — streaming since 1.4.0, message priority since 2.2.0. [protobus-go](https://github.com/ArielLaub/protobus-go) 2.0.0 is at parity with this port: its CI runs Go, TypeScript and Python against each other in both directions on a live broker.
 
 ---
 
