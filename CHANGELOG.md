@@ -32,6 +32,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the unary path answers one: a `HandledError` at once, anything else through
   the retry ladder with the error reply on its terminal path
   ([#29](https://github.com/ArielLaub/protobus/issues/29)).
+- **`exportTS` keeps a dotted package whole.** It split a service's full name
+  at its first dot, so `com.example.billing.Invoice` came out as
+  `namespace com { interface example }`, losing both the package and the
+  service. Every name is now resolved where protobuf puts it: the service in
+  its package's namespace, and a referenced type in its own package's
+  namespace, qualified from wherever it is used
+  ([#26](https://github.com/ArielLaub/protobus/issues/26)).
 
 ## [2.4.0] — 2026-09-08
 
