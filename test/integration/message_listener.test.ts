@@ -3,8 +3,9 @@ import { randomUUID } from 'crypto';
 import MessageListener from '../../lib/message_listener';
 import Connection, { Channel } from '../../lib/connection';
 import Config from '../../lib/config';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
-const AMQP_CONNECTION_STRING = 'amqp://guest:guest@localhost:5672/';
+const AMQP_CONNECTION_STRING = BROKER_AMQP_URL;
 
 describe('MessageListener tests suite', () => {
     let connection: Connection;

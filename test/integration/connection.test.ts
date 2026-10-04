@@ -4,8 +4,9 @@ import Connection, {
     ReconnectionError
 } from '../../lib/connection';
 import { DisconnectedError } from '../../lib/message_dispatcher';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
-const AMQP_CONNECTION_STRING = 'amqp://guest:guest@localhost:5672/';
+const AMQP_CONNECTION_STRING = BROKER_AMQP_URL;
 
 describe('Connection tests suite', () => {
     let connection: Connection;

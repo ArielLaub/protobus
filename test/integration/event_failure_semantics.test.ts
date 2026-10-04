@@ -1,6 +1,7 @@
 import * as amqplib from 'amqplib';
 import MessageService from '../../lib/message_service';
 import Context, { IContext } from '../../lib/context';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
 /**
  * What actually happens when an event handler throws.
@@ -28,7 +29,7 @@ message Ping { string id = 1; }
 
 service Sink {}`;
 
-const AMQP = 'amqp://guest:guest@localhost:5672/';
+const AMQP = BROKER_AMQP_URL;
 const SERVICE = `EvtSem.Sink.run${Date.now()}`;
 
 class Sink extends MessageService {

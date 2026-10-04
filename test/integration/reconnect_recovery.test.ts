@@ -2,6 +2,7 @@ import Context from '../../lib/context';
 import MessageService from '../../lib/message_service';
 import ServiceProxy from '../../lib/service_proxy';
 import { setLevel, LogLevel } from '../../lib/logger';
+import { MGMT_URL, amqpUrlForVhost } from './helpers/broker';
 
 const PROTO = `
 syntax = "proto3";
@@ -20,7 +21,7 @@ class Svc extends MessageService {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-const MGMT = process.env.RABBITMQ_MGMT || 'http://guest:guest@localhost:15672';
+const MGMT = MGMT_URL;
 const base = new URL(MGMT);
 const auth = 'Basic ' + Buffer.from(`${base.username}:${base.password}`).toString('base64');
 const origin = `${base.protocol}//${base.host}`;
@@ -96,7 +97,7 @@ describe('the configured heartbeat reaches the broker', () => {
         await createVhost();
         process.env.AMQP_HEARTBEAT_SECONDS = '11';
         const ctx = new Context();
-        const url = `amqp://${base.username}:${base.password}@${base.hostname}:5672/${encodeURIComponent(VHOST)}`;
+        const url = amqpUrlForVhost(VHOST);
         try {
             await ctx.init(url, []);
 
@@ -133,7 +134,7 @@ describe('recovery across a real broker restart', () => {
         setLevel(LogLevel.Error);
         await createVhost();
         const ctx = new Context();
-        const url = `amqp://${base.username}:${base.password}@${base.hostname}:5672/${encodeURIComponent(VHOST)}`;
+        const url = amqpUrlForVhost(VHOST);
         await ctx.init(url, [], {
             reconnection: { maxRetries: 0, initialDelayMs: 300, maxDelayMs: 2000 },
         });

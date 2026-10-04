@@ -2,8 +2,9 @@ import MessageDispatcher from '../../lib/message_dispatcher';
 import Connection, { Channel } from '../../lib/connection';
 import Config from '../../lib/config';
 import { UnroutableError, PublishError } from '../../lib/errors';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
-const AMQP_CONNECTION_STRING = 'amqp://guest:guest@localhost:5672/';
+const AMQP_CONNECTION_STRING = BROKER_AMQP_URL;
 
 describe('MessageDispatcher tests suite', () => {
     let dispatcher: MessageDispatcher;

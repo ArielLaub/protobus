@@ -4,6 +4,7 @@ import MessageService from '../../lib/message_service';
 import Context, { IContext } from '../../lib/context';
 import { HandledError } from '../../lib/errors';
 import { Logger } from '../../lib/logger';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
 const proto = `syntax = "proto3";
 package Retry;
@@ -77,7 +78,7 @@ class RetryTestService extends MessageService {
     }
 }
 
-const AMQP_CONNECTION_STRING = 'amqp://guest:guest@localhost:5672/';
+const AMQP_CONNECTION_STRING = BROKER_AMQP_URL;
 
 describe('Retry and DLQ tests', () => {
     let context: Context;

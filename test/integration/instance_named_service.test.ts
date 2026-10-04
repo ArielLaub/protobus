@@ -2,6 +2,7 @@ import * as amqplib from 'amqplib';
 import ServiceProxy from '../../lib/service_proxy';
 import MessageService from '../../lib/message_service';
 import Context, { IContext } from '../../lib/context';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
 /**
  * Several instances of one contract, each addressed by its own name, reached
@@ -26,7 +27,7 @@ service Player {
     rpc shoot(Combat.ShootRequest) returns(Combat.ShootResponse);
 }`;
 
-const AMQP = 'amqp://guest:guest@localhost:5672/';
+const AMQP = BROKER_AMQP_URL;
 const RUN = Date.now();
 const PLAYER_SIX = `Combat.Player.player6_${RUN}`;
 const PLAYER_SEVEN = `Combat.Player.player7_${RUN}`;
