@@ -25,8 +25,9 @@ import ServiceProxy from '../../lib/service_proxy';
 import MessageService from '../../lib/message_service';
 import Context, { IContext } from '../../lib/context';
 import Config from '../../lib/config';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
-const AMQP_CONNECTION_STRING = 'amqp://guest:guest@localhost:5672/';
+const AMQP_CONNECTION_STRING = BROKER_AMQP_URL;
 
 /** Unique per run: queues are durable, and their arguments are immutable. */
 const STAMP = `P${Date.now()}`;

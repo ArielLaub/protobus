@@ -406,6 +406,17 @@ export default class MessageDispatcher implements IMessageDispatcher {
      * @param timeoutMs - How long to wait for a reply before rejecting with
      *   RpcTimeoutError. Defaults to Config.rpcCallTimeoutMs. Ignored when
      *   `rpc` is false, since there is nothing to wait for.
+     *
+     *   The deadline starts before the message is published, so it bounds the
+     *   broker confirm as well as the reply. A confirm that takes longer than
+     *   `timeoutMs` therefore yields RpcTimeoutError even though the request
+     *   may still reach a service.
+     *
+     *   When more than one outcome is available, the publish result wins: a
+     *   failed publish rejects with the broker's error rather than the expired
+     *   deadline, because "the request never left" is the more specific
+     *   answer. A disconnect that arrives while the confirm is pending rejects
+     *   with DisconnectedError unless the publish itself also fails.
      */
     async publish(
         content: any, routingKey: string, rpc: boolean, timeoutMs?: number, options?: CallOptions,
@@ -474,6 +485,15 @@ export default class MessageDispatcher implements IMessageDispatcher {
             this.callbacks.set(id, { resolve, reject, timer });
         });
 
+        // Observe the reply promise now, not at `return` below. `limit` bounds
+        // the confirm wait as well as the reply wait, so the deadline — or a
+        // disconnect — can settle this promise while the await below is still
+        // suspended, and a rejection nobody is holding yet is an
+        // unhandledRejection that terminates the process under Node's strict
+        // mode. Swallowing here loses nothing: every outcome still reaches the
+        // caller through the same promise, returned intact.
+        replyPromise.catch(() => undefined);
+
         try {
             await this.connection.publish(
                 this.channel, Config.busExchangeName, routingKey, content, properties,
@@ -500,9 +520,10 @@ export default class MessageDispatcher implements IMessageDispatcher {
      * StreamTimeoutError if no chunk arrives within `idleTimeoutMs`.
      *
      * If the caller breaks out of the iteration, the pending-stream slot is
-     * released and the dispatcher stops buffering chunks. The server keeps
-     * generating (v1 — server cancellation is on the roadmap), but its
-     * subsequent publishes are simply dropped at the dispatcher.
+     * released, the dispatcher stops buffering chunks, and a cancellation
+     * notice goes to the server. That notice is cooperative and best effort: a
+     * handler that ignores its signal runs to completion, and its subsequent
+     * publishes are dropped here.
      *
      * See `docs/advanced/streaming.md` for the full protocol.
      */

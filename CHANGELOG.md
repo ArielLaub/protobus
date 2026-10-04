@@ -4,7 +4,189 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.3.0] — 2026-09-02
+## [Unreleased]
+
+### Fixed
+
+- **An enum given by name is encoded as that value, not as 0.** Decoding
+  returns enums as value names (`enums: String`), but `buildRequest`,
+  `buildResponse` and `buildEvent` encoded through protobufjs `create()`,
+  which copies a name as-is; the encoder then wrote `0`. Every enum set by
+  name silently became its first value, and a service relaying or echoing a
+  decoded message corrupted every enum in it, TypeScript to TypeScript as
+  much as across languages. Encoding now goes through `fromObject()`, which
+  accepts a value name or number, in singular, repeated and map fields.
+  Found by the protobus-go cross-language suite
+  ([#40](https://github.com/ArielLaub/protobus/issues/40)).
+- **The built-in scalars refuse input they cannot represent.** `timestamp`
+  encoded an invalid `Date`, an unparseable string, `NaN` or `Infinity` as `0`
+  (1970) and truncated a fractional millisecond; `bigint` accepted a `number`
+  above 2^53 - 1, whose precision is already gone, and encoded the wrong
+  value. All of these now throw a `RangeError` saying what to pass instead
+  ([#25](https://github.com/ArielLaub/protobus/issues/25)).
+- **A streaming handler that throws before returning its iterable answers the
+  caller.** Argument validation or an eager `HandledError` in a handler that is
+  a plain function, not a generator, escaped dispatch without the reply the
+  connection layer sends, so the caller heard nothing and waited out its whole
+  idle timeout for a stream that never started. The throw is now answered as
+  the unary path answers one: a `HandledError` at once, anything else through
+  the retry ladder with the error reply on its terminal path
+  ([#29](https://github.com/ArielLaub/protobus/issues/29)).
+- **`exportTS` keeps a dotted package whole.** It split a service's full name
+  at its first dot, so `com.example.billing.Invoice` came out as
+  `namespace com { interface example }`, losing both the package and the
+  service. Every name is now resolved where protobuf puts it: the service in
+  its package's namespace, and a referenced type in its own package's
+  namespace, qualified from wherever it is used
+  ([#26](https://github.com/ArielLaub/protobus/issues/26)).
+- **`generate:service` and `generate:types` handle ordinary schemas.**
+  `generate:service` read the schema with regular expressions: an rpc's
+  empty `{}` body ended the service there, silently dropping every later
+  method, and qualified or dotted names were missed. It now loads the schema
+  with the library's own loader and writes a class per service, with an
+  `async *` generator for each server-streaming rpc. `generate:types` renamed
+  every service to `Service` and set `ServiceName` to `'<package>.Service'`,
+  a name the bus does not use for, say, `service Math`; each service now keeps
+  its name and gets a correct `<Name>ServiceName`. A package with one service
+  still gets `ServiceName` and `Service`, now with the right value. The
+  skeleton also stops declaring `implements <package>.Service`: that is the
+  caller's proxy shape, which no server class satisfies, so the generated
+  file never compiled under `strict`. It follows the documented pattern, a
+  `ServiceName` getter, instead
+  ([#27](https://github.com/ArielLaub/protobus/issues/27)).
+
+## [2.4.0] — 2026-09-08
+
+The first release to carry 2.3.0's contents as well: 2.3.0 was tagged in this
+file but never published, so anyone upgrading from 2.2.0 gets both sets of
+changes at once.
+
+Eight findings from an external audit of 2.3.0. Four were reproduced defects,
+one was a documented design limitation now given an opt-in remedy, and three
+were documentation that had drifted away from — or overstated — what the code
+does.
+
+A minor rather than a patch: `eventRetry` is new API, and 64-bit scalars now
+decode to a different type.
+
+### Added
+
+- **`eventRetry` — opt-in retry and dead-lettering for event handlers.** A
+  failing event handler dropped its event, with no retry and no DLQ. The
+  rationale for that was real — an unacknowledged delivery holds the prefetch
+  and stalls the subscriber behind the first permanently-failing event — but it
+  was presented as the only alternative to loss, and bounded retry with durable
+  dead-lettering is a third option. Setting `eventRetry` on a service gives its
+  event subscriptions the ladder its RPC queue already has: park on
+  `<Service>.Events.Retry` for `retryDelayMs`, come back, and land on
+  `<Service>.Events.DLQ` once the hops are spent. Off by default, because
+  enabling it declares topology a running deployment does not have.
+
+  The redelivery path is not the request path. A request's retry dead-letters
+  back to `proto.bus`, which routes to one service queue; events fan out, so
+  returning them through `proto.bus.events` would redeliver to every subscriber
+  bound to the topic, including the ones that succeeded. The expired event goes
+  to a per-subscriber topic exchange bound only to that listener's own queue.
+
+  What it does not fix: handlers sharing a topic share one delivery, so a retry
+  re-runs the ones that already succeeded. The event's `messageId` is preserved
+  across every hop, which is what makes an idempotent handler possible.
+
+### Fixed
+
+- **An RPC deadline expiring during a publish confirm no longer kills the
+  process.** The reply promise is created and its timeout armed before
+  `publish()` is awaited, so a slow broker confirm let the timeout reject a
+  promise nobody was holding yet. Under Node's default unhandled-rejection
+  handling that terminates the caller, whether or not it catches `publish()`.
+  The promise is now observed at creation and still returned intact, so every
+  outcome reaches the caller. Arming the callback after the confirm instead
+  would have reintroduced the fast-reply race it exists to prevent. The
+  deadline's reach over the confirm, and the precedence between a publish
+  failure, a disconnect and an expired deadline, are now documented on
+  `publish()`.
+
+- **Generated types describe what the runtime returns.** Three separate
+  contradictions, all in code nothing had ever compiled:
+  - `type Long = number` collapsed every 64-bit scalar to a number while
+    decoding produced a protobufjs `Long` object.
+  - A server-streaming method was declared `Promise<T>`, so
+    `await proxy.watch()` type-checked and then returned an async iterator.
+    Signatures now follow the schema's `responseStream` flag and carry the
+    optional arguments `ServiceProxy` actually accepts.
+  - The per-method type aliases were never exported, so the `Service` interface
+    referred to members TypeScript could not see and the file did not compile
+    at all. A consumer is now type-checked against generated output, including
+    two cases that must fail.
+
+- **`exportTS()` no longer throws on a schema containing an enum**, and carries
+  the same corrections: enums as the string union the decoder produces, maps as
+  records, server-streaming methods as iterables.
+
+- **Custom types held as map values encode.** A map field's declared type is its
+  *value* type, so `map<string, bigint>` looked like a plain bigint field and
+  the whole map object went to the codec — `Cannot convert [object Object] to a
+  BigInt`, and the request never left. Maps now convert per value, recursing
+  into messages held in one. Keys are untouched and an empty map stays empty.
+
+### Changed
+
+- **BREAKING: 64-bit scalars decode to a decimal string.** `int64`, `uint64`,
+  `sint64`, `fixed64` and `sfixed64` previously decoded to a protobufjs `Long`
+  object, which no generated type described honestly and which compares and
+  serialises unlike a number. Converting to `number` instead would corrupt
+  anything past `Number.MAX_SAFE_INTEGER`. A decimal string is exact across the
+  whole range, and is the answer protobuf's canonical JSON mapping reaches for
+  the same reason. The wire bytes do not change — this is a JavaScript
+  constraint, and a peer still decodes into its own native 64-bit type.
+  Encoding still accepts a number or a string.
+
+  Migration: `Number(value)` where the range is safe, `BigInt(value)` where it
+  is not, and regenerate with `npx protobus generate`.
+
+### Documentation
+
+- **Comparative and performance claims that could not be backed are gone.** The
+  framework comparison asserted "Message delivery: Guaranteed" for protobus and
+  "Best effort" for three other projects, in configurations nobody had run —
+  and it was not true of protobus either, which drops failed events by default
+  and has one unconfirmed hop in its retry ladder. "Transport-agnostic
+  frameworks can't use most of these" is contradicted by Nest's own RabbitMQ
+  documentation. "3-10x smaller", "50+ packages" and "days, not months" had no
+  measurement behind them. These are deleted rather than restated: replacing a
+  wrong claim about someone else's library means owning a claim that ages every
+  time they ship. Each alternative now links to its own documentation.
+
+- **"No app-level protocol beyond serialize protobuf, publish to queue" was
+  false by this repository's own source**, and was the most damaging line on
+  the page — a reader porting to another language would have found the
+  envelopes, the routing-key rule, the error encoding and the streaming headers
+  the hard way. The porting argument is restated as what actually supports it:
+  a small dependency surface and messaging behaviour that lives in RabbitMQ
+  rather than in the library. The protocol is named and linked, and the fact
+  that the cross-language test is excluded from the CI integration job is now
+  disclosed where the interoperability claim is made.
+
+- **The one hop protobus does not confirm is named.** A retried message crosses
+  the broker twice; the second crossing is RabbitMQ's own dead-letter
+  republish, which runs without internal publisher confirms and removes the
+  message from the retry queue whether or not the target accepts it. Adds the
+  transfer-by-transfer failure matrix, and records what RabbitMQ's at-least-once
+  dead-lettering would require and why a classic retry queue does not have it.
+  Not reproduced against a cluster; the section says so.
+
+- **The streaming guide matches the implementation again.** The gRPC comparison
+  listed server cancellation as roadmap while `CancelListener` ships; the
+  backpressure section called client memory unreachable while the dispatcher
+  enforces three bounds and fails a stream that crosses one; and the advice to
+  use several proxy instances for independent reply queues does nothing,
+  because the callback listener belongs to the Context's dispatcher.
+
+- **64-bit decoding, map support for custom types, and `eventRetry`** are
+  documented where each is used, with the generated-output example in the CLI
+  reference regenerated from the generator rather than transcribed.
+
+## [2.3.0] — 2026-09-02 (never published; shipped in 2.4.0)
 
 Twelve findings from the documentation audit in
 [#34](https://github.com/ArielLaub/protobus/pull/34), each of which came out of

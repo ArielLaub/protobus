@@ -160,12 +160,18 @@ There are first-party compatible implementations:
 
 - [protobus](https://github.com/ArielLaub/protobus) — TypeScript / Node.js
 - [protobus-py](https://github.com/ArielLaub/protobus-py) — Python
-- [protobus-go](https://github.com/ArielLaub/protobus-go) — Go, experimental
+- [protobus-go](https://github.com/ArielLaub/protobus-go) — Go
 
 That constraint is healthy for the TypeScript implementation: wire behavior
 cannot casually depend on JavaScript-only object conventions. Where the ports
 differ, the difference is recorded per feature — see
 [Priority → Cross-language](./guide/priority.md#cross-language).
+
+Interoperability is tested, not assumed: protobus-go's CI runs Go, TypeScript
+and Python services and clients against each other, in both directions, on a
+real RabbitMQ 3 and 4, with replicas in different languages sharing one queue.
+This repository's own cross-language test is not part of its CI, because it
+needs the other ports checked out beside it.
 
 ---
 
@@ -179,16 +185,14 @@ differ, the difference is recorded per feature — see
 | **Schema** | Required `.proto` | Optional | Optional (DTOs) | None |
 | **Routing** | Broker-native | App-level | App-level | Pattern matching |
 | **Load balancing** | Broker-level | App-level | App-level | App-level |
-| **Message delivery** | At-least-once, broker-acknowledged | Best effort | Best effort | Best effort |
 | **Cross-language** | Native (proto + AMQP) | Reimplement protocol | Reimplement protocol | Reimplement protocol |
 | **App framework included** | No | Partly (gateway, caching) | Yes | No |
-| **Dependencies** | 3 | 15+ | 50+ | 10+ |
 
 "At-least-once, broker-acknowledged" is defined precisely in
 [Delivery Guarantees](./concepts/delivery-guarantees.md); it is not "guaranteed
 delivery" and this documentation avoids that phrase.
 
-### Moleculer
+## What ProtoBus is not
 
 [Moleculer](https://moleculer.services/) is one of the most popular Node.js
 microservices frameworks, known for its extensive feature set and transport
@@ -226,7 +230,6 @@ opinionated architecture of decorators, modules and dependency injection.
 | Architecture | Opinionated (modules, decorators) | Ordinary classes, your DI or none |
 | Transport usage | Abstracted | Native RabbitMQ features |
 | Serialization | JSON | Protobuf binary |
-| Dependencies | 50+ packages | 3 packages |
 | Message reliability | Transport-dependent | Broker-acknowledged, at-least-once |
 
 **When to choose NestJS:** you want one framework for everything (HTTP API plus
@@ -248,7 +251,6 @@ to matching handlers. Transport is pluggable.
 | Schema | None (dynamic patterns) | Required `.proto` contracts |
 | Type safety | Runtime only | Compile-time |
 | Serialization | JSON | Protobuf binary |
-| Message delivery | Best effort | Broker-acknowledged, at-least-once |
 
 **When to choose Seneca:** you prefer pattern-based over service-based thinking,
 you are decomposing a monolith incrementally, or you want maximum flexibility in
@@ -315,40 +317,53 @@ That boundary is the point.
 
 ## Performance
 
-In the authors' measurements, ProtoBus outperformed Moleculer in every scenario
-tested. Both ran on the same hardware against the same RabbitMQ, using a single
-shared publisher context:
-
-| Scenario | Payload | ProtoBus | Moleculer | Difference |
-|----------|---------|----------|-----------|------------|
-| **Simple RPC** | ~100 bytes | 15,698 msg/sec | 12,269 msg/sec | **+28%** |
-| **Complex Order** | ~5 KB | 8,880 msg/sec | 8,032 msg/sec | **+10%** |
-| **Metrics Batch** | ~139 KB | 637 msg/sec | 567 msg/sec | **+12%** |
-
-Why the gap: binary serialization reduces network I/O, message type analysis is
-cached so plain messages skip object traversal, and routing happens in the broker
-rather than on the Node event loop.
-
-**Methodology:** RabbitMQ 3.x for both; a single shared publisher context; 10
-competing consumer instances; 50 warm-up messages; 10,000 messages
-(simple/complex) or 5,000 (metrics). "Complex Order" is a realistic e-commerce
-order with nested objects, arrays and a ~3 KB text field. "Metrics" simulates
-time-series ingestion with 3,200 data points per message.
-
 > [!WARNING]
-> **These numbers are not reproducible from this repository.** The benchmark
+> **The numbers below are not reproducible from this repository.** The benchmark
 > harness that produced them was never committed — `find . -iname "*bench*"`
 > returns nothing, and `sample/` holds only `combatGame` and `tokenStream`. An
-> earlier version of this page said "benchmark code available in the repository",
-> which was not true.
+> earlier version of this page said "benchmark code available in the
+> repository", which was not true.
 >
-> Treat the table as a recorded result from the authors, not as something you can
-> verify here. Measure your own workload before it matters to you: payload shape
-> dominates, and the gap on a 100-byte message is not the gap on a 139 KB one.
+> Treat the table as a recorded result from the authors, on their hardware, at
+> an unrecorded version of both libraries. Nothing here has been re-measured.
+> Measure your own workload before it matters to you: payload shape dominates,
+> and the gap on a 100-byte message is not the gap on a 139 KB one.
 >
 > Contributing a runnable harness — ideally alongside
 > [`scripts/run-combat-sample.sh`](../scripts/run-combat-sample.sh), so CI could
 > run it — would close this, and is welcome.
+
+Reported by the authors, both libraries on the same hardware against the same
+RabbitMQ, using a single shared publisher context:
+
+| Scenario | Payload | ProtoBus | Moleculer | Difference |
+|----------|---------|----------|-----------|------------|
+| **Simple RPC** | ~100 bytes | 15,698 msg/sec | 12,269 msg/sec | +28% |
+| **Complex Order** | ~5 KB | 8,880 msg/sec | 8,032 msg/sec | +10% |
+| **Metrics Batch** | ~139 KB | 637 msg/sec | 567 msg/sec | +12% |
+
+Method, as recorded: RabbitMQ 3.x for both; a single shared publisher context;
+10 competing consumer instances; 50 warm-up messages; 10,000 measured messages
+(simple and complex), 5,000 (metrics). The "Complex Order" payload is a
+realistic e-commerce order with nested objects, arrays and a ~3 KB text field;
+"Metrics" simulates time-series ingestion with 3,200 data points per message.
+No latency distribution or resource use was recorded, and no confidence
+interval can be given from a single run.
+
+### What the architecture would predict
+
+Separately from the measurement above, and not evidence for it:
+
+- Protobuf encodes to fewer bytes than the equivalent JSON, so there is less to
+  write and read.
+- Protobus caches per-message-type analysis and skips the encode preprocessing
+  walk entirely when a schema declares no custom types
+  ([`lib/message_factory.ts`](../lib/message_factory.ts),
+  `messageNeedsPreprocess`).
+- Routing decisions happen in the broker, so they do not run on your event loop.
+
+Whether any of that is visible in your workload is an empirical question these
+numbers do not settle.
 
 ---
 

@@ -4,6 +4,7 @@ import ServiceProxy from '../../lib/service_proxy';
 import MessageService from '../../lib/message_service';
 import Context, { IContext } from '../../lib/context';
 import { Logger } from '../../lib/logger';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
 const proto = `syntax = "proto3";
 package Simple;
@@ -57,7 +58,7 @@ class TestService extends MessageService {
     }
 }
 
-const AMQP_CONNECTION_STRING = 'amqp://guest:guest@localhost:5672/';
+const AMQP_CONNECTION_STRING = BROKER_AMQP_URL;
 
 describe('MessageService tests suite', () => {
     let theService: TestService;

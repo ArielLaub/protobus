@@ -29,8 +29,9 @@ import * as protobuf from 'protobufjs';
 
 import ServiceProxy from '../../lib/service_proxy';
 import Context from '../../lib/context';
+import { AMQP_URL as BROKER_AMQP_URL } from './helpers/broker';
 
-const AMQP_URL = 'amqp://guest:guest@127.0.0.1:5672/';
+const AMQP_URL = BROKER_AMQP_URL;
 
 const CROSS_LANG_DIR = path.resolve(__dirname, 'cross-lang');
 const PROTO_DIR = path.join(CROSS_LANG_DIR, 'proto');

@@ -227,6 +227,9 @@ If a worker disappears before settlement, the broker still owns the delivery.
 ProtoBus builds its retry, reply and shutdown rules around that fact instead of
 reimplementing a service registry and load balancer in JavaScript.
 
+If you may need to swap RabbitMQ for another broker, use a transport-agnostic
+framework instead. That is a real feature and ProtoBus does not have it.
+
 ### 4. A resolved Promise should mean something
 
 A recurring design question in ProtoBus is:

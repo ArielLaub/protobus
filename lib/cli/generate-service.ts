@@ -1,18 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as protoBuf from 'protobufjs';
+import MessageFactory from '../message_factory';
 import { loadConfig, resolvePath } from './config';
-
-interface RpcMethod {
-    name: string;
-    requestType: string;
-    responseType: string;
-}
-
-interface ParsedService {
-    packageName: string;
-    serviceName: string;
-    methods: RpcMethod[];
-}
+import { serviceNameConstant } from './generate-types';
 
 /** Raised when a service name could not be used safely in a file path. */
 export class InvalidServiceNameError extends Error {
@@ -76,16 +67,15 @@ export async function generateService(serviceName: string, cwd: string = process
         throw new Error(`Proto file not found: ${protoFile}`);
     }
 
-    // Parse the proto file
-    const protoContent = fs.readFileSync(protoFile, 'utf-8');
-    const parsed = parseProtoFile(protoContent, serviceName);
-
-    if (!parsed) {
-        throw new Error(`Could not find service definition in ${protoFile}`);
+    // Parse with the library's own loader, so imports, nested blocks, options
+    // and the built-in custom types resolve exactly as they do at runtime.
+    const services = servicesDeclaredIn(protoDir, protoFile);
+    if (services.length === 0) {
+        throw new Error(`${protoFile} declares no service`);
     }
 
     // Generate the service stub
-    const serviceCode = generateServiceCode(parsed, typesOutput, servicesDir);
+    const serviceCode = generateServiceCode(services, typesOutput, path.join(servicesDir, serviceName.toLowerCase()));
 
     // Create output directory
     const serviceDir = path.join(servicesDir, serviceName.toLowerCase());
@@ -107,78 +97,105 @@ export async function generateService(serviceName: string, cwd: string = process
 }
 
 /**
- * Parse a .proto file to extract service information
+ * The services a .proto file declares, loaded with every file under protoDir
+ * so that the types they reference from other files resolve.
+ *
+ * This replaced a set of regular expressions that stopped at the first `}`
+ * (an rpc's empty `{}` body dropped every method after it), matched only
+ * single-segment names, and discarded the service's own name.
  */
-function parseProtoFile(content: string, expectedPackage: string): ParsedService | null {
-    // Extract package name
-    const packageMatch = content.match(/package\s+(\w+)\s*;/);
-    const packageName = packageMatch ? packageMatch[1] : expectedPackage;
-
-    // Extract service definition
-    const serviceMatch = content.match(/service\s+(\w+)\s*\{([^}]+)\}/s);
-    if (!serviceMatch) {
-        return null;
+function servicesDeclaredIn(protoDir: string, protoFile: string): protoBuf.Service[] {
+    const factory = new MessageFactory();
+    const log = console.log;
+    console.log = () => undefined; // the loader narrates; a generator should not
+    try {
+        factory.init([protoDir]);
+    } finally {
+        console.log = log;
     }
-
-    const serviceName = serviceMatch[1];
-    const serviceBody = serviceMatch[2];
-
-    // Extract RPC methods
-    const methods: RpcMethod[] = [];
-    const rpcRegex = /rpc\s+(\w+)\s*\(\s*(\w+)\s*\)\s*returns\s*\(\s*(\w+)\s*\)/g;
-    let match;
-
-    while ((match = rpcRegex.exec(serviceBody)) !== null) {
-        methods.push({
-            name: match[1],
-            requestType: match[2],
-            responseType: match[3],
-        });
-    }
-
-    return {
-        packageName,
-        serviceName,
-        methods,
+    const target = path.resolve(protoFile);
+    const found: protoBuf.Service[] = [];
+    const walk = (ns: protoBuf.NamespaceBase) => {
+        for (const child of ns.nestedArray) {
+            if (child instanceof protoBuf.Service && child.filename && path.resolve(child.filename) === target) {
+                found.push(child);
+            }
+            if (child instanceof protoBuf.Namespace || child instanceof protoBuf.Type) walk(child);
+        }
     };
+    walk((factory as any).root);
+    return found;
 }
 
 /**
- * Generate TypeScript service code
+ * How the generated types name a message: its full name with the last segment
+ * prefixed `I`, as pbts emits it (a nested message lives in its parent's
+ * namespace). A type with no package is imported by name.
  */
-function generateServiceCode(parsed: ParsedService, typesOutput: string, servicesDir: string): string {
-    const { packageName, methods } = parsed;
+function typeRef(type: protoBuf.ReflectionObject, roots: Set<string>): string {
+    const parts = type.fullName.replace(/^\./, '').split('.');
+    const name = `I${parts.pop()}`;
+    roots.add(parts.length ? parts[0] : name);
+    return parts.length ? `${parts.join('.')}.${name}` : name;
+}
 
+/**
+ * Generate TypeScript service code: one RunnableService class per service.
+ */
+function generateServiceCode(services: protoBuf.Service[], typesOutput: string, serviceDir: string): string {
     // Calculate relative import path from service directory to types
-    const serviceSubDir = path.join(servicesDir, packageName.toLowerCase());
-    const relativeTypesPath = path.relative(serviceSubDir, typesOutput)
+    const relativeTypesPath = path.relative(serviceDir, typesOutput)
         .replace(/\.ts$/, '')
         .replace(/\\/g, '/'); // Normalize for Windows
 
-    // Generate method stubs
-    const methodStubs = methods.map(method => {
-        const requestParam = `request: ${packageName}.I${method.requestType}`;
-        const returnType = `Promise<${packageName}.I${method.responseType}>`;
+    const roots = new Set<string>();
+    const classNames: string[] = [];
+    const classes = services.map(service => {
+        const fullName = service.fullName.replace(/^\./, '');
+        const pkg = fullName.slice(0, fullName.lastIndexOf('.'));
+        const constant = pkg ? `${pkg}.${serviceNameConstant(service.name)}` : `'${fullName}'`;
+        if (pkg) roots.add(pkg.split('.')[0]);
+        // `service Service` keeps the established class name, <Package>Service.
+        const className = service.name === 'Service' && pkg
+            ? `${pkg.slice(pkg.lastIndexOf('.') + 1)}Service`
+            : `${service.name}Service`;
+        classNames.push(className);
 
-        return `    async ${method.name}(${requestParam}): ${returnType} {
+        const methodStubs = service.methodsArray.map(method => {
+            method.resolve();
+            const req = typeRef(method.resolvedRequestType!, roots);
+            const res = typeRef(method.resolvedResponseType!, roots);
+            // A server-streaming method is an async generator: each `yield`
+            // is one chunk to the caller.
+            const signature = method.responseStream
+                ? `async *${method.name}(request: ${req}): AsyncIterable<${res}>`
+                : `async ${method.name}(request: ${req}): Promise<${res}>`;
+            return `    ${signature} {
         // TODO: Implement ${method.name}
         throw new Error('Not implemented: ${method.name}');
     }`;
-    }).join('\n\n');
+        }).join('\n\n');
 
-    return `import { RunnableService, Context } from 'protobus';
-import { ${packageName} } from '${relativeTypesPath}';
-
-/**
- * ${packageName} Service Implementation
+        return `/**
+ * ${fullName} implementation.
  *
  * Generated by protobus CLI. Implement the TODO methods below.
  */
-export class ${packageName}Service extends RunnableService implements ${packageName}.Service {
-    ServiceName = ${packageName}.ServiceName;
+export class ${className} extends RunnableService {
+    public get ServiceName(): string {
+        return ${constant};
+    }
 
 ${methodStubs}
-}
+}`;
+    });
+
+    const starts = classNames.map(name => `        await RunnableService.start(context, ${name});`).join('\n');
+    const typesImport = roots.size ? `import { ${[...roots].sort().join(', ')} } from '${relativeTypesPath}';\n` : '';
+
+    return `import { RunnableService, Context } from 'protobus';
+${typesImport}
+${classes.join('\n\n')}
 
 // Start the service when run directly
 if (require.main === module) {
@@ -189,7 +206,7 @@ if (require.main === module) {
             [process.env.PROTO_PATH || './proto']
         );
 
-        await RunnableService.start(context, ${packageName}Service);
+${starts}
     })();
 }
 `;

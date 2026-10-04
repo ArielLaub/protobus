@@ -2,7 +2,7 @@ import { Logger } from './logger';
 import { IContext } from './context';
 import MessageFactory from './message_factory';
 import MessageListener from './message_listener';
-import EventListener, { EventHandler } from './event_listener';
+import EventListener, { EventHandler, EventRetryOptions } from './event_listener';
 import CancelListener from './cancel_listener';
 import { isHandledError, sanitizeErrorForClient, ProtocolError } from './errors';
 // HandledError is re-exported for users, isHandledError is used by MessageListener
@@ -95,6 +95,22 @@ export interface IMessageServiceOptions {
      * are byte-identical to every previous version. See docs/advanced/priority.md.
      */
     maxPriority?: number;
+    /**
+     * Retry for this service's EVENT subscriptions, which is separate from
+     * `retry` above and off by default.
+     *
+     * Without it a handler that throws loses its event: the delivery is
+     * rejected without requeue, so one permanently-failing event cannot stall
+     * the subscriber behind its own prefetch. With it, events climb the same
+     * ladder requests do — park, wait `retryDelayMs`, redeliver, and
+     * dead-letter to `<Service>.Events.DLQ` once the hops are spent.
+     *
+     * Opt-in because it changes both behaviour and topology: enabling it
+     * declares queues and exchanges the service did not have before, and a
+     * retried event re-runs every handler that matched it, including the ones
+     * that already succeeded. See docs/guide/events.md.
+     */
+    eventRetry?: EventRetryOptions;
 }
 
 export default abstract class MessageService implements IMessageService {
@@ -129,7 +145,7 @@ export default abstract class MessageService implements IMessageService {
             options.processingTimeoutMs,
             options.maxPriority,
         );
-        this.eventListener = new EventListener(context.connection, context.factory);
+        this.eventListener = new EventListener(context.connection, context.factory, options.eventRetry);
         this.cancelListener = new CancelListener(context.connection);
     }
 
@@ -392,7 +408,18 @@ export default abstract class MessageService implements IMessageService {
         // in a ResponseContainer; the connection layer publishes them with
         // x-protobus-final headers. See docs/advanced/streaming.md.
         if (this.context.factory.isStreamingMethod(request.method)) {
-            const iter = handler.call(this, request.data, request.actor, id, handlerContext);
+            let iter: any;
+            try {
+                iter = handler.call(this, request.data, request.actor, id, handlerContext);
+            } catch (error) {
+                // A throw before the iterable exists (argument validation, an
+                // eager HandledError) is answered as the unary path answers
+                // one: a HandledError replies at once, anything else carries
+                // the pre-encoded reply the connection layer sends on the
+                // terminal path. Without this the caller heard nothing and
+                // waited out its idle timeout.
+                return this.handleUnaryError(request.method, error);
+            }
             if (!iter || typeof iter[Symbol.asyncIterator] !== 'function') {
                 const error = new InvalidResultError(
                     `streaming method ${method} must return an AsyncIterable`,

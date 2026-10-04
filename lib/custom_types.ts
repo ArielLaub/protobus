@@ -233,6 +233,15 @@ export const BigIntType: ICustomType<bigint> = {
         } else if (typeof value === 'string') {
             bi = BigInt(value); // Supports hex (0x...) and decimal strings
         } else {
+            // A number above 2^53-1 has already lost precision before it
+            // arrives here (9007199254740993 is ...992), so encoding it would
+            // send the wrong amount. BigInt() rejects fractions on its own.
+            if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+                throw new RangeError(
+                    `bigint value ${value} is a number beyond Number.MAX_SAFE_INTEGER and has ` +
+                    'already lost precision; pass a bigint or a decimal string instead',
+                );
+            }
             bi = BigInt(value);
         }
 
@@ -283,6 +292,9 @@ export const BigIntType: ICustomType<bigint> = {
     }
 };
 
+/** The largest magnitude, in milliseconds, an ECMAScript Date can hold. */
+const MAX_DATE_MS = 8.64e15;
+
 /**
  * Timestamp type - milliseconds since Unix epoch
  * Serializes to int64, deserializes to Date object.
@@ -293,13 +305,25 @@ export const TimestampType: ICustomType<Date> = {
     tsType: 'Date',
 
     encode(value: Date | number | string): number {
+        let ms: number;
         if (value instanceof Date) {
-            return value.getTime();
+            ms = value.getTime();
         } else if (typeof value === 'string') {
-            return new Date(value).getTime();
+            ms = new Date(value).getTime();
         } else {
-            return value;
+            ms = value;
         }
+        // NaN and Infinity would go out as 0 (1970, indistinguishable from an
+        // instant someone meant) and a fraction would be truncated, so all
+        // three are refused, as is anything beyond what a Date can hold and
+        // the receiver could decode.
+        if (!Number.isInteger(ms) || Math.abs(ms) > MAX_DATE_MS) {
+            throw new RangeError(
+                `timestamp value ${String(value)} is not a valid instant; pass a valid Date, ` +
+                'an ISO-8601 string, or integer milliseconds since the epoch',
+            );
+        }
+        return ms;
     },
 
     decode(data: number | bigint | { low: number; high: number }): Date {

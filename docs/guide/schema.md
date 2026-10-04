@@ -118,11 +118,37 @@ message OrderCreatedEvent {
 |------------|------------|---------|
 | `string` | `string` | Text, IDs, UUIDs |
 | `int32` | `number` | Small integers |
-| `int64` | `number` | Timestamps, large integers |
+| `int64` | `string` | Timestamps, large integers |
 | `bool` | `boolean` | Flags |
 | `bytes` | `Buffer` | Binary data |
 | `double` | `number` | Floating point |
 | `bigint` | `bigint` | Large integers (uint256, etc.) |
+
+#### 64-bit integers decode to strings
+
+`int64`, `uint64`, `sint64`, `fixed64` and `sfixed64` hold values wider than the
+integers a JavaScript number represents exactly, so decoding them into one would
+silently corrupt anything past `Number.MAX_SAFE_INTEGER`. They decode to a
+decimal string instead, which is exact across the whole range. Protobuf's own
+canonical JSON mapping reaches for a string here for the same reason.
+
+This is a JavaScript constraint, not a wire change. The bytes on the wire are
+the same, and a peer decodes into whatever its language holds natively —
+`protobus-py` gives you a Python `int`, `protobus-go` an `int64`.
+
+Encoding stays permissive: pass a number or a string.
+
+<!-- doc-check: compile -->
+```typescript
+// A field declared `int64 recorded_at = 1;`, once decoded.
+declare const reading: { recorded_at: string };
+
+const when = new Date(Number(reading.recorded_at));
+const exact = BigInt(reading.recorded_at);   // safe past 2^53
+```
+
+For values that genuinely exceed 64 bits, use protobus's own `bigint` type
+below instead.
 
 ### Built-in Custom Types
 
@@ -310,6 +336,43 @@ enum OrderStatus {
     ORDER_STATUS_CANCELLED = 5;
 }
 ```
+
+In TypeScript an enum decodes to its value *name* (`'ORDER_STATUS_SHIPPED'`).
+When sending, give either the name or the number: both encode to the same
+value, so a decoded message can be passed on unchanged.
+
+### Field Presence: Zero vs. Unset
+
+A plain proto3 scalar has no presence: a field equal to its default (`0`, `""`, `false`) is not written to the wire, and decoding supplies the default back. protobus decodes with defaults on, so every field arrives populated and a caller cannot tell "set to zero" from "not set".
+
+When that difference matters — a partial update that must leave untouched fields alone, a count where `0` is a real answer distinct from "unknown" — declare the field `optional`:
+
+<!-- doc-check: proto -->
+```protobuf
+syntax = "proto3";
+
+message UpdateUser {
+    string id = 1;
+    optional string name = 2;   // absent: leave the name as it is
+    optional int32 age = 3;     // 0 is a real age, distinct from "not supplied"
+}
+```
+
+An `optional` field that was not set is absent from the decoded object, and one set to zero arrives as zero. It costs nothing on the wire beyond the field itself, works in every protobus port, and needs no migration: adding `optional` to an existing field is wire-compatible. Wrapper types such as `google.protobuf.Int32Value` do the same job less directly.
+
+#### Protobuf editions
+
+Editions (`edition = "2023"`) are **not supported in 2.x**. What they would add here is presence by default, and `optional` already provides presence per field, so adopting them now would be churn for ergonomics. They are planned for **3.0**, together with replacing the synthetic `bigint` and `timestamp` types with a custom field option such as `bytes balance = 1 [(protobus.type) = "bigint"];`, which would keep schemas valid for every other protobuf implementation.
+
+What each port needs for that:
+
+| Port | Editions | Custom field options |
+|---|---|---|
+| TypeScript | protobufjs 8.7.2 honours `features.field_presence` at file and field level | protobufjs 8.7.2 surfaces them on the field (`field.options`) |
+| Go | protobuf-go 1.36 and protocompile 0.14 support edition 2023 | supported by protocompile and protobuf-go descriptors |
+| Python | protobus-py's own `.proto` parser rejects `edition` | the same parser rejects `extend`, which declaring an option needs |
+
+So the Python parser, and the minimum `protobuf` runtime it pins, set the pace for 3.0. Background and measurements: [#7](https://github.com/ArielLaub/protobus/issues/7).
 
 ### Repeated Fields (Arrays)
 
