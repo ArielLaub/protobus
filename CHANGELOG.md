@@ -18,6 +18,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   accepts a value name or number, in singular, repeated and map fields.
   Found by the protobus-go cross-language suite
   ([#40](https://github.com/ArielLaub/protobus/issues/40)).
+- **The built-in scalars refuse input they cannot represent.** `timestamp`
+  encoded an invalid `Date`, an unparseable string, `NaN` or `Infinity` as `0`
+  (1970) and truncated a fractional millisecond; `bigint` accepted a `number`
+  above 2^53 - 1, whose precision is already gone, and encoded the wrong
+  value. All of these now throw a `RangeError` saying what to pass instead
+  ([#25](https://github.com/ArielLaub/protobus/issues/25)).
 
 ## [2.4.0] — 2026-09-08
 
