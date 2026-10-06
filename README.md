@@ -3,7 +3,8 @@
 **Schema-first RPC over RabbitMQ. Protobuf on the wire. No application framework attached.**
 
 [![npm version](https://img.shields.io/npm/v/protobus.svg?logo=npm)](https://www.npmjs.com/package/protobus)
-[![node](https://img.shields.io/badge/node-%E2%89%A520-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![node](https://img.shields.io/badge/node-%E2%89%A522-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![bun](https://img.shields.io/badge/bun-compatible-000000?logo=bun&logoColor=white)](https://bun.sh)
 [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-%E2%89%A53.8-FF6600?logo=rabbitmq&logoColor=white)](https://www.rabbitmq.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![CI](https://github.com/ArielLaub/protobus/actions/workflows/ci.yml/badge.svg)](https://github.com/ArielLaub/protobus/actions/workflows/ci.yml)
@@ -37,10 +38,11 @@ HTTP server, logger, validation, database layer, config system, tracing stack an
 project layout. There is no container, module system or framework runtime you have
 to adopt.
 
-> **Cross-language:** [protobus-py](https://github.com/ArielLaub/protobus-py)
-> (Python, stable) and [protobus-go](https://github.com/ArielLaub/protobus-go)
-> (Go, stable) speak the same wire protocol and use the same `.proto`
-> contracts.
+> **Cross-language:** [protobus-py](https://github.com/ArielLaub/protobus-py) (Python, stable),
+> [protobus-go](https://github.com/ArielLaub/protobus-go) (Go, stable) and [protobus-cpp](https://github.com/ArielLaub/protobus-cpp)
+> (C++, new) speak the same wire protocol and use the same `.proto` contracts.
+> Write each service in the language that suits it; see
+> [Other languages](docs/README.md#other-languages).
 
 ---
 
@@ -48,7 +50,12 @@ to adopt.
 
 ```bash
 npm install protobus
+# or, on Bun
+bun add protobus
 ```
+
+ProtoBus is fully compatible with [Bun](https://bun.sh) as well as Node.js:
+the same package, with no flags or shims.
 
 You also need a RabbitMQ 3.8+ broker:
 
@@ -188,7 +195,7 @@ The service definition is not a TypeScript decorator, a JSON pattern or a runtim
 registration object. It is a language-neutral Protobuf schema — the
 `Calculator.proto` above is the whole contract for `Calculator.Math`.
 
-The same contract can be consumed from TypeScript, Python, Go, or any future port.
+The same contract can be consumed from TypeScript, Python, Go, C++, or any future port.
 Schema changes can be checked at build time instead of being discovered after two
 services disagree in production.
 
@@ -408,11 +415,12 @@ routing       = RabbitMQ topology + documented ProtoBus conventions
 
 Current ports:
 
-| Language | Implementation | Status |
+| Language | Repo | Status |
 |---|---|---|
-| TypeScript / Node.js | [protobus](https://github.com/ArielLaub/protobus) | stable |
+| TypeScript | [protobus](https://github.com/ArielLaub/protobus) (this repository) | stable (reference) |
 | Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
+| C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 
 Wire compatibility matters more than matching APIs character-for-character. The
 `.proto` stays the source of truth across languages.
@@ -526,7 +534,8 @@ survived. The source is
 
 ## Requirements
 
-- Node.js 20+ (enforced by `engines`; CI runs 20, 22 and 24)
+- Node.js 22+ (enforced by `engines`; CI runs 22 and 24), or Bun (CI runs the
+  combat-game sample on the latest Bun)
 - RabbitMQ 3.8+
 
 ## Development

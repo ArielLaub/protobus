@@ -5,7 +5,7 @@
 **Schema-first RPC over RabbitMQ, without adopting an application framework.**
 
 [![npm](https://img.shields.io/npm/v/protobus.svg?logo=npm)](https://www.npmjs.com/package/protobus)
-[![node](https://img.shields.io/badge/node-%E2%89%A520-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![node](https://img.shields.io/badge/node-%E2%89%A522-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-%E2%89%A53.8-FF6600?logo=rabbitmq&logoColor=white)](https://www.rabbitmq.com)
 [![license](https://img.shields.io/npm/l/protobus.svg)](../LICENSE)
 
@@ -154,9 +154,10 @@ client.
 
 | Language | Repo | Status |
 |---|---|---|
-| TypeScript / Node | [protobus](https://github.com/ArielLaub/protobus) | stable |
+| TypeScript | [protobus](https://github.com/ArielLaub/protobus) (this repository) | stable (reference) |
 | Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
+| C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 
 The goal of a port is wire compatibility and equivalent messaging semantics, not
 a line-for-line copy of the TypeScript API. Differences between ports are recorded

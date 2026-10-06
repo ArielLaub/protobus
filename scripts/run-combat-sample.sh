@@ -19,6 +19,9 @@
 #
 # Env:
 #   AMQP_URL  broker to connect to (default amqp://guest:guest@localhost:5672/)
+#   RUNTIME   what executes the compiled sample: node (default) or bun. The
+#             sample is always compiled with tsc under Node; only the run
+#             changes, which is how a Bun application consumes the package.
 
 set -euo pipefail
 
@@ -52,10 +55,11 @@ fi
 ln -s "$REPO_ROOT/node_modules" "$BUILD_DIR/node_modules"
 cp sample/combatGame/player.proto "$(dirname "$RUNNER")/"
 
-echo "==> Running $RUNNER"
+RUNTIME="${RUNTIME:-node}"
+echo "==> Running $RUNNER on $RUNTIME ($("$RUNTIME" --version))"
 LOG="$BUILD_DIR/game.log"
 set +e
-node "$RUNNER" 2>&1 | tee "$LOG"
+"$RUNTIME" "$RUNNER" 2>&1 | tee "$LOG"
 STATUS="${PIPESTATUS[0]}"
 set -e
 

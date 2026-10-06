@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| **Prerequisites** | Node 20+, Docker (for RabbitMQ), a terminal |
+| **Prerequisites** | Node 22+ or Bun, Docker (for RabbitMQ), a terminal |
 | **Next** | [Architecture](../concepts/architecture.md) — what you just created in the broker |
 | **Source** | [`lib/context.ts`](../../lib/context.ts) · [`lib/message_service.ts`](../../lib/message_service.ts) · [`lib/service_proxy.ts`](../../lib/service_proxy.ts) |
 
@@ -51,6 +51,11 @@ npm install --save-dev typescript tsx @types/node
 > `npm install` resolves today. This repository does not use ts-node either —
 > [`scripts/run-combat-sample.sh`](../../scripts/run-combat-sample.sh) compiles
 > with plain `tsc`. `tsx` needs no configuration and works.
+
+> [!TIP]
+> **On Bun**, use `bun add protobus` and run the TypeScript files directly with
+> `bun run`: Bun executes TypeScript natively, so `tsx` is not needed.
+> ProtoBus is fully compatible with Bun.
 
 Start a broker:
 

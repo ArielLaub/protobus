@@ -4,6 +4,19 @@ All notable changes to **protobus** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Node.js 22 or later.** `engines` now declares `>=22`, and CI tests Node 22
+  and 24. Node 20 reached end of life in April 2026 and is no longer tested.
+
+### Added
+
+- **Bun is a supported consumer runtime.** CI runs the combat-game sample on
+  Bun as well as Node, against a real broker. The library is still built and
+  tested with Node; Bun runs the published package unchanged.
+
 ## [2.5.0] — 2026-10-04
 
 Five fixes, every open issue resolved, and documentation repositioned around

@@ -244,7 +244,7 @@ Connections negotiate a 30-second heartbeat unless the URL already carries one (
 
 ## Upgrade checklist
 
-1. **Move to Node 20 or later.** 2.x declares `engines: { "node": ">=20" }`, so npm reports the mismatch on install — and refuses outright under `engine-strict`.
+1. **Move to Node 22 or later.** 2.x declares `engines: { "node": ">=22" }` (`>=20` up to 2.5.0), so npm reports the mismatch on install — and refuses outright under `engine-strict`.
 2. **Reinstall and rebuild.** protobufjs moves 7.x → 8.x, which also clears a hard `ERESOLVE` between the runtime and `protobufjs-cli`. Regenerate anything produced by `protobus generate-types`.
 3. **Delete `ServiceCluster` usage.** The compiler will find every site. One service per process, started with `RunnableService.start()`.
 4. **Audit the three unsafe operators.** `??`, `=== undefined` / `!== undefined` and `in`, against anything decoded off the bus. This is the step that is worth doing carefully; nothing else on this list can fail silently.
