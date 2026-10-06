@@ -191,15 +191,17 @@ export class OrdersService extends RunnableService {
 ## Events are different
 
 > [!CAUTION]
-> **A failing event handler is not retried, and the event is not dead-lettered.
-> It is discarded.** `EventListener` never supplies retry options
-> ([`lib/event_listener.ts`](../../lib/event_listener.ts), and the base
-> `getRetryOptions()` in [`lib/base_listener.ts`](../../lib/base_listener.ts)
-> returns `undefined`), so a throw takes the reject-without-requeue branch in
+> **By default, a failing event handler is not retried, and the event is not
+> dead-lettered. It is discarded.** Unless the service sets `eventRetry`,
+> `EventListener.getRetryOptions()` returns `undefined`
+> ([`lib/event_listener.ts`](../../lib/event_listener.ts); `maxRetries`
+> defaults to 0), so a throw takes the reject-without-requeue branch in
 > [`lib/connection.ts`](../../lib/connection.ts) and leaves only a logged error
 > behind. The `<Service>.Events` queue being durable does not change this.
+> [`eventRetry`](./events.md#turning-retry-on) opts in to a retry queue and a
+> dead-letter queue for events.
 
-That makes an event handler's error policy your responsibility:
+Without `eventRetry`, an event handler's error policy is your responsibility:
 
 <!-- doc-check: compile -->
 ```typescript
@@ -226,9 +228,9 @@ export class OrderProjection extends RunnableService {
 }
 ```
 
-If an event genuinely needs at-least-once processing with retries, model it as an
-RPC to a service that owns the work, and let the request queue's ladder do its
-job.
+If an event needs retries, turn on [`eventRetry`](./events.md#turning-retry-on)
+for the subscribing service, or model the work as an RPC to a service that owns
+it and let the request queue's ladder do its job.
 
 ---
 

@@ -237,7 +237,7 @@ Two asymmetries with the RPC path decide most event-related surprises:
 > [!NOTE]
 > **The routing key and the envelope's `method` are allowed to disagree, in one specific way.** `ServiceName` may carry more segments than the contract does: a class named `Combat.Player.player6` binds `REQUEST.Combat.Player.player6.*`, while the method it serves is still `Combat.Player.shoot`, the contract name, found by trimming segments from the right until one matches a `service` in the schema. That is why check 2 compares only the *last* segment of the routing key with the last segment of `method`.
 >
-> `ServiceProxy` cannot address such an instance: it derives the key as `REQUEST.<methodFullName>`, and `methodFullName` comes from the schema. Build the key yourself and call `context.publishMessage(buffer, key, true)`; [`sample/combatGame/BasePlayer.ts`](../../sample/combatGame/BasePlayer.ts), `callPlayerMethod`, is the worked example.
+> `new ServiceProxy(context, 'Combat.Player.player6')` addresses such an instance directly: it resolves the contract the same way, routes to `REQUEST.Combat.Player.player6.<method>` and names `Combat.Player.<method>` in the envelope. See [ServiceProxy → Instance names](../reference/api/service-proxy.md#instance-names). Building the key by hand with `context.publishMessage(buffer, key, true)` also works; [`sample/combatGame/BasePlayer.ts`](../../sample/combatGame/BasePlayer.ts), `callPlayerMethod`, does it that way.
 
 ---
 

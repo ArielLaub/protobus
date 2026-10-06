@@ -239,7 +239,7 @@ This is how several replicas share one schema while each owns a distinct queue: 
 Two consequences that are easy to trip over:
 
 > [!IMPORTANT]
-> **`ServiceProxy` does not do this trimming.** It looks the name up verbatim, so there is no way to build a proxy for `Combat.Player.player6`. Addressing an instance-named service means building the routing key by hand and calling [`context.publishMessage`](./context.md#publishmessagecontent-routingkey-rpc-timeoutms-options): encode against the contract name, route against the instance name.
+> **`ServiceProxy` resolves names the same way** (since 2.3.0), so `new ServiceProxy(context, 'Combat.Player.player6')` addresses that instance directly: it routes to `REQUEST.Combat.Player.player6.<method>` and names `Combat.Player.<method>` in the envelope. See [ServiceProxy → Instance names](./service-proxy.md#instance-names).
 
 > [!NOTE]
 > Trimming stops at the first segment. `Combat.Player.player6` will never resolve against a bare `Combat`, and a name with no dot that is not itself a declared service throws immediately.

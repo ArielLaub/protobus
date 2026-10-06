@@ -428,7 +428,10 @@ If `init()` did run, the method name does not match the `rpc` name in the
 ### The same event is handled twice
 
 **Causes.** Subscribing more than once (subscribe in `init()`, once), or a
-handler that throws: a failed event delivery is redelivered.
+handler that throws while the service has
+[`eventRetry`](../guide/events.md#turning-retry-on) on: the failed event is
+redelivered from the retry queue, after attempts that may have partly run.
+Without `eventRetry` a failed event is discarded, not redelivered.
 
 Delivery is **at-least-once**, so a handler that must not run twice has to be
 idempotent. Key on something stable in the event, not on arrival order:
