@@ -6,11 +6,11 @@
 
 | | |
 |---|---|
-| **Prerequisites** | [Getting Started](./getting-started.md) — a service that runs · [Schema](./schema.md) |
-| **Next** | [Error Handling](./error-handling.md) · [Message Flow](../concepts/message-flow.md) — the event on the wire |
+| **Prerequisites** | [Getting Started](./getting-started.md): a service that runs · [Schema](./schema.md) |
+| **Next** | [Error Handling](./error-handling.md) · [Message Flow](../concepts/message-flow.md): the event on the wire |
 | **Source** | [`lib/event_dispatcher.ts`](../../lib/event_dispatcher.ts) · [`lib/event_listener.ts`](../../lib/event_listener.ts) · [`lib/message_service.ts`](../../lib/message_service.ts) · [`lib/trie.ts`](../../lib/trie.ts) |
 
-**On this page** — [The shape of it](#the-shape-of-it) · [A subscriber needs a service block](#a-subscriber-still-needs-a-service-block) · [Publishing](#publishing) · [Subscribing](#subscribing) · [Topics route, types do not](#topics-route-types-do-not) · [Wildcards](#wildcard-patterns) · [Several handlers](#several-handlers-one-topic) · [When a handler throws](#when-a-handler-throws) · [Turning retry on](#turning-retry-on) · [What survives what](#what-survives-what) · [A subscriber that is not a service](#a-subscriber-that-is-not-a-service) · [Worked example](#worked-example)
+**On this page**: [The shape of it](#the-shape-of-it) · [A subscriber needs a service block](#a-subscriber-still-needs-a-service-block) · [Publishing](#publishing) · [Subscribing](#subscribing) · [Topics route, types do not](#topics-route-types-do-not) · [Wildcards](#wildcard-patterns) · [Several handlers](#several-handlers-one-topic) · [When a handler throws](#when-a-handler-throws) · [Turning retry on](#turning-retry-on) · [What survives what](#what-survives-what) · [A subscriber that is not a service](#a-subscriber-that-is-not-a-service) · [Worked example](#worked-example)
 
 ---
 
@@ -30,7 +30,7 @@ flowchart LR
     style N fill:#9a6700,color:#fff,stroke:#9a6700
 ```
 
-Each subscribing **service** has one durable queue named `<ServiceName>.Events`, and its replicas compete for it — an event is handled once per service, not once per replica. Events published while every replica of a service is down are waiting in that queue when one comes back.
+Each subscribing **service** has one durable queue named `<ServiceName>.Events`, and its replicas compete for it: an event is handled once per service, not once per replica. Events published while every replica of a service is down are waiting in that queue when one comes back.
 
 > [!NOTE]
 > Events are published without AMQP's `mandatory` flag, deliberately. An event nobody has subscribed to is discarded by the broker in silence, and that is normal rather than an error. Publishing an event proves nothing about it having been received.
@@ -41,7 +41,7 @@ Each subscribing **service** has one durable queue named `<ServiceName>.Events`,
 
 This is the first thing that goes wrong, and until recently it appeared nowhere in these docs.
 
-Protobus resolves a class's contract by looking `ServiceName` up in the loaded schema — `resolveContract` in [`lib/message_service.ts`](../../lib/message_service.ts) trims segments from the right until one names a `service`. A class with no matching `service` anywhere throws at `init()`:
+Protobus resolves a class's contract by looking `ServiceName` up in the loaded schema: `resolveContract` in [`lib/message_service.ts`](../../lib/message_service.ts) trims segments from the right until one names a `service`. A class with no matching `service` anywhere throws at `init()`:
 
 ```
 MissingProto: no service in the schema matches 'Notifications.Service' or any
@@ -96,7 +96,7 @@ publishEvent(type: string, content: any, topic?: string): Promise<void>
 
 | Argument | Meaning |
 |---|---|
-| `type` | the fully qualified **message** type — `<Package>.<MessageType>`. It must be a message in the loaded schema; it is not part of any `service` block. |
+| `type` | the fully qualified **message** type, `<Package>.<MessageType>`. It must be a message in the loaded schema; it is not part of any `service` block. |
 | `content` | a plain object matching that message. Field names follow the `.proto` exactly: protobus parses with `keepCase: true`, so `order_id` stays `order_id`. |
 | `topic` | the routing key. Omit it and it defaults to `EVENT.<type>`. |
 
@@ -199,18 +199,18 @@ Each call does two things: it binds `topic` on this service's `.Events` queue, a
 The single most misleading thing about the API is that `type` looks like a filter. It is not.
 
 > [!WARNING]
-> **When you pass a `topic`, the `type` argument to `subscribeEvent` is ignored for routing.** It is used only to compute the default topic when you omit one ([`lib/event_listener.ts`](../../lib/event_listener.ts), `subscribe`). Nothing anywhere compares an arriving event's type against the type you subscribed with. `subscribeEvent('Orders.OrderShipped', h, 'ORDERS.#')` runs `h` for **every** event published under a topic beginning `ORDERS.` — including `Orders.OrderCancelled`, and including a type from another team's package.
+> **When you pass a `topic`, the `type` argument to `subscribeEvent` is ignored for routing.** It is used only to compute the default topic when you omit one ([`lib/event_listener.ts`](../../lib/event_listener.ts), `subscribe`). Nothing anywhere compares an arriving event's type against the type you subscribed with. `subscribeEvent('Orders.OrderShipped', h, 'ORDERS.#')` runs `h` for **every** event published under a topic beginning `ORDERS.`, including `Orders.OrderCancelled`, and including a type from another team's package.
 
 Two consequences worth designing around:
 
 - **Guard on `type` inside a broad handler**, or give each event type a topic prefix that no other type shares.
-- **A wildcard subscriber must have every type it can receive in its own schema.** The listener decodes with the type carried in the envelope, so an unknown type makes `lookupType` throw — and that throw is a handler failure, with the consequences in [When a handler throws](#when-a-handler-throws).
+- **A wildcard subscriber must have every type it can receive in its own schema.** The listener decodes with the type carried in the envelope, so an unknown type makes `lookupType` throw, and that throw is a handler failure, with the consequences in [When a handler throws](#when-a-handler-throws).
 
 There is a matching asymmetry on the two `topic` values in play:
 
 | | Value |
 |---|---|
-| the delivery matched on | the AMQP routing key — what the trie matches, and what the broker used |
+| the delivery matched on | the AMQP routing key: what the trie matches, and what the broker used |
 | the handler's 3rd argument | the `topic` field inside the envelope body |
 
 They agree for anything published by protobus. The listener prefers the routing key precisely because the body does not have to: it is publisher-controlled, and trusting it would let a publisher reach handlers its routing key was never permitted to reach.
@@ -277,7 +277,7 @@ class ReportingService extends RunnableService {
 ```
 
 > [!CAUTION]
-> They are **not** independent. The handlers share one delivery and one acknowledgement, and they are awaited in a plain loop — so if the first throws, the second never runs and the whole delivery is lost. Independent side effects that must not take each other down belong in separate services with separate queues.
+> They are **not** independent. The handlers share one delivery and one acknowledgement, and they are awaited in a plain loop, so if the first throws, the second never runs and the whole delivery is lost. Independent side effects that must not take each other down belong in separate services with separate queues.
 
 Two more limits on this shape:
 
@@ -294,7 +294,7 @@ This is the section to read before you rely on events for anything that must not
 flowchart TD
     D[("Orders.Service.Events delivers")] --> H["run every matching handler"]
     H --> OK{"did they all resolve?"}
-    OK -->|yes| A["ack — done"]
+    OK -->|yes| A["ack: done"]
     OK -->|"no, one threw"| R["reject, requeue = false"]
     R --> G["the event is discarded"]
 
@@ -304,7 +304,7 @@ flowchart TD
 > [!CAUTION]
 > **By default a failed event handler does not retry, and there is no event DLQ.** `MessageListener` declares `<Service>.Retry`, `<Service>.Retry.Exchange` and `<Service>.DLQ` for the RPC queue. `EventListener` declares none of them unless you ask, so the connection layer takes its no-retry branch: the delivery is rejected without requeue and the message is gone. There is also no caller to reply to, so nothing anywhere records that it happened beyond one `rejecting message` line in the log.
 >
-> Rejecting is what keeps the subscriber alive — an unacknowledged delivery would hold the prefetch and stall everything behind the first permanently-failing event. [Turning retry on](#turning-retry-on) replaces that trade rather than removing it.
+> Rejecting is what keeps the subscriber alive: an unacknowledged delivery would hold the prefetch and stall everything behind the first permanently-failing event. [Turning retry on](#turning-retry-on) replaces that trade rather than removing it.
 
 Corollaries, all of which contradict what this page used to say:
 
@@ -339,7 +339,7 @@ class BillingService extends RunnableService {
 }
 ```
 
-or, when the work genuinely must not be lost, do not model it as an event at all. An RPC has the retry ladder and the DLQ — see [Delivery Guarantees](../concepts/delivery-guarantees.md).
+or, when the work genuinely must not be lost, do not model it as an event at all. An RPC has the retry ladder and the DLQ; see [Delivery Guarantees](../concepts/delivery-guarantees.md).
 
 ### Turning retry on
 
@@ -368,7 +368,7 @@ It declares four objects alongside `<Service>.Events`:
 |---|---|
 | `<Service>.Events.Retry` | parks the failed event for `retryDelayMs`, then dead-letters it |
 | `<Service>.Events.Retry.Exchange` | topic exchange the failed event is published to, so its routing key survives the hop |
-| `<Service>.Events.Redelivery` | topic exchange bound only to `<Service>.Events` — where the expired event comes back |
+| `<Service>.Events.Redelivery` | topic exchange bound only to `<Service>.Events`, where the expired event comes back |
 | `<Service>.Events.DLQ` | where an event lands once `maxRetries` hops are spent |
 
 The redelivery exchange is the part worth understanding. A request's retry
@@ -379,7 +379,7 @@ per-subscriber exchange confines the retry to the service that failed.
 
 Three things to know before switching it on:
 
-- **A retry re-runs every handler that matched, not just the one that threw.**
+- **A retry re-runs every handler that matched, not only the one that threw.**
   Handlers sharing a topic share one delivery ([Several handlers, one
   topic](#several-handlers-one-topic)), so a handler that already succeeded runs
   again. It must be idempotent, keyed on the event's `messageId`, which is
@@ -401,11 +401,11 @@ Verified against a real broker in
 
 | Failure | Event in flight |
 |---|---|
-| Broker restarts | **survives** — published `deliveryMode: 2`, and `<Service>.Events` is durable |
-| Every replica of a subscriber is down | **survives** — the queue is durable and not auto-delete, so it accumulates |
-| A replica is killed mid-handler | **redelivered** — late ack, so the delivery was never settled |
-| The handler rejects | **lost** by default — rejected without requeue. With [`eventRetry`](#turning-retry-on): retried, then dead-lettered |
-| Nobody has ever subscribed | **lost** — no binding matches, and events are not published `mandatory` |
+| Broker restarts | **survives**: published `deliveryMode: 2`, and `<Service>.Events` is durable |
+| Every replica of a subscriber is down | **survives**: the queue is durable and not auto-delete, so it accumulates |
+| A replica is killed mid-handler | **redelivered**: late ack, so the delivery was never settled |
+| The handler rejects | **lost** by default: rejected without requeue. With [`eventRetry`](#turning-retry-on): retried, then dead-lettered |
+| Nobody has ever subscribed | **lost**: no binding matches, and events are not published `mandatory` |
 
 > [!WARNING]
 > The second row is a real operational hazard in the other direction. `<Service>.Events` is durable and never auto-deletes, so the event queue of a service you deleted keeps filling forever. See [Queue Migration](../operations/queue-migration.md).
@@ -452,7 +452,7 @@ main().catch((error) => {
 > **There is no `Context.close()`.** The connection is reached through the context: `await context.connection.disconnect()`. Without it an open AMQP socket and its heartbeat timer keep the event loop alive and the process hangs forever. `RunnableService.start` does this for you on SIGINT/SIGTERM; a script you wrote yourself does not.
 
 > [!NOTE]
-> If you also want to *call* a service from the same process, note that `ServiceProxy` has no index signature — it builds its methods from the schema at `init()`, so TypeScript cannot know them. `proxy.someMethod(...)` is a compile error unless you intersect the shape you expect: `new ServiceProxy(context, 'Orders.Service') as ServiceProxy & IOrdersService`. `npx protobus generate` writes that interface for you.
+> If you also want to *call* a service from the same process, `ServiceProxy` has no index signature: it builds its methods from the schema at `init()`, so TypeScript cannot know them. `proxy.someMethod(...)` is a compile error unless you intersect the shape you expect: `new ServiceProxy(context, 'Orders.Service') as ServiceProxy & IOrdersService`. `npx protobus generate` writes that interface for you.
 
 ---
 

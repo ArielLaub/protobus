@@ -10,8 +10,8 @@
 [![CI](https://github.com/ArielLaub/protobus/actions/workflows/ci.yml/badge.svg)](https://github.com/ArielLaub/protobus/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/protobus.svg)](https://github.com/ArielLaub/protobus/blob/master/LICENSE)
 
-ProtoBus takes the part of gRPC that works exceptionally well — a language-neutral
-`.proto` contract, compact binary messages, typed RPC and streaming — and puts it
+ProtoBus takes the part of gRPC that works exceptionally well (a language-neutral
+`.proto` contract, compact binary messages, typed RPC and streaming) and puts it
 on a durable message bus instead of a direct HTTP/2 connection.
 
 ```text
@@ -42,7 +42,7 @@ to adopt.
 > [protobus-go](https://github.com/ArielLaub/protobus-go) (Go, stable) and [protobus-cpp](https://github.com/ArielLaub/protobus-cpp)
 > (C++, new) speak the same wire protocol and use the same `.proto` contracts.
 > Write each service in the language that suits it; see
-> [Other languages](docs/README.md#other-languages).
+> [Other languages](https://github.com/ArielLaub/protobus/blob/master/docs/README.md#other-languages).
 
 ---
 
@@ -112,7 +112,7 @@ export class CalculatorService extends RunnableService {
 ```
 
 No controller, DI container or module registration is required. `RunnableService`
-is just the process-owning service base class; your other application dependencies
+is the process-owning service base class; your other application dependencies
 remain ordinary constructor dependencies.
 
 ### 3. Run it
@@ -171,7 +171,7 @@ $ npx tsx src/client.ts
 ```
 
 For generated interfaces instead of the handwritten type above, run
-`npx protobus generate` — see [CLI](#cli) below.
+`npx protobus generate`; see [CLI](#cli) below.
 
 Full walkthrough, including events and the project layout:
 **[Getting Started](https://github.com/ArielLaub/protobus/blob/master/docs/guide/getting-started.md)**.
@@ -184,7 +184,7 @@ There are already excellent ways to build distributed systems. ProtoBus exists
 for a narrower case:
 
 > **You want Protobuf-style RPC, but you want RabbitMQ semantics rather than a
-> direct point-to-point connection — and you do not want a full application
+> direct point-to-point connection, and you do not want a full application
 > framework deciding the rest of your stack.**
 
 That leads to a few deliberate choices.
@@ -192,7 +192,7 @@ That leads to a few deliberate choices.
 ### 1. The `.proto` is the contract
 
 The service definition is not a TypeScript decorator, a JSON pattern or a runtime
-registration object. It is a language-neutral Protobuf schema — the
+registration object. It is a language-neutral Protobuf schema. The
 `Calculator.proto` above is the whole contract for `Calculator.Math`.
 
 The same contract can be consumed from TypeScript, Python, Go, C++, or any future port.
@@ -207,7 +207,7 @@ response, event and stream payloads are encoded as Protocol Buffers.
 That gives you a compact binary representation, explicit compatibility rules and
 one schema that serves documentation, runtime serialization and generated types.
 
-### 3. RabbitMQ is part of the design, not an interchangeable pipe
+### 3. RabbitMQ is part of the design
 
 ProtoBus is deliberately RabbitMQ-native. It does not pretend RabbitMQ, Redis,
 Kafka, NATS and TCP are equivalent transports.
@@ -244,12 +244,12 @@ A recurring design question in ProtoBus is:
 > **What does this Promise resolving actually prove?**
 
 For publishing, success is coupled to a RabbitMQ publisher confirmation rather
-than merely handing bytes to a local socket buffer. Retry hand-off confirms the
+than handing bytes to a local socket buffer. Retry hand-off confirms the
 replacement publication before acknowledging the original. Reconnection restores
 required topology and consumers before the connection is considered usable.
 Graceful shutdown stops new work and drains in-flight work before disconnecting.
 
-Distributed systems still have unavoidable ambiguous outcomes — for example a
+Distributed systems still have unavoidable ambiguous outcomes. For example, a
 connection can disappear while a publisher confirmation is in flight. ProtoBus
 surfaces those cases rather than inventing certainty it does not have. See
 [Delivery Guarantees](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/delivery-guarantees.md).
@@ -442,7 +442,7 @@ The important properties include:
 - definite failures and ambiguous outcomes are raised as distinct error types
 - callers can supply a stable `messageId` for deduplication across ambiguous retries
 
-This is **at-least-once territory**, not magical exactly-once execution. Handlers
+This is **at-least-once territory**. It is not exactly-once execution. Handlers
 with side effects should be idempotent where duplicates matter.
 
 Read **[Delivery Guarantees](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/delivery-guarantees.md)** before
@@ -525,8 +525,8 @@ npm run docker:up
 bash scripts/run-combat-sample.sh
 ```
 
-Six services fight a battle royale over the bus — RPC, published events and
-graceful shutdown in one run — and the script asserts exactly one player
+Six services fight a battle royale over the bus (RPC, published events and
+graceful shutdown in one run), and the script asserts exactly one player
 survived. The source is
 [`sample/combatGame`](https://github.com/ArielLaub/protobus/tree/master/sample/combatGame).
 
@@ -555,5 +555,5 @@ That is the boundary ProtoBus is intended to keep.
 
 ## License
 
-MIT — Copyright (c) 2018 Remarkable Games Ltd.
+MIT. Copyright (c) 2018 Remarkable Games Ltd.
 See [LICENSE](https://github.com/ArielLaub/protobus/blob/master/LICENSE).

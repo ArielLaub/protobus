@@ -7,10 +7,10 @@
 | | |
 |---|---|
 | **Prerequisites** | Node 22+ or Bun, Docker (for RabbitMQ), a terminal |
-| **Next** | [Architecture](../concepts/architecture.md) — what you just created in the broker |
+| **Next** | [Architecture](../concepts/architecture.md): what you just created in the broker |
 | **Source** | [`lib/context.ts`](../../lib/context.ts) · [`lib/message_service.ts`](../../lib/message_service.ts) · [`lib/service_proxy.ts`](../../lib/service_proxy.ts) |
 
-**On this page** — [See it work first](#see-it-work-first) · [Set up](#set-up-the-project) · [1. Schema](#1-define-the-schema) · [2. Context](#2-create-the-context) · [3. Service](#3-implement-the-service) · [4. Server](#4-start-the-server) · [5. Client](#5-call-it) · [6. Events](#6-subscribe-to-events) · [Project layout](#project-layout) · [Where next](#where-next)
+**On this page**: [See it work first](#see-it-work-first) · [Set up](#set-up-the-project) · [1. Schema](#1-define-the-schema) · [2. Context](#2-create-the-context) · [3. Service](#3-implement-the-service) · [4. Server](#4-start-the-server) · [5. Client](#5-call-it) · [6. Events](#6-subscribe-to-events) · [Project layout](#project-layout) · [Where next](#where-next)
 
 ---
 
@@ -24,8 +24,8 @@ npm run docker:up
 bash scripts/run-combat-sample.sh
 ```
 
-Six services fight a battle royale over the bus — RPC calls, published events and
-a clean shutdown, all in one run — and the script asserts exactly one player
+Six services fight a battle royale over the bus (RPC calls, published events and
+a clean shutdown, all in one run), and the script asserts exactly one player
 survived. Open <http://localhost:15672> (`guest` / `guest`) while it runs and you
 can watch the queues fill and drain.
 
@@ -48,7 +48,7 @@ npm install --save-dev typescript tsx @types/node
 > **Use `tsx`, not `ts-node`.** Earlier versions of this guide said `npx ts-node`,
 > and that no longer works: `npx` fetches ts-node without a TypeScript peer, and
 > even installed properly, ts-node 10.9.2 crashes against the TypeScript a fresh
-> `npm install` resolves today. This repository does not use ts-node either —
+> `npm install` resolves today. This repository does not use ts-node either:
 > [`scripts/run-combat-sample.sh`](../../scripts/run-combat-sample.sh) compiles
 > with plain `tsc`. `tsx` needs no configuration and works.
 
@@ -87,8 +87,8 @@ Create `tsconfig.json`. The `experimentalDecorators` line matters if you use the
 > `"module": "commonjs"` means **top-level `await` is a syntax error**. Every
 > snippet below is wrapped in an `async function main()` for that reason. If you
 > paste a snippet from elsewhere that awaits at the top level, you will get
-> `Top-level await is currently not supported with the "cjs" output format` —
-> either wrap it, or set `"type": "module"` in `package.json` and
+> `Top-level await is currently not supported with the "cjs" output format`.
+> Either wrap it, or set `"type": "module"` in `package.json` and
 > `"module": "node16"` here.
 
 ---
@@ -131,7 +131,7 @@ Conventions worth knowing before you go further:
 - **Package + service name is the full service name.** `package Calculator` plus
   `service Math` gives `Calculator.Math`, which is the name that appears on the
   queue, in the routing key, and in every `ServiceProxy` call.
-- **Request and response types are fully qualified** in `rpc` declarations —
+- **Request and response types are fully qualified** in `rpc` declarations:
   `Calculator.AddRequest`, not `AddRequest`.
 - **Events are plain messages**, not part of a `service` block.
   `CalculationEvent` above is published by type name.
@@ -155,7 +155,7 @@ Conventions worth knowing before you go further:
 ## 2. Create the context
 
 The `Context` owns the AMQP connection and the parsed schemas. **One per
-process** — services and proxies share it.
+process**; services and proxies share it.
 
 <!-- doc-check: compile id=gs-context -->
 ```typescript
@@ -192,7 +192,7 @@ export class CalculatorService extends RunnableService {
         super(context);
     }
 
-    // Required: the full service name from the proto — package + service.
+    // Required: the full service name from the proto (package + service).
     public get ServiceName(): string {
         return 'Calculator.Math';
     }
@@ -216,7 +216,7 @@ export class CalculatorService extends RunnableService {
 > `ServiceName` may carry extra segments beyond the contract. A class named
 > `Calculator.Math.worker7` still resolves against `service Math`, because
 > `resolveContract` trims segments from the right until one matches. That is how
-> you run per-instance services with their own queues —
+> you run per-instance services with their own queues:
 > [`sample/combatGame`](../../sample/combatGame) uses it to give each player its
 > own name.
 
@@ -254,14 +254,14 @@ npx tsx src/server.ts
 ```
 
 `RunnableService.start` installs SIGINT/SIGTERM handlers, drains in-flight work
-on shutdown, and exits non-zero if startup fails — so an orchestrator can tell a
+on shutdown, and exits non-zero if startup fails, so an orchestrator can tell a
 crash-on-boot from a clean stop. Use it for anything that owns its process.
 
 > [!NOTE]
 > `RunnableService.start` only accepts a `RunnableService`, which is why step 3
 > extends that rather than `MessageService`. `RunnableService` also derives
-> `ProtoFileName` from `ServiceName` by convention — `Calculator.Math` →
-> `Calculator.proto` — which is why the schema file is named to match and the
+> `ProtoFileName` from `ServiceName` by convention (`Calculator.Math` →
+> `Calculator.proto`), which is why the schema file is named to match and the
 > class needs no `ProtoFileName` getter. Use plain
 > [`MessageService`](../reference/api/message-service.md) when something else
 > owns the process lifecycle, and give it an explicit `ProtoFileName`.
@@ -278,7 +278,7 @@ import { createContext } from './context';
 
 // ServiceProxy builds its methods from the schema at init(), so TypeScript
 // cannot know them ahead of time. Declare the shape you expect and intersect
-// it — `npx protobus generate` writes this interface for you.
+// it. `npx protobus generate` writes this interface for you.
 interface CalculatorMath {
     add(request: { a: number; b: number }): Promise<{ result: number }>;
 }
@@ -311,7 +311,7 @@ $ npx tsx src/client.ts
 > [!IMPORTANT]
 > **A client must close its connection.** Earlier versions of this example ended
 > at the `console.log` and hung forever. There is no `close()` on `Context`; the
-> connection is reached through it — `await context.connection.disconnect()`. A
+> connection is reached through it: `await context.connection.disconnect()`. A
 > server started with `RunnableService.start` does this for you on
 > SIGINT/SIGTERM.
 
@@ -371,7 +371,7 @@ Received event: add = 8
 ```
 
 This is a long-running process like the server, so it does not close its
-connection — stop it with Ctrl-C.
+connection; stop it with Ctrl-C.
 
 `Calculator.Subscriber` needs the empty `service Subscriber {}` block added in
 [step 1](#1-define-the-schema). Without it, `init()` throws `MissingProto`.
@@ -398,7 +398,7 @@ calculator/
 ```
 
 Run each service as **its own process**. Node is single-threaded, so packing
-several services into one process buys no parallelism — it only couples their
+several services into one process buys no parallelism; it only couples their
 failure domains and their deploys. Scale by running more processes; use
 `maxConcurrent` to control how many messages one process handles at a time.
 
@@ -454,7 +454,7 @@ export class CalculatorNode extends ProxiedService<ICalculatorMath> {
 
 > [!WARNING]
 > `ProxiedService` is **not** a standalone client. It extends `MessageService`, so
-> `init()` also declares and consumes the service's own queue — the class both
+> `init()` also declares and consumes the service's own queue: the class both
 > serves the contract and holds a typed proxy to it. Use it when a service calls
 > its own interface (fanning work out to sibling replicas, say). For a pure
 > caller, use `ServiceProxy` as in step 5.

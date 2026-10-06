@@ -2,15 +2,15 @@
 
 > Which failures protobus retries, which it answers, and how each one reaches the caller.
 
-**Read this if** you are writing a handler and need to decide what to throw — or you have a message stuck in a retry loop.
+**Read this if** you are writing a handler and need to decide what to throw, or you have a message stuck in a retry loop.
 
 | | |
 |---|---|
 | **Prerequisites** | [Getting Started](./getting-started.md) |
-| **Next** | [Delivery Guarantees](../concepts/delivery-guarantees.md) — the mechanism · [Errors reference](../reference/errors.md) — every class |
+| **Next** | [Delivery Guarantees](../concepts/delivery-guarantees.md) (the mechanism) · [Errors reference](../reference/errors.md) (every class) |
 | **Source** | [`lib/errors.ts`](../../lib/errors.ts) · [`lib/message_service.ts`](../../lib/message_service.ts) · [`lib/connection.ts`](../../lib/connection.ts) |
 
-**On this page** — [The one decision](#the-one-decision) · [Terminal failures](#terminal-failures-handlederror) · [Retriable failures](#retriable-failures-anything-else) · [What the caller sees](#what-the-caller-sees) · [Tuning the ladder](#tuning-the-retry-ladder) · [Events are different](#events-are-different) · [Anti-patterns](#anti-patterns)
+**On this page:** [The one decision](#the-one-decision) · [Terminal failures](#terminal-failures-handlederror) · [Retriable failures](#retriable-failures-anything-else) · [What the caller sees](#what-the-caller-sees) · [Tuning the ladder](#tuning-the-retry-ladder) · [Events are different](#events-are-different) · [Anti-patterns](#anti-patterns)
 
 ---
 
@@ -20,8 +20,8 @@ Every throw from a handler answers a single question: **would running this again
 
 | Answer | Throw | What protobus does |
 |---|---|---|
-| No — the same input fails the same way | `HandledError` | replies to the caller immediately, rejects the message without requeue. **No retry.** |
-| Maybe — a dependency was briefly unavailable | any other `Error` | parks the message on `<Service>.Retry` and redelivers it, up to `maxRetries` times, then dead-letters it |
+| No: the same input fails the same way | `HandledError` | replies to the caller immediately, rejects the message without requeue. **No retry.** |
+| Maybe: a dependency was briefly unavailable | any other `Error` | parks the message on `<Service>.Retry` and redelivers it, up to `maxRetries` times, then dead-letters it |
 
 Getting this wrong is expensive in both directions. A validation failure thrown as
 a plain `Error` retries four times over fifteen seconds and dead-letters a message
@@ -69,7 +69,7 @@ export class NotFoundError extends HandledError {
 ```
 
 > [!NOTE]
-> `isHandledError(err)` is duck-typed — it accepts anything with
+> `isHandledError(err)` is duck-typed: it accepts anything with
 > `isHandled === true` ([`lib/errors.ts`](../../lib/errors.ts)). An error crossing
 > a module boundary, or one from a differently-installed copy of protobus, still
 > classifies correctly.
@@ -103,8 +103,8 @@ message goes to `<Service>.DLQ` carrying headers that say why.
 
 > [!IMPORTANT]
 > **The caller stays parked for the whole ladder.** No reply is published while a
-> message is being retried, so with the defaults — `maxRetries: 3`,
-> `retryDelayMs: 5000` — a permanently failing call blocks its caller for roughly
+> message is being retried, so with the defaults (`maxRetries: 3`,
+> `retryDelayMs: 5000`) a permanently failing call blocks its caller for roughly
 > **15 seconds** before it is told anything. The full mechanism, the six `x-*`
 > headers, and how this interacts with `RPC_CALL_TIMEOUT_MS` are in
 > [Delivery Guarantees](../concepts/delivery-guarantees.md).
@@ -114,7 +114,7 @@ message goes to `<Service>.DLQ` carrying headers that say why.
 ## What the caller sees
 
 A `ServiceProxy` call rejects with a **plain `Error`** carrying `message` and
-`code` — not an instance of your class. The class does not survive the wire; the
+`code`, not an instance of your class. The class does not survive the wire; the
 `code` you set on `HandledError` does.
 
 <!-- doc-check: compile -->
@@ -146,7 +146,7 @@ export async function create(proxy: ServiceProxy & Orders, orderId?: string) {
 > exists precisely so you do not have to.
 
 What reaches the caller for a *non*-`HandledError` depends on
-`PROTOBUS_EXPOSE_INTERNAL_ERRORS`, which defaults to `true` — the unhandled
+`PROTOBUS_EXPOSE_INTERNAL_ERRORS`, which defaults to `true`: the unhandled
 error's own message is sent. Set it to `false` and the caller gets an
 `InternalServiceError` carrying a correlation id instead. See
 [Security](../operations/security.md) and [Configuration](../reference/configuration.md).
@@ -176,7 +176,7 @@ export class OrdersService extends RunnableService {
 
 | Option | Default | Effect |
 |---|---:|---|
-| `maxRetries` | `3` | attempts after the first failure. **`0` disables retry entirely** — no `.Retry` or `.DLQ` queue is declared, and a failure is answered and rejected |
+| `maxRetries` | `3` | attempts after the first failure. **`0` disables retry entirely**: no `.Retry` or `.DLQ` queue is declared, and a failure is answered and rejected |
 | `retryDelayMs` | `5000` | the TTL on `<Service>.Retry`, so the delay is fixed, not exponential |
 | `messageTtlMs` | none | a total lifetime for the message; past it the broker discards it regardless of retries left |
 
@@ -191,8 +191,8 @@ export class OrdersService extends RunnableService {
 ## Events are different
 
 > [!CAUTION]
-> **A failing event handler is not retried, and the event is not dead-lettered —
-> it is discarded.** `EventListener` never supplies retry options
+> **A failing event handler is not retried, and the event is not dead-lettered.
+> It is discarded.** `EventListener` never supplies retry options
 > ([`lib/event_listener.ts`](../../lib/event_listener.ts), and the base
 > `getRetryOptions()` in [`lib/base_listener.ts`](../../lib/base_listener.ts)
 > returns `undefined`), so a throw takes the reject-without-requeue branch in
@@ -249,7 +249,7 @@ transient failure into a permanent one. Only do it when you have established the
 failure is not transient.
 
 **A hand-rolled circuit breaker around a proxy call.** Reasonable in general, but
-it belongs in your application code and is not protobus-specific — see
+it belongs in your application code and is not protobus-specific; see
 [Patterns](./patterns.md#resilience-patterns).
 
 ---

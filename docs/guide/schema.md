@@ -1,13 +1,13 @@
 # Schema Design
 
-> The `.proto` file is the contract. Everything else — the queue name, the routing key, the generated types — follows from it.
+> The `.proto` file is the contract. Everything else (the queue name, the routing key, the generated types) follows from it.
 
 **Read this if** you are about to write or change a schema, or you want to know which changes are safe to deploy.
 
 | | |
 |---|---|
 | **Prerequisites** | [Getting Started](./getting-started.md) |
-| **Next** | [CLI](../reference/cli.md) — generating types from it · [Custom Types](../reference/custom-types.md) |
+| **Next** | [CLI](../reference/cli.md) (generating types from it) · [Custom Types](../reference/custom-types.md) |
 | **Source** | [`lib/message_factory.ts`](../../lib/message_factory.ts) · [`lib/custom_types.ts`](../../lib/custom_types.ts) |
 
 ## Basic Structure
@@ -133,7 +133,7 @@ decimal string instead, which is exact across the whole range. Protobuf's own
 canonical JSON mapping reaches for a string here for the same reason.
 
 This is a JavaScript constraint, not a wire change. The bytes on the wire are
-the same, and a peer decodes into whatever its language holds natively —
+the same, and a peer decodes into whatever its language holds natively:
 `protobus-py` gives you a Python `int`, `protobus-go` an `int64`.
 
 Encoding stays permissive: pass a number or a string.
@@ -276,8 +276,8 @@ message Entity {
 ```
 
 > [!WARNING]
-> Without the syntax line, protobufjs parses the file as proto2 — where every
-> field needs an `optional` / `required` / `repeated` label — and reports the
+> Without the syntax line, protobufjs parses the file as proto2 (where every
+> field needs an `optional` / `required` / `repeated` label) and reports the
 > custom type as `illegal token 'uuid'`. Earlier versions of this page and of the
 > root README both omitted it, and neither example ran. The rule is pinned by
 > [`test/unit/documented_behaviour.test.ts`](../../test/unit/documented_behaviour.test.ts).
@@ -345,7 +345,7 @@ value, so a decoded message can be passed on unchanged.
 
 A plain proto3 scalar has no presence: a field equal to its default (`0`, `""`, `false`) is not written to the wire, and decoding supplies the default back. protobus decodes with defaults on, so every field arrives populated and a caller cannot tell "set to zero" from "not set".
 
-When that difference matters — a partial update that must leave untouched fields alone, a count where `0` is a real answer distinct from "unknown" — declare the field `optional`:
+When that difference matters (a partial update that must leave untouched fields alone, a count where `0` is a real answer distinct from "unknown"), declare the field `optional`:
 
 <!-- doc-check: proto -->
 ```protobuf

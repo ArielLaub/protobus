@@ -6,17 +6,17 @@
 
 | | |
 |---|---|
-| **Prerequisites** | [Getting Started](../../guide/getting-started.md) — you have a context that connects |
+| **Prerequisites** | [Getting Started](../../guide/getting-started.md) (you have a context that connects) |
 | **Next** | [MessageService](./message-service.md) · [ServiceProxy](./service-proxy.md) · [Configuration](../configuration.md) |
 | **Source** | [`lib/context.ts`](../../../lib/context.ts) · [`lib/connection.ts`](../../../lib/connection.ts) · [`lib/message_factory.ts`](../../../lib/message_factory.ts) |
 
-**On this page** — [The whole surface](#the-whole-surface) · [init](#initamqpurl-protolocations-options) · [Publishing directly](#publishing-directly) · [Properties](#properties) · [Shutting down](#shutting-down) · [Errors from init](#errors-from-init) · [One per process](#one-context-per-process)
+**On this page:** [The whole surface](#the-whole-surface) · [init](#initamqpurl-protolocations-options) · [Publishing directly](#publishing-directly) · [Properties](#properties) · [Shutting down](#shutting-down) · [Errors from init](#errors-from-init) · [One per process](#one-context-per-process)
 
 ---
 
 ## The whole surface
 
-`Context` is small on purpose. This table is all of it — four methods and four getters.
+`Context` is small on purpose. This table is all of it: four methods and four getters.
 
 | Member | Signature | Notes |
 |---|---|---|
@@ -31,7 +31,7 @@
 | `isReconnecting` | `boolean` | delegates to `connection.isReconnecting` |
 
 > [!IMPORTANT]
-> There is no `close()`, no `shutdown()`, no `messageFactory`, no `messageDispatcher` and no `eventDispatcher`. Earlier versions of this page documented all five; none of them has ever existed on `Context`. The registry is `context.factory`, and the way to shut a process down is `await context.connection.disconnect()` — see [Shutting down](#shutting-down).
+> There is no `close()`, no `shutdown()`, no `messageFactory`, no `messageDispatcher` and no `eventDispatcher`. Earlier versions of this page documented all five; none of them has ever existed on `Context`. The registry is `context.factory`, and the way to shut a process down is `await context.connection.disconnect()`; see [Shutting down](#shutting-down).
 
 The dispatchers are real objects, but they are private fields of `Context` ([`lib/context.ts`](../../../lib/context.ts) lines 30-33). Everything they do is reachable through the three `publish*` methods above.
 
@@ -118,7 +118,7 @@ Publishes an already-encoded request and resolves with the encoded reply.
 | `timeoutMs` | `Config.rpcCallTimeoutMs` (`RPC_CALL_TIMEOUT_MS`, 600000) | Rejects with `RpcTimeoutError` if no reply arrives. Ignored when `rpc` is `false`. |
 | `options.priority` | unset | AMQP priority 0-255. Only meaningful on a queue declared with `maxPriority`. See [Message Priority](../../guide/priority.md). |
 
-An RPC publish sets `mandatory`, so a request routed to a key nothing is bound to fails immediately with `UnroutableError` rather than after the full timeout. A non-RPC publish does not — an event with no subscribers is normal.
+An RPC publish sets `mandatory`, so a request routed to a key nothing is bound to fails immediately with `UnroutableError` rather than after the full timeout. A non-RPC publish does not; an event with no subscribers is normal.
 
 **The one case you need this.** A service whose `ServiceName` carries extra instance segments (`Combat.Player.player6`) is not addressable through `ServiceProxy`, which looks its name up in the schema verbatim. The routing key has to be built by hand:
 
@@ -149,7 +149,7 @@ This is exactly what [`sample/combatGame/BasePlayer.ts`](../../../sample/combatG
 
 ### `publishStreamingMessage(content, routingKey, idleTimeoutMs?, options?)`
 
-Returns an `AsyncIterable<Buffer>` of raw reply bodies. It is **not** an `async` method — there is no promise to await before the `for await`. `idleTimeoutMs` defaults to `Config.streamIdleTimeoutMs` (`STREAM_IDLE_TIMEOUT_MS`, 60000) and bounds the gap *between* chunks, not the stream's total duration. Full protocol in [Streaming](../../guide/streaming.md).
+Returns an `AsyncIterable<Buffer>` of raw reply bodies. It is **not** an `async` method: there is no promise to await before the `for await`. `idleTimeoutMs` defaults to `Config.streamIdleTimeoutMs` (`STREAM_IDLE_TIMEOUT_MS`, 60000) and bounds the gap *between* chunks, not the stream's total duration. Full protocol in [Streaming](../../guide/streaming.md).
 
 ### `publishEvent(type, content, topic)`
 
@@ -230,7 +230,7 @@ main().catch((error) => {
 ```
 
 > [!WARNING]
-> A short-lived client that never disconnects does not exit. This is the single most common way a documented example goes wrong, and it is silent — the work all succeeds and the script simply never returns to the shell. There is no `context.close()` to reach for; the connection is reached through the context.
+> A short-lived client that never disconnects does not exit. This is the single most common way a documented example goes wrong, and it is silent: the work all succeeds and the script never returns to the shell. There is no `context.close()` to reach for; the connection is reached through the context.
 
 A long-running server does not need any of this. [`RunnableService.start`](./runnable-service.md#runnableservicestartcontext-serviceclass-options-postinit) installs SIGINT/SIGTERM handlers that stop consumers, drain in-flight work, run `cleanup()` and then call `context.connection.disconnect()` for you.
 
@@ -294,14 +294,14 @@ async function main() {
 }
 ```
 
-The reverse — several *services* in one context — is legal but rarely what you want. Node is single-threaded, so co-locating services buys no parallelism; it only couples their failure domains and their deploys. Scale with more processes and raise `maxConcurrent`.
+The reverse, several *services* in one context, is legal but rarely what you want. Node is single-threaded, so co-locating services buys no parallelism; it only couples their failure domains and their deploys. Scale with more processes and raise `maxConcurrent`.
 
 <details>
 <summary><b>What sharing actually saves</b></summary>
 
 <br/>
 
-Per context, at the broker: one connection, one exclusive auto-delete callback queue, and one channel each for the message dispatcher and the event dispatcher. Each `MessageService` adds its own channels on top of that — a request listener, an event listener and a cancel listener.
+Per context, at the broker: one connection, one exclusive auto-delete callback queue, and one channel each for the message dispatcher and the event dispatcher. Each `MessageService` adds its own channels on top of that: a request listener, an event listener and a cancel listener.
 
 Per context, in the process: one parsed protobufjs root. Schemas are the expensive half. `loadSync` resolves eagerly, and a second context re-reads and re-parses every file on the paths.
 

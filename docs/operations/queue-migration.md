@@ -1,7 +1,7 @@
 # Changing Queue Settings on a Running System
 
 RabbitMQ fixes a queue's arguments when the queue is declared. Redeclaring an
-existing durable queue with different arguments does not update it — the broker
+existing durable queue with different arguments does not update it: the broker
 rejects the declare with `PRECONDITION_FAILED` and closes the channel.
 
 This matters for three Protobus options, each of which becomes a queue argument:
@@ -19,8 +19,8 @@ cases surface as the broker's raw `PRECONDITION_FAILED`.
 
 `maxPriority` is the one most likely to be *added* to a service that is already
 running, since the whole point is to fix a queue that is misbehaving in
-production. Turning it on is Procedure A below applied to `<ServiceName>` alone
-— `.Retry` and `.DLQ` do not carry `x-max-priority` and must not be deleted.
+production. Turning it on is Procedure A below applied to `<ServiceName>` alone,
+since `.Retry` and `.DLQ` do not carry `x-max-priority` and must not be deleted.
 See [Message Priority](../guide/priority.md) for why.
 
 Queue names are derived from the service name and stay stable across
@@ -30,7 +30,7 @@ Migrating is an operational step, and one of the two procedures below.
 
 ## Procedure A: drain and delete (same queue name)
 
-Use this when the queue name must stay the same — for example when other tooling,
+Use this when the queue name must stay the same, for example when other tooling,
 dashboards or alerts reference it.
 
 1. **Stop the producers**, or accept that messages published during the window
@@ -45,7 +45,7 @@ dashboards or alerts reference it.
 
    For a retry queue, "drained" also means waiting out the old `x-message-ttl`,
    since parked messages only leave when their TTL expires.
-4. **Delete the queue.** `--if-empty` is the safety catch — it refuses rather
+4. **Delete the queue.** `--if-empty` is the safety catch: it refuses rather
    than silently discarding anything that arrived late:
 
    ```bash
@@ -83,11 +83,11 @@ migration with no unroutable window.
 ## Avoiding the problem
 
 - Treat `retryDelayMs`, `messageTtlMs` and `maxPriority` as deployment-time
-  constants. Pick them before the first production deploy — for a brand-new
+  constants. Pick them before the first production deploy. For a brand-new
   service, declaring `maxPriority` up front costs nothing and saves the
   migration entirely.
 - Drive them from configuration that is reviewed alongside the code, not from an
-  environment variable that differs per environment — a value that varies
+  environment variable that differs per environment. A value that varies
   between staging and production means one of the two brokers will reject the
   declare after a promotion.
 - Keep them out of per-instance overrides. Two instances of the same service

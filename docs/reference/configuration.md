@@ -71,14 +71,14 @@ const service = new AssistantService(context, { maxConcurrent: 8 });
 ```
 
 Raise it to the number of concurrent messages one replica should be working on.
-It bounds memory as well as throughput — with late ack, the broker will push up
+It bounds memory as well as throughput: with late ack, the broker will push up
 to this many unacknowledged messages into the process.
 
 ### Heartbeats
 
 amqplib closes a connection after two missed heartbeats, so the interval is
 half the worst-case time to notice a peer that vanished without closing its
-socket — a crashed broker, a network partition, a NAT that dropped the flow.
+socket: a crashed broker, a network partition, a NAT that dropped the flow.
 At the default of 30 seconds that is about a minute.
 
 Left to the broker to propose, RabbitMQ asks for 60 seconds, which is two
@@ -95,7 +95,7 @@ amqp://guest:guest@localhost:5672/?heartbeat=0
 
 Shortening the interval detects failure sooner at the cost of a few extra
 frames per minute per connection. Raising it above the broker's own
-`heartbeat` setting has no effect — the lower of the two is negotiated.
+`heartbeat` setting has no effect, because the lower of the two is negotiated.
 
 ## Reconnection Options
 

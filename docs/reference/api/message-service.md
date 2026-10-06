@@ -10,7 +10,7 @@
 | **Next** | [RunnableService](./runnable-service.md) · [Error Handling](../../guide/error-handling.md) · [Events](../../guide/events.md) |
 | **Source** | [`lib/message_service.ts`](../../../lib/message_service.ts) · [`lib/message_listener.ts`](../../../lib/message_listener.ts) · [`lib/event_listener.ts`](../../../lib/event_listener.ts) |
 
-**On this page** — [The class](#the-class) · [Required members](#required-members) · [Constructor options](#constructor-options) · [What init does](#what-init-does) · [The handler contract](#the-handler-contract) · [Instance names](#instance-names-and-the-contract-they-resolve-to) · [Events](#events) · [When a handler throws](#when-a-handler-throws) · [Shutdown](#shutdown) · [Startup errors](#startup-errors)
+**On this page**: [The class](#the-class) · [Required members](#required-members) · [Constructor options](#constructor-options) · [What init does](#what-init-does) · [The handler contract](#the-handler-contract) · [Instance names](#instance-names-and-the-contract-they-resolve-to) · [Events](#events) · [When a handler throws](#when-a-handler-throws) · [Shutdown](#shutdown) · [Startup errors](#startup-errors)
 
 ---
 
@@ -36,9 +36,9 @@ abstract class MessageService implements IMessageService {
 ```
 
 > [!IMPORTANT]
-> `MessageService` extends **nothing**. Earlier versions of this page said it extends `BaseListener`; it does not, and never has ([`lib/message_service.ts`](../../../lib/message_service.ts) line 83). It *owns* three listeners as private fields — a `MessageListener` for the request queue, an `EventListener` for the events queue and a `CancelListener` for stream cancellations — which is why none of their members appear on your subclass.
+> `MessageService` extends **nothing**. Earlier versions of this page said it extends `BaseListener`; it does not, and never has ([`lib/message_service.ts`](../../../lib/message_service.ts) line 83). It *owns* three listeners as private fields (a `MessageListener` for the request queue, an `EventListener` for the events queue and a `CancelListener` for stream cancellations), which is why none of their members appear on your subclass.
 
-That listing is the entire public surface. In particular there is no `onInitialized`, no `onBeforeStart`, and no `cleanup()` — earlier versions of this page documented all three as lifecycle hooks and overriding them does nothing. `cleanup()` is real, but it belongs to [`RunnableService`](./runnable-service.md#cleanup).
+That listing is the entire public surface. In particular there is no `onInitialized`, no `onBeforeStart`, and no `cleanup()`. Earlier versions of this page documented all three as lifecycle hooks and overriding them does nothing. `cleanup()` is real, but it belongs to [`RunnableService`](./runnable-service.md#cleanup).
 
 ---
 
@@ -48,7 +48,7 @@ That listing is the entire public surface. In particular there is no `onInitiali
 
 The name the service is addressed by. It binds `REQUEST.<ServiceName>.*` on `proto.bus`, and its events queue is `<ServiceName>.Events`.
 
-It is normally `<Package>.<Service>` exactly as the `.proto` declares it, but it may carry extra segments — see [Instance names](#instance-names-and-the-contract-they-resolve-to).
+It is normally `<Package>.<Service>` exactly as the `.proto` declares it, but it may carry extra segments; see [Instance names](#instance-names-and-the-contract-they-resolve-to).
 
 ### `ProtoFileName`
 
@@ -111,7 +111,7 @@ export function build(context: IContext): CalculatorService {
 > **`lateAck: false` is not a performance setting.** Acking on delivery disables the retry, DLQ and error-reply paths entirely: a failed message is dropped and the caller waits out its full `RPC_CALL_TIMEOUT_MS` for a reply that is never published. Use it only for genuine at-most-once delivery with no error reporting.
 
 > [!WARNING]
-> **`maxPriority` cannot be added to a queue that already exists.** RabbitMQ fixes queue arguments at declare time, so the changed declare fails with `PRECONDITION_FAILED` and `init()` rejects — the service does not start. An operator has to drain and delete the main queue first. Read the "Enabling priority on a queue that already exists" section of [Message Priority](../../guide/priority.md) before turning it on. The floor is `1`, not `0`: `x-max-priority: 0` is a plain queue with a priority queue's overhead, so it is refused ([`lib/priority.ts`](../../../lib/priority.ts), `validateMaxPriority`).
+> **`maxPriority` cannot be added to a queue that already exists.** RabbitMQ fixes queue arguments at declare time, so the changed declare fails with `PRECONDITION_FAILED` and `init()` rejects: the service does not start. An operator has to drain and delete the main queue first. Read the "Enabling priority on a queue that already exists" section of [Message Priority](../../guide/priority.md) before turning it on. The floor is `1`, not `0`: `x-max-priority: 0` is a plain queue with a priority queue's overhead, so it is refused ([`lib/priority.ts`](../../../lib/priority.ts), `validateMaxPriority`).
 
 ---
 
@@ -132,7 +132,7 @@ flowchart TD
 Everything after `resolveContract()` touches the broker, so a schema problem surfaces before any queue is declared. A failure at any step is logged with the service name and rethrown.
 
 > [!NOTE]
-> The service registers its own schema, so passing a proto directory to `Context.init()` is optional. When you do both, the second registration is a no-op rather than a protobufjs `duplicate name` error — the factory keys on the service name *and* on the schema text.
+> The service registers its own schema, so passing a proto directory to `Context.init()` is optional. When you do both, the second registration is a no-op rather than a protobufjs `duplicate name` error; the factory keys on the service name *and* on the schema text.
 
 ---
 
@@ -187,13 +187,13 @@ export class ReportService extends MessageService {
 ```
 
 > [!WARNING]
-> **`actor` is not authentication.** The caller sets it and nothing signs or verifies it — any process that can publish to the bus can publish any value. Use it for tracing and audit logging, never to decide whether an operation is permitted. Identity is enforced with per-service broker credentials: [Security model](../../operations/security.md).
+> **`actor` is not authentication.** The caller sets it and nothing signs or verifies it: any process that can publish to the bus can publish any value. Use it for tracing and audit logging, never to decide whether an operation is permitted. Identity is enforced with per-service broker credentials: [Security model](../../operations/security.md).
 
 ### Only methods your subclass defines are dispatchable
 
 The lookup walks the prototype chain and **stops at `MessageService.prototype`** ([`lib/message_service.ts`](../../../lib/message_service.ts), `resolveOwnHandler`). A plain `this[name]` lookup would resolve an rpc named `init` or `publishEvent` to the framework's own member and call it with the caller's arguments; instead such a name resolves to nothing and the caller gets `invalid service method`.
 
-If a method is on the class and calls still fail, work down this ladder — it is the order `_onMessage` checks in, and each step has a distinct message:
+If a method is on the class and calls still fail, work down this ladder. It is the order `_onMessage` checks in, and each step has a distinct message:
 
 | Check | Rejected with |
 |---|---|
@@ -210,7 +210,7 @@ If a method is on the class and calls still fail, work down this ladder — it i
 
 <br/>
 
-The method to run comes out of the message body, which is publisher-controlled. Without the cross-check, a client that can publish to the bus picks which method executes regardless of the routing key it was permitted to publish on — which makes RabbitMQ topic permissions unenforceable, and lets one service's request schema be paired with another service's handler.
+The method to run comes out of the message body, which is publisher-controlled. Without the cross-check, a client that can publish to the bus picks which method executes regardless of the routing key it was permitted to publish on, which makes RabbitMQ topic permissions unenforceable, and lets one service's request schema be paired with another service's handler.
 
 The envelope is decoded and checked *before* the payload, because the method name selects the schema the payload is read with.
 
@@ -239,7 +239,7 @@ This is how several replicas share one schema while each owns a distinct queue: 
 Two consequences that are easy to trip over:
 
 > [!IMPORTANT]
-> **`ServiceProxy` does not do this trimming.** It looks the name up verbatim, so there is no way to build a proxy for `Combat.Player.player6`. Addressing an instance-named service means building the routing key by hand and calling [`context.publishMessage`](./context.md#publishmessagecontent-routingkey-rpc-timeoutms-options) — encode against the contract name, route against the instance name.
+> **`ServiceProxy` does not do this trimming.** It looks the name up verbatim, so there is no way to build a proxy for `Combat.Player.player6`. Addressing an instance-named service means building the routing key by hand and calling [`context.publishMessage`](./context.md#publishmessagecontent-routingkey-rpc-timeoutms-options): encode against the contract name, route against the instance name.
 
 > [!NOTE]
 > Trimming stops at the first segment. `Combat.Player.player6` will never resolve against a bare `Combat`, and a name with no dot that is not itself a declared service throws immediately.
@@ -256,7 +256,7 @@ Two consequences that are easy to trip over:
 | `content` | plain object matching that message |
 | `topic` | routing key; omitted or falsy means `EVENT.<type>` |
 
-Publishing does not require the event's type to belong to this service's schema — any type in the factory root will do.
+Publishing does not require the event's type to belong to this service's schema; any type in the factory root will do.
 
 ### `subscribeEvent(type, handler, topic?)`
 
@@ -285,7 +285,7 @@ async function main(context: IContext) {
 }
 ```
 
-The events queue is `<ServiceName>.Events`: **durable and not auto-delete**. Events published while every replica is down are still there when one comes back — and an events queue belonging to a service you deleted keeps filling forever. See [Queue Migration](../../operations/queue-migration.md).
+The events queue is `<ServiceName>.Events`: **durable and not auto-delete**. Events published while every replica is down are still there when one comes back, and an events queue belonging to a service you deleted keeps filling forever. See [Queue Migration](../../operations/queue-migration.md).
 
 > [!NOTE]
 > There is no `unsubscribe`. The topic trie has no removal path ([`lib/event_listener.ts`](../../../lib/event_listener.ts)). A subscription lasts for the life of the process.
@@ -312,7 +312,7 @@ flowchart TD
 ```
 
 > [!WARNING]
-> **A plain `Error` does not reach the caller immediately.** No reply is published while a message is being retried. At the defaults — `maxRetries: 3`, `retryDelayMs: 5000` — a permanently failing call blocks its caller for roughly 15 seconds before the error arrives. Size `RPC_CALL_TIMEOUT_MS` against `maxRetries × retryDelayMs`, not against one handler run.
+> **A plain `Error` does not reach the caller immediately.** No reply is published while a message is being retried. At the defaults (`maxRetries: 3`, `retryDelayMs: 5000`), a permanently failing call blocks its caller for roughly 15 seconds before the error arrives. Size `RPC_CALL_TIMEOUT_MS` against `maxRetries × retryDelayMs`, not against one handler run.
 
 `HandledError` is the way to say "this is a business outcome, not an infrastructure failure". Its `message` and `code` always cross the wire, and it is never retried.
 
@@ -337,7 +337,7 @@ export class OrderService extends MessageService {
         const order = await this.load(request.orderId);
         if (!order) throw new NotFoundError(request.orderId);
 
-        // A throw from here — a dropped database connection, say — is an
+        // A throw from here (a dropped database connection, say) is an
         // infrastructure failure and DOES go round the retry ladder.
         return { total: order.total };
     }

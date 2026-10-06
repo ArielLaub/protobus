@@ -1,16 +1,16 @@
 # Custom Types
 
-> Teaching protobuf a scalar it does not have — `bigint`, `timestamp`, or one of your own — and the three rules that make it actually work.
+> Teaching protobuf a scalar it does not have (`bigint`, `timestamp`, or one of your own), and the three rules that make it actually work.
 
 **Read this if** you want a domain type to appear in a `.proto` as though it were built in, or you are looking at `illegal token 'money'` and cannot see what is wrong with your schema.
 
 | | |
 |---|---|
-| **Prerequisites** | [Schema Design](../guide/schema.md) — you have written a `.proto` |
+| **Prerequisites** | [Schema Design](../guide/schema.md): you have written a `.proto` |
 | **Next** | [Context](./api/context.md) · [Configuration](./configuration.md) |
 | **Source** | [`lib/custom_types.ts`](../../lib/custom_types.ts) · [`lib/message_factory.ts`](../../lib/message_factory.ts) · [`test/unit/custom_type_encoding.test.ts`](../../test/unit/custom_type_encoding.test.ts) · [`test/unit/bigint.test.ts`](../../test/unit/bigint.test.ts) |
 
-**On this page** — [What a custom type is](#what-a-custom-type-is) · [The API](#the-api) · [`syntax = "proto3"` is mandatory](#syntax--proto3-is-mandatory) · [Worked example](#worked-example-money) · [When to register](#when-to-register) · [Registration is global](#registration-is-global) · [The built-ins](#the-built-ins) · [`ICustomType` reference](#icustomtype-reference)
+**On this page**: [What a custom type is](#what-a-custom-type-is) · [The API](#the-api) · [`syntax = "proto3"` is mandatory](#syntax--proto3-is-mandatory) · [Worked example](#worked-example-money) · [When to register](#when-to-register) · [Registration is global](#registration-is-global) · [The built-ins](#the-built-ins) · [`ICustomType` reference](#icustomtype-reference)
 
 ---
 
@@ -37,16 +37,16 @@ service Api {
 
 `money` is not a protobuf type. On the wire that field is a plain `string`; in your handler it is whatever your `decode` returns. Nothing else in the message changes, and a peer that has not registered `money` still reads the field as the underlying scalar.
 
-Under the hood a registration writes protobufjs's `wrappers` table — the same mechanism protobufjs uses for `google.protobuf.Timestamp` — with a generated one-field message class carrying the wire value ([`lib/custom_types.ts:68`](../../lib/custom_types.ts)).
+A registration writes protobufjs's `wrappers` table (the same mechanism protobufjs uses for `google.protobuf.Timestamp`) with a generated one-field message class carrying the wire value ([`lib/custom_types.ts:68`](../../lib/custom_types.ts)).
 
 ---
 
 ## The API
 
 > [!IMPORTANT]
-> The working API is **`context.factory.registerType(customType)`** — an instance method on `MessageFactory`, reached through `context.factory`.
+> The working API is **`context.factory.registerType(customType)`**: an instance method on `MessageFactory`, reached through `context.factory`.
 >
-> The module-level `registerCustomType()` in [`lib/custom_types.ts`](../../lib/custom_types.ts) is **not exported from the package root**. The package's custom-type exports are exactly five: `ICustomType`, `BigIntType`, `TimestampType`, `bigintToBytes`, `bytesToBigint` ([`index.ts:76`](../../index.ts)). Any example importing `registerCustomType` from `'protobus'` does not compile, and any example calling it with a `(name, definition)` pair describes a signature that has never existed — `registerCustomType` takes one argument, the whole `ICustomType`.
+> The module-level `registerCustomType()` in [`lib/custom_types.ts`](../../lib/custom_types.ts) is **not exported from the package root**. The package's custom-type exports are exactly five: `ICustomType`, `BigIntType`, `TimestampType`, `bigintToBytes`, `bytesToBigint` ([`index.ts:76`](../../index.ts)). Any example importing `registerCustomType` from `'protobus'` does not compile, and any example calling it with a `(name, definition)` pair describes a signature that has never existed: `registerCustomType` takes one argument, the whole `ICustomType`.
 
 `registerType` returns the generated protobufjs `Message` class. You can ignore the return value; nothing in normal use needs it.
 
@@ -57,9 +57,9 @@ Under the hood a registration writes protobufjs's `wrappers` table — the same 
 This is the rule that makes most first attempts fail, and it is not mentioned anywhere else in these docs.
 
 > [!WARNING]
-> A schema that uses a custom type **must** open with `syntax = "proto3";`. Without it protobufjs rejects the file with `illegal token '<yourtypename>'` — pointing at your type, which reads as "protobus never registered it" and sends you looking in the wrong place entirely.
+> A schema that uses a custom type **must** open with `syntax = "proto3";`. Without it protobufjs rejects the file with `illegal token '<yourtypename>'`, pointing at your type, which reads as "protobus never registered it" and sends you looking in the wrong place entirely.
 
-The cause is not custom types at all. With no `syntax` statement protobufjs parses in **proto2** mode, where every field needs an explicit label. The parser reads the first token of the field as that label, finds `money` where it wanted `optional` / `required` / `repeated`, and stops. The identical error appears for `string s = 1;` in a file with no `syntax` line — custom types are just where people meet it, because a custom-type schema is usually the first one they hand to `factory.parse()` as a string rather than loading a generated file.
+The cause is not custom types at all. With no `syntax` statement protobufjs parses in **proto2** mode, where every field needs an explicit label. The parser reads the first token of the field as that label, finds `money` where it wanted `optional` / `required` / `repeated`, and stops. The identical error appears for `string s = 1;` in a file with no `syntax` line. Custom types are only where people meet it, because a custom-type schema is usually the first one they hand to `factory.parse()` as a string rather than loading a generated file.
 
 <!-- doc-check: ignore why="deliberately broken: protobufjs rejects it, which is the point of the example" -->
 ```protobuf
@@ -73,7 +73,7 @@ message Invoice {
 Two ways to fix it, and only the first is worth using:
 
 - add `syntax = "proto3";` as the first line;
-- or write proto2 properly — `optional money total = 1;` parses. Do not do this; the rest of protobus assumes proto3 field semantics.
+- or write proto2 properly: `optional money total = 1;` parses. Do not do this; the rest of protobus assumes proto3 field semantics.
 
 ---
 
@@ -122,7 +122,7 @@ export abstract class BillingApi extends RunnableService {
 }
 ```
 
-`tsType` is a **string that is emitted verbatim** into generated TypeScript — `total?: (Money | null)`. It is not checked against anything, and the generator does not import `Money` for you. Point it at a type your generated code can see, or you get a `.d.ts` that does not compile.
+`tsType` is a **string that is emitted verbatim** into generated TypeScript: `total?: (Money | null)`. It is not checked against anything, and the generator does not import `Money` for you. Point it at a type your generated code can see, or you get a `.d.ts` that does not compile.
 
 > [!TIP]
 > `encode` is called with whatever the application passed, which will not always be your type: a JSON body, a value round-tripped through a queue, a test fixture. `BigIntType.encode` accepts `bigint`, a decimal string, a hex string and a number for exactly this reason. Be similarly tolerant, and fail loudly on input you cannot represent rather than coercing it.
@@ -141,21 +141,21 @@ Registration must happen **before the schema that uses the type is parsed**. Tha
 | `factory.init([])`, then `registerType()`, then `factory.parse(schema)` | works |
 | `factory.init([protoDir])` where a file in `protoDir` uses the type, then `registerType()` | **fails**: `no such Type or Enum 'money' in Type .Fin.Amount` |
 
-Both working orders are pinned by tests — [`test/unit/bigint.test.ts:241`](../../test/unit/bigint.test.ts) registers before `init`, and the case at line 282 registers after it.
+Both working orders are pinned by tests: [`test/unit/bigint.test.ts:241`](../../test/unit/bigint.test.ts) registers before `init`, and the case at line 282 registers after it.
 
 Since `Context.init()` calls `messageFactory.init(protoLocations)` as its first statement ([`lib/context.ts:57`](../../lib/context.ts)), the practical rule for an application is simple:
 
 > [!IMPORTANT]
 > Register on `context.factory` **before** `await context.init(...)`. `context.factory` exists from the moment the `Context` is constructed, so there is no reason to leave it later.
 
-A service that supplies its own schema through `ProtoFileName` rather than a proto directory has more room — that schema is parsed during `service.init()` — but the rule above is correct in both cases and costs nothing.
+A service that supplies its own schema through `ProtoFileName` rather than a proto directory has more room (that schema is parsed during `service.init()`), but the rule above is correct in both cases and costs nothing.
 
 ---
 
 ## Registration is global
 
 > [!CAUTION]
-> **A custom type is process-wide, not per factory.** `registerType` writes protobufjs's module-level `wrappers` table, which is shared with every other consumer of protobufjs in the process, plus a module-level registry. Names are therefore global: the last registration of a name wins, and every `MessageFactory` sees it. Two factories cannot hold different definitions of `money`. Namespace your names — `acme_money`, not `money` — if the process hosts more than one schema, or if you publish a library that registers types.
+> **A custom type is process-wide, not per factory.** `registerType` writes protobufjs's module-level `wrappers` table, which is shared with every other consumer of protobufjs in the process, plus a module-level registry. Names are therefore global: the last registration of a name wins, and every `MessageFactory` sees it. Two factories cannot hold different definitions of `money`. Namespace your names (`acme_money`, not `money`) if the process hosts more than one schema, or if you publish a library that registers types.
 >
 > The source comment at [`lib/custom_types.ts:79`](../../lib/custom_types.ts) explains why it has to be this way: protobufjs resolves a wrapper by fully-qualified type name at encode and decode time, with no per-root table to put it in.
 
@@ -165,7 +165,7 @@ Only the addition to `root` is per instance.
 > **Registering the same name twice is a no-op, since 2.3.0.** `registerType`
 > returns the message class already generated for the name and refreshes its
 > codec, so the last definition of a name still wins. Re-registering a built-in
-> "to be safe" — `factory.registerType(BigIntType)` — now does what it looks
+> "to be safe" (`factory.registerType(BigIntType)`) now does what it looks
 > like it does.
 >
 > Before 2.3.0 it threw `duplicate name 'money' in Root`: `registerType` ended
@@ -182,13 +182,13 @@ Only the addition to `root` is per instance.
 
 ## The built-ins
 
-`bigint` and `timestamp` are registered at module load, before any factory exists ([`lib/custom_types.ts:266`](../../lib/custom_types.ts)). They are available in every schema with no setup. Do not register them again — see the warning above.
+`bigint` and `timestamp` are registered at module load, before any factory exists ([`lib/custom_types.ts:266`](../../lib/custom_types.ts)). They are available in every schema with no setup. Do not register them again; see the warning above.
 
 ### `bigint`
 
 | | |
 |---|---|
-| Wire type | `bytes` — **32 bytes, fixed width, big-endian, unsigned** (uint256-compatible) |
+| Wire type | `bytes`, **32 bytes, fixed width, big-endian, unsigned** (uint256-compatible) |
 | Decodes to | native JavaScript `bigint` |
 | Accepts | `bigint`, decimal string, `0x` hex string, `number` up to `Number.MAX_SAFE_INTEGER` |
 | Range | `0` … `2^256 - 1` (`BIGINT_MAX`) |
@@ -197,7 +197,7 @@ Out-of-range values raise a `RangeError` rather than being coerced. `-5n` is **n
 
 A `number` above `Number.MAX_SAFE_INTEGER` (2^53 - 1) is refused with a `RangeError` too: it has already lost precision before the encoder sees it (`9007199254740993` arrives as `...992`), so encoding it would send the wrong amount. Pass a `bigint` or a decimal string for anything that large.
 
-Decoding is bounded too: a wire value longer than 32 bytes throws instead of being decoded. The accumulator shifts once per byte, so its cost is quadratic in the input — a 1 MiB malformed value would occupy the event loop for over a minute before any handler ran.
+Decoding is bounded too: a wire value longer than 32 bytes throws instead of being decoded. The accumulator shifts once per byte, so its cost is quadratic in the input: a 1 MiB malformed value would occupy the event loop for over a minute before any handler ran.
 
 `bigintToBytes(value)` and `bytesToBigint(bytes)` are exported for use outside a message. They are thin wrappers over `BigIntType.encode` / `.decode` ([`lib/custom_types.ts:270`](../../lib/custom_types.ts)) and carry the same range checks:
 
@@ -208,23 +208,23 @@ import { bigintToBytes, bytesToBigint } from 'protobus';
 const wire = bigintToBytes('0xdeadbeef');       // Uint8Array(32), big-endian
 console.log(wire.length);                        // 32
 console.log(bytesToBigint(wire));                // 3735928559n
-console.log(bytesToBigint(new Uint8Array(0)));   // 0n — empty decodes to zero
+console.log(bytesToBigint(new Uint8Array(0)));   // 0n: empty decodes to zero
 ```
 
 ### `timestamp`
 
 | | |
 |---|---|
-| Wire type | `int64` — milliseconds since the Unix epoch |
+| Wire type | `int64`, milliseconds since the Unix epoch |
 | Decodes to | `Date` |
 | Accepts | `Date`, `number` (ms), ISO string |
 
-An invalid `Date`, an unparseable string, `NaN`, `Infinity`, a fractional millisecond, or anything beyond the range a `Date` can hold (±8.64e15 ms) is refused with a `RangeError`. Unchecked, each of these went out as `0` — 1970, indistinguishable from an instant somebody meant — or was silently truncated.
+An invalid `Date`, an unparseable string, `NaN`, `Infinity`, a fractional millisecond, or anything beyond the range a `Date` can hold (±8.64e15 ms) is refused with a `RangeError`. Unchecked, each of these went out as `0` (1970, indistinguishable from an instant somebody meant) or was silently truncated.
 
 Decoding handles protobufjs's `Long` representation `{ low, high }` as well as a plain number. The high word is treated as **signed**, which is what keeps pre-1970 instants working: coercing it with `>>> 0` turns every negative timestamp into a value far enough out of range that the `Date` is `Invalid` rather than merely wrong.
 
 > [!NOTE]
-> `timestamp` is protobus's own type, unrelated to `google.protobuf.Timestamp`. On the wire it is a single `int64`, not a `{seconds, nanos}` message, so a non-protobus consumer reading the field sees milliseconds. That is deliberate — it is cheaper and it survives a peer that knows nothing about custom types — but it is not interchangeable with the well-known type.
+> `timestamp` is protobus's own type, unrelated to `google.protobuf.Timestamp`. On the wire it is a single `int64`, not a `{seconds, nanos}` message, so a non-protobus consumer reading the field sees milliseconds. That is deliberate (it is cheaper and it survives a peer that knows nothing about custom types), but it is not interchangeable with the well-known type.
 
 ---
 
@@ -270,7 +270,7 @@ message Holding {
 
 Map keys are untouched; an empty map stays empty.
 
-Custom types nest. A `bigint` three messages deep round-trips correctly, including inside self-referential messages — there is a dedicated regression suite for it, because an earlier version reported such messages as "no custom types", skipped preprocessing, and sent the nested value out as zero with the decision cached for the life of the process ([`test/unit/custom_type_encoding.test.ts:59`](../../test/unit/custom_type_encoding.test.ts)).
+Custom types nest. A `bigint` three messages deep round-trips correctly, including inside self-referential messages; there is a dedicated regression suite for it, because an earlier version reported such messages as "no custom types", skipped preprocessing, and sent the nested value out as zero with the decision cached for the life of the process ([`test/unit/custom_type_encoding.test.ts:59`](../../test/unit/custom_type_encoding.test.ts)).
 
 ---
 
