@@ -6,11 +6,11 @@
 
 | | |
 |---|---|
-| **Prerequisites** | [Getting Started](../guide/getting-started.md) — you have run one service |
+| **Prerequisites** | [Getting Started](../guide/getting-started.md): you have run one service |
 | **Next** | [Configuration](../reference/configuration.md) · [Error Handling](../guide/error-handling.md) |
 | **Source** | [`lib/context.ts`](../../lib/context.ts) · [`lib/connection.ts`](../../lib/connection.ts) · [`lib/message_listener.ts`](../../lib/message_listener.ts) |
 
-**On this page** — [The one idea](#the-one-idea) · [What a service creates](#what-a-service-creates-in-the-broker) · [The RPC round trip](#the-rpc-round-trip) · [When a handler fails](#when-a-handler-fails) · [Exchanges](#exchange-reference) · [Queues](#queue-reference) · [Wire format](#wire-format) · [Components](#components)
+**On this page**: [The one idea](#the-one-idea) · [What a service creates](#what-a-service-creates-in-the-broker) · [The RPC round trip](#the-rpc-round-trip) · [When a handler fails](#when-a-handler-fails) · [Exchanges](#exchange-reference) · [Queues](#queue-reference) · [Wire format](#wire-format) · [Components](#components)
 
 ---
 
@@ -18,7 +18,7 @@
 
 A protobus service is **one durable queue** bound to a topic exchange, and **N processes competing for it**.
 
-Everything else — load balancing, failover, backpressure, retry delay, priority — is a property RabbitMQ already gives that queue. Protobus does not implement any of it in JavaScript; it declares the topology and gets out of the way.
+Everything else (load balancing, failover, backpressure, retry delay, priority) is a property RabbitMQ already gives that queue. Protobus does not implement any of it in JavaScript; it declares the topology and gets out of the way.
 
 That is the whole design, and it is what makes the rest of this page short.
 
@@ -96,8 +96,8 @@ flowchart LR
 
 Three things in that picture surprise people, so they are worth saying in words:
 
-- **`Orders.Service.Events` is a queue, not a subscription.** It is durable and it is *not* auto-delete. Events published while every replica is down are still there when one comes back. It also means an event queue for a service you deleted keeps filling forever — see [Queue Migration](../operations/queue-migration.md).
-- **The callback queue is per *client process*, exclusive and auto-deleting.** It vanishes when the client disconnects, which is why an in-flight RPC whose caller died is simply dropped rather than replied to.
+- **`Orders.Service.Events` is a queue, not a subscription.** It is durable and it is *not* auto-delete. Events published while every replica is down are still there when one comes back. It also means an event queue for a service you deleted keeps filling forever; see [Queue Migration](../operations/queue-migration.md).
+- **The callback queue is per *client process*, exclusive and auto-deleting.** It vanishes when the client disconnects, which is why an in-flight RPC whose caller died is dropped rather than replied to.
 - **The retry queue has no consumer.** Messages sit in it until their TTL expires and RabbitMQ dead-letters them back onto `proto.bus`. The delay *is* the TTL. Nothing sleeps in Node.
 
 ---
@@ -120,7 +120,7 @@ sequenceDiagram
     Q->>S: delivered, up to maxConcurrent unacked at once
     S->>S: decode container, decode inner message, run handler
     S->>K: publish reply, routing key = replyTo<br/>(the caller's callback queue)
-    Note over S,Q: the reply is published BEFORE the request is acked —<br/>a crash in between redelivers rather than losing the answer
+    Note over S,Q: the reply is published BEFORE the request is acked,<br/>so a crash in between redelivers rather than losing the answer
     S->>Q: ack
     K->>C: exclusive callback queue delivers
     C->>C: decode ResponseContainer, resolve or reject the promise
@@ -132,7 +132,7 @@ Two properties of that sequence are load-bearing and easy to miss:
 > **The publish resolves on a broker confirm, not a local buffer write.** `await publish(...)` returning means RabbitMQ acknowledged the message. It costs a round trip, and it is the reason a resolved publish is worth anything.
 
 > [!IMPORTANT]
-> **The reply goes out before the ack.** The opposite order — ack, then reply — loses the response if the process dies in between, with the request already settled and unable to be redelivered.
+> **The reply goes out before the ack.** The opposite order (ack, then reply) loses the response if the process dies in between, with the request already settled and unable to be redelivered.
 
 ---
 
@@ -143,7 +143,7 @@ This is the part with no equivalent in a transport-agnostic framework, and the p
 ```mermaid
 flowchart TD
     H["handler throws"] --> HE{"HandledError?"}
-    HE -->|"yes — retrying cannot help"| REJ["reply the error to the caller<br/>reject, no requeue"]
+    HE -->|"yes: retrying cannot help"| REJ["reply the error to the caller<br/>reject, no requeue"]
     HE -->|no| N{"x-retry-count &lt; maxRetries?"}
     N -->|yes| RP["publish to Orders.Service.Retry.Exchange<br/>with the original routing key<br/>then ack the original"]
     RP --> W["Orders.Service.Retry<br/>message waits out retryDelayMs"]
@@ -157,9 +157,9 @@ flowchart TD
 ```
 
 > [!WARNING]
-> **The caller stays parked for the whole ladder.** No reply is published while a message is being retried. With the defaults — `maxRetries: 3`, `retryDelayMs: 5000` — a permanently failing call blocks its caller for roughly 15 seconds before it throws. Size `RPC_CALL_TIMEOUT_MS` against `maxRetries × retryDelayMs`, not against one handler run.
+> **The caller stays parked for the whole ladder.** No reply is published while a message is being retried. With the defaults (`maxRetries: 3`, `retryDelayMs: 5000`), a permanently failing call blocks its caller for roughly 15 seconds before it throws. Size `RPC_CALL_TIMEOUT_MS` against `maxRetries × retryDelayMs`, not against one handler run.
 
-Every hop stamps headers on the message. These are the ops surface — a message sitting in a DLQ can be read back without any application logging:
+Every hop stamps headers on the message. These are the ops surface: a message sitting in a DLQ can be read back without any application logging:
 
 | Header | Set on | Meaning |
 |---|---|---|
@@ -173,11 +173,11 @@ Every hop stamps headers on the message. These are the ops surface — a message
 `correlationId` and `messageId` are carried through unchanged, so a retried copy is recognisable as the same logical message.
 
 <details>
-<summary><b>Why the retry exchange exists at all</b> — a plain <code>sendToQueue</code> would be simpler</summary>
+<summary><b>Why the retry exchange exists at all</b>: a plain <code>sendToQueue</code> would be simpler</summary>
 
 <br/>
 
-A message parked on `Orders.Service.Retry` comes back via RabbitMQ's dead-letter mechanism, and the DLX republishes it **with the routing key it arrived carrying**. If the message had been put on the retry queue with `sendToQueue`, that key would be `Orders.Service.Retry` — which matches no binding on the main queue, so the redelivery would route nowhere and be dropped.
+A message parked on `Orders.Service.Retry` comes back via RabbitMQ's dead-letter mechanism, and the DLX republishes it **with the routing key it arrived carrying**. If the message had been put on the retry queue with `sendToQueue`, that key would be `Orders.Service.Retry`, which matches no binding on the main queue, so the redelivery would route nowhere and be dropped.
 
 Publishing to a per-service *topic* exchange bound with `#` preserves the original `REQUEST.Orders.Service.create` key across the queue → TTL → DLX → `proto.bus` round trip, so the redelivery lands back on the service queue. That is the entire reason `<Service>.Retry.Exchange` exists.
 
@@ -197,7 +197,7 @@ Five exchanges, three of them shared by the whole bus and two per service.
 | `proto.bus.callback` | direct | shared | RPC replies, keyed by the caller's callback queue name | `CALLBACKS_EXCHANGE_NAME` |
 | `proto.bus.events` | topic | shared | published events | `EVENTS_EXCHANGE_NAME` |
 | `proto.bus.cancel` | fanout | shared | stream cancellation notices ([Streaming](../guide/streaming.md#cancellation)) | `CANCEL_EXCHANGE_NAME` |
-| `<Service>.Retry.Exchange` | topic | per service | failed messages awaiting redelivery | — |
+| `<Service>.Retry.Exchange` | topic | per service | failed messages awaiting redelivery | none |
 
 ### Routing keys
 
@@ -215,12 +215,12 @@ Five exchanges, three of them shared by the whole bus and two per service.
 > (`amq.gen-…`), and it is bound to `proto.bus.callback` under that name
 > ([`lib/base_listener.ts`](../../lib/base_listener.ts)). `correlationId` is an
 > AMQP *property* carried alongside, and it is what the caller's process uses to
-> match the reply to the right pending promise — the broker never looks at it.
+> match the reply to the right pending promise; the broker never looks at it.
 > Earlier versions of this page and of `message-flow.md` both said the routing
 > key was the correlationId.
 
 > [!NOTE]
-> A service binds `REQUEST.<Service>.*` — **one queue for every method**. That is what makes [Message Priority](../guide/priority.md) necessary: a slow bulk method and a fast control method share a lane.
+> A service binds `REQUEST.<Service>.*`: **one queue for every method**. That is what makes [Message Priority](../guide/priority.md) necessary: a slow bulk method and a fast control method share a lane.
 
 ---
 
@@ -230,21 +230,21 @@ Five exchanges, three of them shared by the whole bus and two per service.
 |---|---|---|---|---|
 | `<Service>` | yes | no | no | every replica, competing |
 | `<Service>.Events` | yes | no | no | every replica, competing |
-| `<Service>.Retry` | yes | no | no | **nobody** — drained by TTL expiry |
-| `<Service>.DLQ` | yes | no | no | **nobody** — you |
+| `<Service>.Retry` | yes | no | no | **nobody** (drained by TTL expiry) |
+| `<Service>.DLQ` | yes | no | no | **nobody** (you) |
 | callback queue | no | yes | yes | the one client process that declared it |
 | cancel queue | no | yes | yes | the one service process that declared it |
 
 **Persistence.** Every message is published `deliveryMode: 2`. Combined with durable queues, messages survive a broker restart.
 
-**Acknowledgement.** Services ack late by default: the delivery is acked after the handler returns and its reply is away. Failures take the ladder above — protobus does **not** nack-with-requeue, because an immediate requeue of a message that just failed is a hot loop.
+**Acknowledgement.** Services ack late by default: the delivery is acked after the handler returns and its reply is away. Failures take the ladder above: protobus does **not** nack-with-requeue, because an immediate requeue of a message that just failed is a hot loop.
 
 ---
 
 ## Concurrency
 
 > [!CAUTION]
-> `maxConcurrent` is the consumer prefetch and it **defaults to `1`**. One replica handles one message at a time, holding the slot until the handler returns. This is deliberate and conservative — and it means a service that does I/O and was never configured is leaving almost all of its throughput on the table.
+> `maxConcurrent` is the consumer prefetch and it **defaults to `1`**. One replica handles one message at a time, holding the slot until the handler returns. This is deliberate and conservative, and it means a service that does I/O and was never configured is leaving almost all of its throughput on the table.
 
 <!-- doc-check: ignore why="an excerpt, not a standalone file" -->
 ```typescript
@@ -252,7 +252,7 @@ Five exchanges, three of them shared by the whole bus and two per service.
 const service = new OrdersService(context, { maxConcurrent: 10 });
 ```
 
-It bounds memory as well as throughput: with late ack the broker will push up to `maxConcurrent` unacked messages into the process. Scale out with more processes, not by co-locating services — Node is single-threaded, so co-location buys no parallelism and couples failure domains.
+It bounds memory as well as throughput: with late ack the broker will push up to `maxConcurrent` unacked messages into the process. Scale out with more processes, not by co-locating services: Node is single-threaded, so co-location buys no parallelism and couples failure domains.
 
 Full detail in [Configuration → Concurrency](../reference/configuration.md#concurrency).
 
@@ -264,12 +264,12 @@ Every message is **two layers of protobuf**: an outer container carrying routing
 
 ```mermaid
 flowchart LR
-    subgraph outer["RequestContainer — protobuf"]
+    subgraph outer["RequestContainer (protobuf)"]
         M["method<br/>Orders.Service.create"]
         A["actor<br/>caller-supplied string"]
         D["data: bytes"]
     end
-    D --> inner["CreateRequest — protobuf<br/>your schema, opaque to the bus"]
+    D --> inner["CreateRequest (protobuf)<br/>your schema, opaque to the bus"]
 
     style inner fill:#1f6feb,color:#fff,stroke:#1f6feb
 ```
@@ -277,7 +277,7 @@ flowchart LR
 The bus routes, retries, dead-letters and logs a message without ever needing your schema. Only the two endpoints decode the inner layer.
 
 <details>
-<summary><b>Container definitions</b> — from <code>lib/message_factory.ts</code></summary>
+<summary><b>Container definitions</b> (from <code>lib/message_factory.ts</code>)</summary>
 
 <br/>
 
@@ -317,22 +317,22 @@ message EventContainer {
 </details>
 
 > [!WARNING]
-> `actor` is set by the caller and nothing verifies it. It is for tracing, never for authorisation — see the [Security model](../operations/security.md).
+> `actor` is set by the caller and nothing verifies it. It is for tracing, never for authorisation; see the [Security model](../operations/security.md).
 
 ---
 
 ## Components
 
 <details>
-<summary><b>Object graph</b> — what holds what</summary>
+<summary><b>Object graph</b>: what holds what</summary>
 
 <br/>
 
 ```mermaid
 flowchart TD
     CTX["Context"]
-    CTX --> CONN["Connection — one AMQP connection, n channels"]
-    CTX --> MF["MessageFactory — proto load, encode, decode"]
+    CTX --> CONN["Connection: one AMQP connection, n channels"]
+    CTX --> MF["MessageFactory: proto load, encode, decode"]
     CTX --> MD["MessageDispatcher → proto.bus"]
     CTX --> ED["EventDispatcher → proto.bus.events"]
     CTX --> CBL["CallbackListener ← proto.bus.callback"]
@@ -354,7 +354,7 @@ flowchart TD
 | **Connection** | channels, declarations, bindings, reconnection, the retry ladder | [`lib/connection.ts`](../../lib/connection.ts) |
 | **MessageFactory** | loads `.proto` files; encodes and decodes both layers | [`lib/message_factory.ts`](../../lib/message_factory.ts) |
 | **MessageService** | serves a queue: dispatches RPCs to your methods, subscribes to events | [`lib/message_service.ts`](../../lib/message_service.ts) |
-| **RunnableService** | `MessageService` plus process lifecycle — proto resolution by convention, SIGINT/SIGTERM, non-zero exit on boot failure | [`lib/runnable_service.ts`](../../lib/runnable_service.ts) |
+| **RunnableService** | `MessageService` plus process lifecycle: proto resolution by convention, SIGINT/SIGTERM, non-zero exit on boot failure | [`lib/runnable_service.ts`](../../lib/runnable_service.ts) |
 | **ServiceProxy** | builds method stubs from the proto and calls them over the bus | [`lib/service_proxy.ts`](../../lib/service_proxy.ts) |
 | **Trie** | wildcard topic matching for event subscriptions | [`lib/trie.ts`](../../lib/trie.ts) |
 
@@ -365,7 +365,7 @@ flowchart TD
 ```bash
 npm run docker:up
 bash scripts/run-combat-sample.sh      # six services, RPC + events + shutdown
-open http://localhost:15672            # guest / guest — the queues above, live
+open http://localhost:15672            # guest / guest; the queues above, live
 ```
 
 ---

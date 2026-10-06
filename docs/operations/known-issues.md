@@ -10,10 +10,10 @@ Current limitations and potential improvements for ProtoBus.
 
 **Description:**
 Neither the processing timeout nor a stream cancellation can stop a handler
-that is already running — JavaScript cannot preempt one. Both abort the
+that is already running, because JavaScript cannot preempt one. Both abort the
 handler's `AbortSignal` and stop the framework acting on a late result; a
 handler that never checks its signal runs to completion regardless, and its
-output is simply discarded.
+output is discarded.
 
 A graceful shutdown waits for handlers to finish, so a handler that ignores its
 signal and runs long will hold shutdown until `SHUTDOWN_DRAIN_TIMEOUT_MS`
@@ -32,7 +32,7 @@ async generateReport(request: Request, actor: string, id: string, ctx?: MessageH
 }
 ```
 
-Graceful shutdown itself is built in — `RunnableService.start()` installs signal
+Graceful shutdown itself is built in: `RunnableService.start()` installs signal
 handlers that stop consuming, drain in-flight work, run your `cleanup()` hook
 and then disconnect. See [RunnableService](../reference/api/runnable-service.md).
 
@@ -48,7 +48,7 @@ throws takes the no-retry branch: the delivery is rejected without requeue and
 the event is gone. It does not climb the retry ladder and never reaches a DLQ.
 
 Rejecting is what keeps the consumer alive: leaving the delivery unacknowledged
-would hold the prefetch — **1** unless `maxConcurrent` is set — and stall the
+would hold the prefetch (**1** unless `maxConcurrent` is set) and stall the
 listener completely behind the first permanently-failing event. The default is
 measured against a real broker in
 [`test/integration/event_failure_semantics.test.ts`](../../test/integration/event_failure_semantics.test.ts)
@@ -61,7 +61,7 @@ record afterwards that anything was dropped.
 
 **Workaround:**
 Set `eventRetry` on the service to give events the same ladder RPC requests
-climb — park, redeliver, then `<Service>.Events.DLQ`. It is opt-in because it
+climb: park, redeliver, then `<Service>.Events.DLQ`. It is opt-in because it
 declares new topology and because a retry re-runs every handler that matched the
 event, not only the one that threw. See
 [Turning retry on](../guide/events.md#turning-retry-on).

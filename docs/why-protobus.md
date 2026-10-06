@@ -10,7 +10,7 @@
 | **Next** | [Design Principles](./design-principles.md) · [Getting Started](./guide/getting-started.md) · [Architecture](./concepts/architecture.md) |
 | **Source** | [`lib/`](../lib) |
 
-**On this page** — [The short version](#the-short-version) · [Not the application](#the-other-half-of-the-idea-do-not-become-the-application) · [Why not NestJS](#why-not-just-use-nestjs-microservices) · [Why not gRPC](#why-not-direct-grpc) · [Why not raw AMQP](#why-not-raw-amqplib--protobufjs) · [Framework comparison](#framework-comparison) · [Reliability philosophy](#reliability-philosophy) · [The intended niche](#the-intended-niche) · [Performance](#performance)
+**On this page:** [The short version](#the-short-version) · [Not the application](#the-other-half-of-the-idea-do-not-become-the-application) · [Why not NestJS](#why-not-just-use-nestjs-microservices) · [Why not gRPC](#why-not-direct-grpc) · [Why not raw AMQP](#why-not-raw-amqplib--protobufjs) · [Framework comparison](#framework-comparison) · [Reliability philosophy](#reliability-philosophy) · [The intended niche](#the-intended-niche) · [Performance](#performance)
 
 ---
 
@@ -63,7 +63,7 @@ your application
    └─ Protobuf contracts
 ```
 
-This is a feature, not an incomplete framework.
+This boundary is deliberate; it does not mean the framework is incomplete.
 
 ## Why not just use NestJS microservices?
 
@@ -83,7 +83,7 @@ semantics are part of the model.
 ## Why not direct gRPC?
 
 Use gRPC when direct point-to-point RPC is the right architecture. It is mature,
-fast, polyglot and has first-class Protobuf support.
+fast, polyglot and has built-in Protobuf support.
 
 ProtoBus is interesting when you additionally want:
 
@@ -126,7 +126,7 @@ documented once without adding an application framework around them.
 
 ## Why RabbitMQ-native?
 
-RabbitMQ is not just a byte pipe. Its useful semantics include queues, competing
+RabbitMQ is more than a byte pipe. Its useful semantics include queues, competing
 consumers, topic exchanges, acknowledgements, redelivery, priorities, TTL/DLX and
 publisher confirms.
 
@@ -149,27 +149,30 @@ The schema does three jobs at once:
 That is more important than "binary is smaller than JSON." The real benefit is
 that the contract is external to any one runtime.
 
-The same `.proto` is consumed by TypeScript, Python and Go implementations.
+The same `.proto` is consumed by TypeScript, Python, Go and C++ implementations.
 
 ## Cross-language is a core property
 
-ProtoBus does not call itself cross-language merely because another language
+ProtoBus does not call itself cross-language only because another language
 could theoretically publish AMQP messages.
 
 There are first-party compatible implementations:
 
-- [protobus](https://github.com/ArielLaub/protobus) — TypeScript / Node.js
-- [protobus-py](https://github.com/ArielLaub/protobus-py) — Python
-- [protobus-go](https://github.com/ArielLaub/protobus-go) — Go
+- [protobus](https://github.com/ArielLaub/protobus) (TypeScript)
+- [protobus-py](https://github.com/ArielLaub/protobus-py) (Python)
+- [protobus-go](https://github.com/ArielLaub/protobus-go) (Go)
+- [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) (C++)
 
 That constraint is healthy for the TypeScript implementation: wire behavior
 cannot casually depend on JavaScript-only object conventions. Where the ports
-differ, the difference is recorded per feature — see
+differ, the difference is recorded per feature; see
 [Priority → Cross-language](./guide/priority.md#cross-language).
 
-Interoperability is tested, not assumed: protobus-go's CI runs Go, TypeScript
+Interoperability is tested: protobus-go's CI runs Go, TypeScript
 and Python services and clients against each other, in both directions, on a
 real RabbitMQ 3 and 4, with replicas in different languages sharing one queue.
+protobus-cpp's CI runs C++ against the TypeScript, Python and Go ports the same
+way.
 This repository's own cross-language test is not part of its CI, because it
 needs the other ports checked out beside it.
 
@@ -200,7 +203,7 @@ flexibility.
 
 **How it works:** Moleculer implements its own service registry, load balancer
 and routing layer. The transporter (RabbitMQ, NATS, Redis, etc.) is a message
-pipe — Moleculer handles everything else in application code.
+pipe; Moleculer handles everything else in application code.
 
 | Aspect | Moleculer | ProtoBus |
 |--------|-----------|----------|
@@ -260,7 +263,7 @@ message routing.
 
 While not a Node.js framework, [MassTransit](https://masstransit.io/) deserves
 mention because it shares ProtoBus's philosophy: primarily RabbitMQ-native, with
-other transports added later, and leveraging broker features directly. If you
+other transports added later, and using broker features directly. If you
 are in the .NET ecosystem, it is the closest equivalent, and it proves the
 broker-native approach works at scale.
 
@@ -274,7 +277,7 @@ ProtoBus asks a simple question repeatedly:
 
 Examples:
 
-- A publish resolving should mean the broker confirmed it, not merely that bytes
+- A publish resolving should mean the broker confirmed it, not only that bytes
   entered a local buffer.
 - Retry hand-off should not acknowledge the old delivery before the replacement
   publication is confirmed.
@@ -286,7 +289,7 @@ Examples:
   failure.
 
 This does not create exactly-once execution. RabbitMQ systems remain at-least-once
-where redelivery is possible, and idempotency is still an application concern —
+where redelivery is possible, and idempotency is still an application concern,
 which is why a caller can pin a stable `messageId` on a publish and deduplicate
 on it.
 
@@ -319,7 +322,7 @@ That boundary is the point.
 
 > [!WARNING]
 > **The numbers below are not reproducible from this repository.** The benchmark
-> harness that produced them was never committed — `find . -iname "*bench*"`
+> harness that produced them was never committed: `find . -iname "*bench*"`
 > returns nothing, and `sample/` holds only `combatGame` and `tokenStream`. An
 > earlier version of this page said "benchmark code available in the
 > repository", which was not true.
@@ -329,9 +332,9 @@ That boundary is the point.
 > Measure your own workload before it matters to you: payload shape dominates,
 > and the gap on a 100-byte message is not the gap on a 139 KB one.
 >
-> Contributing a runnable harness — ideally alongside
+> Contributing a runnable harness (ideally alongside
 > [`scripts/run-combat-sample.sh`](../scripts/run-combat-sample.sh), so CI could
-> run it — would close this, and is welcome.
+> run it) would close this, and is welcome.
 
 Reported by the authors, both libraries on the same hardware against the same
 RabbitMQ, using a single shared publisher context:

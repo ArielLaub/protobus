@@ -3,14 +3,15 @@
 **Schema-first RPC over RabbitMQ. Protobuf on the wire. No application framework attached.**
 
 [![npm version](https://img.shields.io/npm/v/protobus.svg?logo=npm)](https://www.npmjs.com/package/protobus)
-[![node](https://img.shields.io/badge/node-%E2%89%A520-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![node](https://img.shields.io/badge/node-%E2%89%A522-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![bun](https://img.shields.io/badge/bun-compatible-000000?logo=bun&logoColor=white)](https://bun.sh)
 [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-%E2%89%A53.8-FF6600?logo=rabbitmq&logoColor=white)](https://www.rabbitmq.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![CI](https://github.com/ArielLaub/protobus/actions/workflows/ci.yml/badge.svg)](https://github.com/ArielLaub/protobus/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/protobus.svg)](https://github.com/ArielLaub/protobus/blob/master/LICENSE)
 
-ProtoBus takes the part of gRPC that works exceptionally well — a language-neutral
-`.proto` contract, compact binary messages, typed RPC and streaming — and puts it
+ProtoBus takes the part of gRPC that works exceptionally well (a language-neutral
+`.proto` contract, compact binary messages, typed RPC and streaming) and puts it
 on a durable message bus instead of a direct HTTP/2 connection.
 
 ```text
@@ -37,10 +38,11 @@ HTTP server, logger, validation, database layer, config system, tracing stack an
 project layout. There is no container, module system or framework runtime you have
 to adopt.
 
-> **Cross-language:** [protobus-py](https://github.com/ArielLaub/protobus-py)
-> (Python, stable) and [protobus-go](https://github.com/ArielLaub/protobus-go)
-> (Go, stable) speak the same wire protocol and use the same `.proto`
-> contracts.
+> **Cross-language:** [protobus-py](https://github.com/ArielLaub/protobus-py) (Python, stable),
+> [protobus-go](https://github.com/ArielLaub/protobus-go) (Go, stable) and [protobus-cpp](https://github.com/ArielLaub/protobus-cpp)
+> (C++, new) speak the same wire protocol and use the same `.proto` contracts.
+> Write each service in the language that suits it; see
+> [Other languages](https://github.com/ArielLaub/protobus/blob/master/docs/README.md#other-languages).
 
 ---
 
@@ -48,7 +50,12 @@ to adopt.
 
 ```bash
 npm install protobus
+# or, on Bun
+bun add protobus
 ```
+
+ProtoBus is fully compatible with [Bun](https://bun.sh) as well as Node.js:
+the same package, with no flags or shims.
 
 You also need a RabbitMQ 3.8+ broker:
 
@@ -105,7 +112,7 @@ export class CalculatorService extends RunnableService {
 ```
 
 No controller, DI container or module registration is required. `RunnableService`
-is just the process-owning service base class; your other application dependencies
+is the process-owning service base class; your other application dependencies
 remain ordinary constructor dependencies.
 
 ### 3. Run it
@@ -164,7 +171,7 @@ $ npx tsx src/client.ts
 ```
 
 For generated interfaces instead of the handwritten type above, run
-`npx protobus generate` — see [CLI](#cli) below.
+`npx protobus generate`; see [CLI](#cli) below.
 
 Full walkthrough, including events and the project layout:
 **[Getting Started](https://github.com/ArielLaub/protobus/blob/master/docs/guide/getting-started.md)**.
@@ -177,7 +184,7 @@ There are already excellent ways to build distributed systems. ProtoBus exists
 for a narrower case:
 
 > **You want Protobuf-style RPC, but you want RabbitMQ semantics rather than a
-> direct point-to-point connection — and you do not want a full application
+> direct point-to-point connection, and you do not want a full application
 > framework deciding the rest of your stack.**
 
 That leads to a few deliberate choices.
@@ -185,10 +192,10 @@ That leads to a few deliberate choices.
 ### 1. The `.proto` is the contract
 
 The service definition is not a TypeScript decorator, a JSON pattern or a runtime
-registration object. It is a language-neutral Protobuf schema — the
+registration object. It is a language-neutral Protobuf schema. The
 `Calculator.proto` above is the whole contract for `Calculator.Math`.
 
-The same contract can be consumed from TypeScript, Python, Go, or any future port.
+The same contract can be consumed from TypeScript, Python, Go, C++, or any future port.
 Schema changes can be checked at build time instead of being discovered after two
 services disagree in production.
 
@@ -200,7 +207,7 @@ response, event and stream payloads are encoded as Protocol Buffers.
 That gives you a compact binary representation, explicit compatibility rules and
 one schema that serves documentation, runtime serialization and generated types.
 
-### 3. RabbitMQ is part of the design, not an interchangeable pipe
+### 3. RabbitMQ is part of the design
 
 ProtoBus is deliberately RabbitMQ-native. It does not pretend RabbitMQ, Redis,
 Kafka, NATS and TCP are equivalent transports.
@@ -237,12 +244,12 @@ A recurring design question in ProtoBus is:
 > **What does this Promise resolving actually prove?**
 
 For publishing, success is coupled to a RabbitMQ publisher confirmation rather
-than merely handing bytes to a local socket buffer. Retry hand-off confirms the
+than handing bytes to a local socket buffer. Retry hand-off confirms the
 replacement publication before acknowledging the original. Reconnection restores
 required topology and consumers before the connection is considered usable.
 Graceful shutdown stops new work and drains in-flight work before disconnecting.
 
-Distributed systems still have unavoidable ambiguous outcomes — for example a
+Distributed systems still have unavoidable ambiguous outcomes. For example, a
 connection can disappear while a publisher confirmation is in flight. ProtoBus
 surfaces those cases rather than inventing certainty it does not have. See
 [Delivery Guarantees](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/delivery-guarantees.md).
@@ -408,11 +415,12 @@ routing       = RabbitMQ topology + documented ProtoBus conventions
 
 Current ports:
 
-| Language | Implementation | Status |
+| Language | Repo | Status |
 |---|---|---|
-| TypeScript / Node.js | [protobus](https://github.com/ArielLaub/protobus) | stable |
+| TypeScript | [protobus](https://github.com/ArielLaub/protobus) (this repository) | stable (reference) |
 | Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
+| C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 
 Wire compatibility matters more than matching APIs character-for-character. The
 `.proto` stays the source of truth across languages.
@@ -434,7 +442,7 @@ The important properties include:
 - definite failures and ambiguous outcomes are raised as distinct error types
 - callers can supply a stable `messageId` for deduplication across ambiguous retries
 
-This is **at-least-once territory**, not magical exactly-once execution. Handlers
+This is **at-least-once territory**. It is not exactly-once execution. Handlers
 with side effects should be idempotent where duplicates matter.
 
 Read **[Delivery Guarantees](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/delivery-guarantees.md)** before
@@ -517,8 +525,8 @@ npm run docker:up
 bash scripts/run-combat-sample.sh
 ```
 
-Six services fight a battle royale over the bus — RPC, published events and
-graceful shutdown in one run — and the script asserts exactly one player
+Six services fight a battle royale over the bus (RPC, published events and
+graceful shutdown in one run), and the script asserts exactly one player
 survived. The source is
 [`sample/combatGame`](https://github.com/ArielLaub/protobus/tree/master/sample/combatGame).
 
@@ -526,7 +534,8 @@ survived. The source is
 
 ## Requirements
 
-- Node.js 20+ (enforced by `engines`; CI runs 20, 22 and 24)
+- Node.js 22+ (enforced by `engines`; CI runs 22 and 24), or Bun (CI runs the
+  combat-game sample on the latest Bun)
 - RabbitMQ 3.8+
 
 ## Development
@@ -546,5 +555,5 @@ That is the boundary ProtoBus is intended to keep.
 
 ## License
 
-MIT — Copyright (c) 2018 Remarkable Games Ltd.
+MIT. Copyright (c) 2018 Remarkable Games Ltd.
 See [LICENSE](https://github.com/ArielLaub/protobus/blob/master/LICENSE).

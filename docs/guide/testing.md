@@ -6,11 +6,11 @@
 
 | | |
 |---|---|
-| **Prerequisites** | [Getting Started](./getting-started.md) — you have a service and a proxy that calls it |
+| **Prerequisites** | [Getting Started](./getting-started.md): you have a service and a proxy that calls it |
 | **Next** | [Error Handling](./error-handling.md) · [Architecture](../concepts/architecture.md) |
 | **Source** | [`jest.config.js`](../../jest.config.js) · [`jest.integration.config.js`](../../jest.integration.config.js) · [`docker-compose.yml`](../../docker-compose.yml) · [`scripts/run-combat-sample.sh`](../../scripts/run-combat-sample.sh) |
 
-**On this page** — [Three levels](#three-levels) · [Level 1: the handler alone](#level-1-the-handler-alone) · [Level 2: against a real broker](#level-2-against-a-real-broker) · [Isolating tests from each other](#isolating-tests-from-each-other) · [Asserting on events](#asserting-on-events) · [Asserting on failures](#asserting-on-failures) · [Level 3: end-to-end](#level-3-end-to-end) · [Testing your documentation](#testing-your-documentation)
+**On this page**: [Three levels](#three-levels) · [Level 1: the handler alone](#level-1-the-handler-alone) · [Level 2: against a real broker](#level-2-against-a-real-broker) · [Isolating tests from each other](#isolating-tests-from-each-other) · [Asserting on events](#asserting-on-events) · [Asserting on failures](#asserting-on-failures) · [Level 3: end-to-end](#level-3-end-to-end) · [Testing your documentation](#testing-your-documentation)
 
 ---
 
@@ -22,13 +22,13 @@
 | **2. Service + broker** | yes | ~100 ms–1 s | encoding, routing, retries, events, timeouts |
 | **3. End-to-end script** | yes | seconds | wiring, shutdown, decorators, "the whole thing runs" |
 
-Most service suites should be mostly level 1, and most are not — people reach for a broker because the service class *looks* like it needs one. It does not. Start at level 1 and go up only when the thing you want to assert genuinely lives in the transport.
+Most service suites should be mostly level 1, and most are not: people reach for a broker because the service class *looks* like it needs one. It does not. Start at level 1 and go up only when the thing you want to assert genuinely lives in the transport.
 
 ---
 
 ## Level 1: the handler alone
 
-A protobus handler is a normal async method. `MessageService` calls it as `handler.call(this, data, actor, correlationId, context)` ([`lib/message_service.ts:391`](../../lib/message_service.ts)) — the request object first, then metadata. There is nothing magic to reproduce.
+A protobus handler is a normal async method. `MessageService` calls it as `handler.call(this, data, actor, correlationId, context)` ([`lib/message_service.ts:391`](../../lib/message_service.ts)): the request object first, then metadata. There is nothing magic to reproduce.
 
 The one thing the constructor does need is a context object whose `connection` can register an event listener: `MessageService` builds its listeners eagerly, and each one attaches a reconnection restorer via `attachRestorer`, which calls `connection.on('reconnected', …)` when the connection has no `registerRestorer` ([`lib/connection.ts:194`](../../lib/connection.ts)). Two no-op methods satisfy it.
 
@@ -75,10 +75,10 @@ describe('OrdersService.create', () => {
 });
 ```
 
-No `init()`, no `await context.init(...)`, no broker, no queues to clean up. Asserting `isHandled: true` is worth doing explicitly — it is the difference between a caller getting an answer in milliseconds and a caller waiting out the retry ladder, and it is invisible in the happy path.
+No `init()`, no `await context.init(...)`, no broker, no queues to clean up. Asserting `isHandled: true` is worth doing explicitly: it is the difference between a caller getting an answer in milliseconds and a caller waiting out the retry ladder, and it is invisible in the happy path.
 
 > [!TIP]
-> If a handler is hard to test this way it is usually because it reaches for I/O directly. Take the dependency as a constructor argument and the level-1 test becomes trivial — which is ordinary advice, but protobus makes it cheap to ignore because the service class is easy to construct.
+> If a handler is hard to test this way it is usually because it reaches for I/O directly. Take the dependency as a constructor argument and the level-1 test becomes trivial. That is ordinary advice, but protobus makes it cheap to ignore because the service class is easy to construct.
 
 ---
 
@@ -126,7 +126,7 @@ docker compose up -d --wait && { jest --config jest.integration.config.js; statu
 
 ### Pinning the suite to a broker
 
-The suite connects to `amqp://guest:guest@localhost:5672/`, with the management API on `localhost:15672`. Where something else holds those ports — a `kubectl port-forward` to a cluster broker binds `127.0.0.1:5672` and wins for `localhost` — the suite quietly runs against that broker instead, with other tenants' traffic, and fails in ways that look like flakes. Move the compose ports and point the suite at them:
+The suite connects to `amqp://guest:guest@localhost:5672/`, with the management API on `localhost:15672`. Where something else holds those ports (a `kubectl port-forward` to a cluster broker binds `127.0.0.1:5672` and wins for `localhost`), the suite quietly runs against that broker instead, with other tenants' traffic, and fails in ways that look like flakes. Move the compose ports and point the suite at them:
 
 ```bash
 export PROTOBUS_AMQP_PORT=35672 PROTOBUS_MGMT_PORT=35673
@@ -144,13 +144,13 @@ Unit tests and broker tests want different settings, so they get different confi
 | | `jest.config.js` | `jest.integration.config.js` |
 |---|---|---|
 | roots | `test/` | `test/integration/` |
-| ignores | `/test/integration/` | — |
+| ignores | `/test/integration/` | none |
 | `forceExit` | no | **yes** |
 | `testTimeout` | 30000 | 30000 |
 
 `npm test` therefore runs only the unit tests, and the broker suite is opt-in. Copy that split; a suite that silently needs Docker is a suite people stop running.
 
-`forceExit: true` is there because amqplib leaves handles behind — the comment in the config says so in as many words. Without it jest hangs after the last assertion and you spend an afternoon looking for the leak in your own code.
+`forceExit: true` is there because amqplib leaves handles behind; the comment in the config says so in as many words. Without it jest hangs after the last assertion and you spend an afternoon looking for the leak in your own code.
 
 ---
 
@@ -209,7 +209,7 @@ export class RecordingService extends MessageService {
 }
 ```
 
-Then delete the queues in `afterAll`, with a plain amqplib connection — protobus has no delete API, and this is what the repo does:
+Then delete the queues in `afterAll`, with a plain amqplib connection. Protobus has no delete API, and this is what the repo does:
 
 <!-- doc-check: compile id=cleanup-queues -->
 ```typescript
@@ -232,7 +232,7 @@ export async function cleanupQueues(names: string[]): Promise<void> {
 ```
 
 > [!IMPORTANT]
-> **How many queues to delete depends on `maxRetries`.** With `retry: { maxRetries: 0 }` the listener returns before declaring the retry and DLQ queues at all ([`lib/message_listener.ts:98`](../../lib/message_listener.ts)), so there are two: `<Service>` and `<Service>.Events`. With retries enabled there are four — add `<Service>.Retry` and `<Service>.DLQ`. Setting `maxRetries: 0` in tests that are not *about* retries is worth doing for that reason alone, and because it removes multi-second delays from every failure assertion.
+> **How many queues to delete depends on `maxRetries`.** With `retry: { maxRetries: 0 }` the listener returns before declaring the retry and DLQ queues at all ([`lib/message_listener.ts:98`](../../lib/message_listener.ts)), so there are two: `<Service>` and `<Service>.Events`. With retries enabled there are four: add `<Service>.Retry` and `<Service>.DLQ`. Setting `maxRetries: 0` in tests that are not *about* retries is worth doing for that reason alone, and because it removes multi-second delays from every failure assertion.
 
 The callback queue needs no cleanup: it is exclusive and auto-delete, and disappears with the client process.
 
@@ -269,16 +269,16 @@ it('publishes OrderCreated when an order is created', async () => {
 
 Two things to get right:
 
-- **Subscribe before you publish.** The events queue is durable and not auto-delete, so a message published first is not lost — but the binding is only added by `subscribeEvent`, and a message published before the binding exists routes nowhere. Await the subscription, then act.
+- **Subscribe before you publish.** The events queue is durable and not auto-delete, so a message published first is not lost, but the binding is only added by `subscribeEvent`, and a message published before the binding exists routes nowhere. Await the subscription, then act.
 - **Give it a deadline.** `await expect(received).resolves…` under jest's `testTimeout` fails after 30 s with "exceeded timeout", which does not say which side broke. `Promise.race` against a 2-second rejection produces a far better failure message.
 
-Wildcard topics work the same way — `subscribeEvent(type, handler, 'CUSTOM.*.TOPIC')` — and the matching rules are the trie's, documented and pinned in [`test/unit/trie_documented_examples.test.ts`](../../test/unit/trie_documented_examples.test.ts). `*` is exactly one word; `#` is zero or more. That test exists because a doc page once claimed `ORDERS.*.CREATED` matched `ORDERS.US.123.CREATED`. It does not.
+Wildcard topics work the same way (`subscribeEvent(type, handler, 'CUSTOM.*.TOPIC')`), and the matching rules are the trie's, documented and pinned in [`test/unit/trie_documented_examples.test.ts`](../../test/unit/trie_documented_examples.test.ts). `*` is exactly one word; `#` is zero or more. That test exists because a doc page once claimed `ORDERS.*.CREATED` matched `ORDERS.US.123.CREATED`. It does not.
 
 ---
 
 ## Asserting on failures
 
-The assertion that matters is not "it rejected" — it is **how many times the handler ran**. That is the only way to see the retry classification, and it is invisible from the caller's side.
+The assertion that matters is not "it rejected"; it is **how many times the handler ran**. That is the only way to see the retry classification, and it is invisible from the caller's side.
 
 <!-- doc-check: ignore why="a jest test; describe/it/expect are not available in the snippet sandbox" -->
 ```typescript
@@ -303,9 +303,9 @@ The `setTimeout` is load-bearing. Without it the test passes even if the message
 Both numbers are asserted in [`test/integration/retry.test.ts`](../../test/integration/retry.test.ts): the handled case at line 115, the exhausted case at line 151 with its "initial + 3 retries" comment.
 
 > [!CAUTION]
-> A test that throws a plain `Error` needs a per-test budget above jest's 30-second default *and* above the ladder. The repo's own suite gives one such case `90000` and the comment explains why: at the default 5-second delay the ladder is ~15 s, prefetch is 1, and a single message queued ahead of it pushes the total past 30. If your failure test is flaky on a loaded machine, this is why — set `retry: { maxRetries: 0 }` unless retrying is the thing under test.
+> A test that throws a plain `Error` needs a per-test budget above jest's 30-second default *and* above the ladder. The repo's own suite gives one such case `90000` and the comment explains why: at the default 5-second delay the ladder is ~15 s, prefetch is 1, and a single message queued ahead of it pushes the total past 30. If your failure test is flaky on a loaded machine, this is why. Set `retry: { maxRetries: 0 }` unless retrying is the thing under test.
 
-Errors the caller raises locally — `RpcTimeoutError`, the publish failures, `NotReadyError` — never reach a handler at all and are matched on `code`. See [Errors](../reference/errors.md#which-error-am-i-looking-at) for the full table.
+Errors the caller raises locally (`RpcTimeoutError`, the publish failures, `NotReadyError`) never reach a handler at all and are matched on `code`. See [Errors](../reference/errors.md#which-error-am-i-looking-at) for the full table.
 
 ---
 
@@ -325,22 +325,22 @@ bash scripts/run-combat-sample.sh
 PASS: combat game completed with exactly one winner
 ```
 
-The shot count varies per run; the other two do not, because the final results block prints one line per player and six players minus one winner is five eliminated. The assertions are three: a non-zero exit fails, `(WINNER!)` must appear exactly once, and at least one `shoots at` must appear — that last one because a run that fires no shots exits cleanly and proves nothing. The header comment states the case for it plainly: this is the only exercise of the framework as a consumer sees it, so a broken decorator, an event that never routes, or a hang on disconnect shows up here as "no winner" or "several winners" when unit and integration tests miss it entirely.
+The shot count varies per run; the other two do not, because the final results block prints one line per player and six players minus one winner is five eliminated. The assertions are three: a non-zero exit fails, `(WINNER!)` must appear exactly once, and at least one `shoots at` must appear. That last one is there because a run that fires no shots exits cleanly and proves nothing. The header comment states the case for it plainly: this is the only exercise of the framework as a consumer sees it, so a broken decorator, an event that never routes, or a hang on disconnect shows up here as "no winner" or "several winners" when unit and integration tests miss it entirely.
 
 Two mechanics in that script are worth copying if you write your own:
 
 - it symlinks the repo's `node_modules` into the scratch build directory, because the compiled output requires `amqplib` and `protobufjs` by bare specifier and Node resolves those by walking up from the file;
-- it copies `player.proto` next to the compiled entry point, because the sample loads protos from `__dirname` and `tsc` copies no assets. **A protobuf schema is an asset your build does not move for you** — the single most common reason a service that works under ts-jest fails from `dist/`.
+- it copies `player.proto` next to the compiled entry point, because the sample loads protos from `__dirname` and `tsc` copies no assets. **A protobuf schema is an asset your build does not move for you**: the single most common reason a service that works under ts-jest fails from `dist/`.
 
 ### `sample/combatGame` is the worked example
 
-Six player services, each a `MessageService` with its own strategy, all in one process: RPC between players (`shoot`), pub/sub for the six event types they each subscribe to, and a disconnect at the end. It is the most complete example in the repo, and the only one that exercises RPC, events and shutdown together — read it before writing your own end-to-end test rather than after.
+Six player services, each a `MessageService` with its own strategy, all in one process: RPC between players (`shoot`), pub/sub for the six event types they each subscribe to, and a disconnect at the end. It is the most complete example in the repo, and the only one that exercises RPC, events and shutdown together. Read it before writing your own end-to-end test rather than after.
 
 | | |
 |---|---|
 | Entry point | [`sample/combatGame/GameRunner.ts`](../../sample/combatGame/GameRunner.ts) |
 | Schema | [`sample/combatGame/player.proto`](../../sample/combatGame/player.proto) |
-| Services | [`sample/combatGame/players/`](../../sample/combatGame/players) — six strategies over one `BasePlayer` |
+| Services | [`sample/combatGame/players/`](../../sample/combatGame/players): six strategies over one `BasePlayer` |
 | Run it | `bash scripts/run-combat-sample.sh` |
 
 `GameRunner` also shows the one non-obvious thing about co-locating services in a test: it calls `context.connection.setMaxListeners(50)` before creating the players, because six services each subscribing to six event types put far more than Node's default ten listeners on the shared connection, and the warning that follows looks like a leak.
@@ -368,7 +368,7 @@ The directive is an HTML comment on the line above the fence, so it does not ren
 <!-- doc-check: compile -->
 ```
 
-It exists because a review executed every runnable example in this documentation set and found nine that did not do what they said — **three of which ran cleanly and produced the wrong result**. Reading cannot catch those. The idea transfers to any repository whose docs contain code, and it is perhaps a hundred lines of work.
+It exists because a review executed every runnable example in this documentation set and found nine that did not do what they said, **three of which ran cleanly and produced the wrong result**. Reading cannot catch those. The idea transfers to any repository whose docs contain code, and it is perhaps a hundred lines of work.
 
 ---
 

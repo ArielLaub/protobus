@@ -6,11 +6,11 @@
 
 | | |
 |---|---|
-| **Prerequisites** | [MessageService](./message-service.md) — everything there applies here |
+| **Prerequisites** | [MessageService](./message-service.md): everything there applies here |
 | **Next** | [ServiceProxy](./service-proxy.md) · [Patterns](../../guide/patterns.md) · [Configuration](../configuration.md) |
 | **Source** | [`lib/runnable_service.ts`](../../../lib/runnable_service.ts) · [`lib/message_service.ts`](../../../lib/message_service.ts) · [`lib/connection.ts`](../../../lib/connection.ts) |
 
-**On this page** — [What it adds](#what-it-adds) · [ProtoFileName](#protofilename) · [cleanup](#cleanup) · [start](#runnableservicestartcontext-serviceclass-options-postinit) · [The shutdown sequence](#the-shutdown-sequence) · [Exit codes](#exit-codes) · [When to use which](#when-to-use-which)
+**On this page**: [What it adds](#what-it-adds) · [ProtoFileName](#protofilename) · [cleanup](#cleanup) · [start](#runnableservicestartcontext-serviceclass-options-postinit) · [The shutdown sequence](#the-shutdown-sequence) · [Exit codes](#exit-codes) · [When to use which](#when-to-use-which)
 
 ---
 
@@ -25,7 +25,7 @@
 | `RunnableService.start()` | static | construct, `init()`, install signal handlers, return the instance |
 | the shutdown sequence | behaviour | stop consuming, drain, clean up, disconnect, exit |
 
-Everything else — `init()`, `publishEvent`, `subscribeEvent`, `stopConsuming()`, the handler contract, the retry ladder — is inherited unchanged from [`MessageService`](./message-service.md).
+Everything else (`init()`, `publishEvent`, `subscribeEvent`, `stopConsuming()`, the handler contract, the retry ladder) is inherited unchanged from [`MessageService`](./message-service.md).
 
 <!-- doc-check: compile id=rs-service -->
 ```typescript
@@ -54,7 +54,7 @@ public get ProtoFileName(): string {
 }
 ```
 
-The rule is the **first** dot-separated segment — the package — plus `.proto`. It is not "the service name with the last segment replaced", which is what the derivation looks like on a two-segment name and is not what it does on any other.
+The rule is the **first** dot-separated segment (the package) plus `.proto`. It is not "the service name with the last segment replaced", which is what the derivation looks like on a two-segment name and is not what it does on any other.
 
 | `ServiceName` | `ProtoFileName` |
 |---|---|
@@ -64,7 +64,7 @@ The rule is the **first** dot-separated segment — the package — plus `.proto
 | `Orders` | `Orders.proto` |
 
 > [!WARNING]
-> The result is a **bare relative filename**, resolved against the process working directory. `Calculator.proto` means `./Calculator.proto` as seen by whoever started the process — not a path relative to the source file. A service that runs from the repo root and fails from `dist/` is hitting this, and the error is only `MissingProto: missing_proto_source`.
+> The result is a **bare relative filename**, resolved against the process working directory. `Calculator.proto` means `./Calculator.proto` as seen by whoever started the process, not a path relative to the source file. A service that runs from the repo root and fails from `dist/` is hitting this, and the error is only `MissingProto: missing_proto_source`.
 
 Two ways out. Either pass the proto directory to [`Context.init()`](./context.md#initamqpurl-protolocations-options), which loads the schema before the service's own `Proto` getter is ever consulted:
 
@@ -150,7 +150,7 @@ static async start<T extends RunnableService>(
 |---|---|
 | `context` | an **already initialised** context. `start()` does not call `context.init()`. |
 | `ServiceClass` | the class itself, not an instance. Must extend `RunnableService`. |
-| `options` | `IMessageServiceOptions`, forwarded to the constructor — see [Constructor options](./message-service.md#constructor-options) |
+| `options` | `IMessageServiceOptions`, forwarded to the constructor; see [Constructor options](./message-service.md#constructor-options) |
 | `postInit` | runs after `init()` and before the "Service ready" log. A throw here takes the startup-failure path. |
 
 Returns the constructed service.
@@ -186,7 +186,7 @@ main().catch((error) => {
 ```
 
 > [!IMPORTANT]
-> **`start()` only accepts a class extending `RunnableService`.** Passing a plain `MessageService` subclass is a compile error — `Property 'cleanup' is missing in type 'X' but required in type 'RunnableService'` — because the type parameter is `T extends RunnableService`. If you want the lifecycle, change the base class; there is no overload that takes a `MessageService`.
+> **`start()` only accepts a class extending `RunnableService`.** Passing a plain `MessageService` subclass is a compile error (`Property 'cleanup' is missing in type 'X' but required in type 'RunnableService'`), because the type parameter is `T extends RunnableService`. If you want the lifecycle, change the base class; there is no overload that takes a `MessageService`.
 
 > [!TIP]
 > `postInit` is where event subscriptions belong. `subscribeEvent` needs the channel and queue that `init()` creates, so it cannot run any earlier, and `postInit` is the first callback after `init()` resolves.
@@ -215,12 +215,12 @@ flowchart TD
 The order is load-bearing at every step:
 
 - **Stop before drain.** `cleanup()` running while consumers still deliver means a request can arrive after your resources are closed.
-- **Drain before cleanup.** The drain waits for the reply, retry or DLQ publish that *settles* each in-flight message, not merely for the handler to return.
+- **Drain before cleanup.** The drain waits for the reply, retry or DLQ publish that *settles* each in-flight message, not only for the handler to return.
 - **The drain is bounded.** If the budget expires, the remaining deliveries stay unacknowledged and RabbitMQ redelivers them to another replica. The log says so explicitly: `Drain deadline reached with N still running; they stay unacknowledged and will be redelivered`.
 - **`process.exit()` is not called on the happy path.** `process.exitCode` is set and the loop is allowed to drain, so pending stdout writes are not truncated. The forced exit is a backstop with an `unref`'d timer, so it never keeps an otherwise-finished process alive.
 
 > [!NOTE]
-> Earlier versions of this page described the sequence as "cleanup, then `context.shutdown()`, then exit 0". There is no `context.shutdown()` — the connection is closed with `context.connection.disconnect()` — cleanup is third rather than first, and the exit code is not always 0.
+> Earlier versions of this page described the sequence as "cleanup, then `context.shutdown()`, then exit 0". There is no `context.shutdown()` (the connection is closed with `context.connection.disconnect()`), cleanup is third rather than first, and the exit code is not always 0.
 
 ---
 
@@ -232,7 +232,7 @@ The order is load-bearing at every step:
 | `new ServiceClass(...)`, `init()` or `postInit` threw | `1` |
 
 > [!IMPORTANT]
-> The non-zero exit on a failed startup is the point. Exiting 0 tells Kubernetes and systemd the process succeeded, so a service that could not start is never restarted and never alerts. On that path `start()` also removes its signal handlers, runs the full shutdown with code 1, and rethrows — so your own `main().catch(...)` still sees the original error.
+> The non-zero exit on a failed startup is the point. Exiting 0 tells Kubernetes and systemd the process succeeded, so a service that could not start is never restarted and never alerts. On that path `start()` also removes its signal handlers, runs the full shutdown with code 1, and rethrows, so your own `main().catch(...)` still sees the original error.
 
 ---
 
@@ -247,14 +247,14 @@ The order is load-bearing at every step:
 | Bootstrap helper | none | `start()` |
 | Exit code on boot failure | yours to set | `1` |
 
-Use `RunnableService` for anything that owns its process — which is most services. Use `MessageService` when something else owns the lifecycle: a test harness, a DI container, or a process running several services where you want one shutdown path rather than one per service.
+Use `RunnableService` for anything that owns its process, which is most services. Use `MessageService` when something else owns the lifecycle: a test harness, a DI container, or a process running several services where you want one shutdown path rather than one per service.
 
 <details>
 <summary><b>Running a RunnableService without <code>start()</code></b></summary>
 
 <br/>
 
-Nothing forces you through `start()`. Constructing and calling `init()` yourself gives you the convention-based `ProtoFileName` and the `cleanup()` hook without the signal handling — you then own the ordering described above.
+Nothing forces you through `start()`. Constructing and calling `init()` yourself gives you the convention-based `ProtoFileName` and the `cleanup()` hook without the signal handling; you then own the ordering described above.
 
 <!-- doc-check: compile needs=rs-service -->
 ```typescript
@@ -272,7 +272,7 @@ async function run(context: IContext) {
 }
 ```
 
-`cleanup()` is `protected`, so an external shutdown path cannot call it — put the teardown in your own method, or go through `start()`.
+`cleanup()` is `protected`, so an external shutdown path cannot call it; put the teardown in your own method, or go through `start()`.
 
 </details>
 

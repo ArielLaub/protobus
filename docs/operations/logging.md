@@ -7,10 +7,10 @@
 | | |
 |---|---|
 | **Prerequisites** | [Getting Started](../guide/getting-started.md) |
-| **Next** | [Security](./security.md) — what a log line must never carry · [Troubleshooting](./troubleshooting.md) |
+| **Next** | [Security](./security.md) (what a log line must never carry) · [Troubleshooting](./troubleshooting.md) |
 | **Source** | [`lib/logger.ts`](../../lib/logger.ts) |
 
-**On this page** — [Levels](#levels-first) · [Your own sink](#install-your-own-sink) · [Structured records](#structured-records) · [What a record never carries](#what-a-record-never-carries) · [Payload diagnostics](#opt-in-payload-diagnostics) · [Your own records](#emitting-your-own-records) · [Testing](#silencing-it-in-tests)
+**On this page:** [Levels](#levels-first) · [Your own sink](#install-your-own-sink) · [Structured records](#structured-records) · [What a record never carries](#what-a-record-never-carries) · [Payload diagnostics](#opt-in-payload-diagnostics) · [Your own records](#emitting-your-own-records) · [Testing](#silencing-it-in-tests)
 
 ---
 
@@ -220,7 +220,7 @@ unless you install a serializer.
 
 Call sites can offer payload material lazily. It is assembled only once you have
 installed a serializer, and what survives into the record is entirely your
-decision — **the framework applies no redaction to the value you return.**
+decision: **the framework applies no redaction to the value you return.**
 
 <!-- doc-check: compile -->
 ```typescript
@@ -257,7 +257,7 @@ line is still emitted without diagnostics.
 
 > [!CAUTION]
 > This hook is the point at which payloads can leave the process. Whatever you
-> return is passed to your sink as-is — redact it there.
+> return is passed to your sink as-is, so redact it there.
 
 ---
 

@@ -10,7 +10,7 @@
 | **Next** | [Known Issues](./known-issues.md) · [Configuration](../reference/configuration.md) |
 | **Source** | [`lib/connection.ts`](../../lib/connection.ts) · [`lib/message_service.ts`](../../lib/message_service.ts) · [`lib/logger.ts`](../../lib/logger.ts) |
 
-**On this page** — [Find your error](#find-your-error) · [Starting up](#starting-up) · [Connection](#connection) · [Schema](#schema) · [RPC](#rpc) · [Events](#events) · [Performance](#performance) · [Turn on debug logging](#turn-on-debug-logging) · [Look at the broker](#look-at-the-broker)
+**On this page:** [Find your error](#find-your-error) · [Starting up](#starting-up) · [Connection](#connection) · [Schema](#schema) · [RPC](#rpc) · [Events](#events) · [Performance](#performance) · [Turn on debug logging](#turn-on-debug-logging) · [Look at the broker](#look-at-the-broker)
 
 ---
 
@@ -56,7 +56,7 @@ npm install --save-dev typescript tsx
 npx tsx src/server.ts
 ```
 
-This repository does not use ts-node either —
+This repository does not use ts-node either:
 [`scripts/run-combat-sample.sh`](../../scripts/run-combat-sample.sh) compiles with
 plain `tsc`. Older versions of the Getting Started guide recommended `npx
 ts-node`; they were wrong.
@@ -176,8 +176,8 @@ schema was parsed, or the schema does not declare `syntax = "proto3";`. Both are
 required; the second one is easy to miss because the error names the type rather
 than the missing line.
 
-**Fix.** Register the type on the factory **before** `context.init()` — `init()`
-parses your protos — and give the schema a syntax line:
+**Fix.** Register the type on the factory **before** `context.init()` (`init()`
+parses your protos) and give the schema a syntax line:
 
 <!-- doc-check: proto -->
 ```protobuf
@@ -211,7 +211,7 @@ rabbitmqctl status               # or, if it is installed natively
 curl -u guest:guest localhost:15672/api/overview   # management API answering
 ```
 
-The default port is 5672 (15672 is the management UI, not the AMQP port — a
+The default port is 5672 (15672 is the management UI, not the AMQP port, a
 surprisingly common mix-up). If the broker is on another host, check the firewall
 allows 5672.
 
@@ -269,7 +269,7 @@ main().catch((error) => { console.error(error); process.exit(1); });
 
 If reconnection never succeeds, the cause is almost always outside protobus:
 the broker is gone, the credentials were rotated, or a network policy changed.
-Raise `AMQP_HEARTBEAT_SECONDS` handling only after ruling those out — see
+Raise `AMQP_HEARTBEAT_SECONDS` handling only after ruling those out; see
 [Configuration](../reference/configuration.md#heartbeats).
 
 ---
@@ -364,7 +364,7 @@ If your caller gives up, raise `RPC_CALL_TIMEOUT_MS` (or pass `timeoutMs` on the
 call). If your handler is being cut off mid-work, raise
 `MESSAGE_PROCESSING_TIMEOUT` on the service.
 
-**Before raising either**, check that the callee is not simply failing and
+**Before raising either**, check that the callee is not failing and
 retrying: a request that keeps throwing climbs the retry ladder without publishing
 a reply, so the caller sees a long silence rather than an error. See
 [Delivery Guarantees](../concepts/delivery-guarantees.md).
@@ -387,7 +387,7 @@ await proxy.init();          // this is what installs the methods
 ```
 
 If `init()` did run, the method name does not match the `rpc` name in the
-`.proto` exactly — including case.
+`.proto` exactly, including case.
 
 > [!NOTE]
 > TypeScript will not catch either mistake: `ServiceProxy` has no index
@@ -415,7 +415,7 @@ If `init()` did run, the method name does not match the `rpc` name in the
    | `ORDERS.*.SHIPPED` | yes |
    | `ORDERS.#` | yes |
    | `ORDERS.EU.*` | no |
-   | `ORDERS.*` | no — `*` is one segment, and there are two after `ORDERS` |
+   | `ORDERS.*` | no: `*` is one segment, and there are two after `ORDERS` |
 
    The last row catches people. See [Events](../guide/events.md).
 
@@ -428,7 +428,10 @@ If `init()` did run, the method name does not match the `rpc` name in the
 ### The same event is handled twice
 
 **Causes.** Subscribing more than once (subscribe in `init()`, once), or a
-handler that throws — a failed event delivery is redelivered.
+handler that throws while the service has
+[`eventRetry`](../guide/events.md#turning-retry-on) on: the failed event is
+redelivered from the retry queue, after attempts that may have partly run.
+Without `eventRetry` a failed event is discarded, not redelivered.
 
 Delivery is **at-least-once**, so a handler that must not run twice has to be
 idempotent. Key on something stable in the event, not on arrival order:
@@ -468,7 +471,7 @@ const service = new MyService(context, { maxConcurrent: 10 });
 ### Slow processing
 
 Scale by running **more processes**, not by packing more services into one. Node
-is single-threaded, so co-locating services buys no parallelism — it only couples
+is single-threaded, so co-locating services buys no parallelism; it only couples
 their failure domains and their deploys. Each replica competes for the same
 durable queue, which is the whole design; see
 [Architecture](../concepts/architecture.md).
@@ -489,7 +492,7 @@ while others wait on I/O.
 
 **Installing a logger is not enough.** Debug is off by default, and `Logger.debug`
 is filtered against the level *before* it reaches your sink
-([`lib/logger.ts`](../../lib/logger.ts)) — so a custom logger with a `debug`
+([`lib/logger.ts`](../../lib/logger.ts)), so a custom logger with a `debug`
 method receives nothing and you conclude protobus emits no debug output.
 
 You need **both** a sink and a level:
@@ -518,7 +521,7 @@ LOG_LEVEL=debug node dist/server.js
 `LOG_LEVEL` accepts `debug`, `info` (the default), `warn`, `error` and `silent`.
 
 > [!CAUTION]
-> Debug logging can include message payloads. That is why it is off by default —
+> Debug logging can include message payloads. That is why it is off by default:
 > `console.debug` writes to stdout, which whatever aggregates your logs will
 > collect. Turn it on deliberately, and see
 > [Security](./security.md) before doing it in production.
@@ -539,7 +542,7 @@ questions faster than any log line. From the command line:
 # Which queues exist, how deep, and how many consumers
 rabbitmqctl list_queues name messages consumers
 
-# Just this service — should show 4: the queue, .Events, .Retry, .DLQ
+# Just this service (should show 4: the queue, .Events, .Retry, .DLQ)
 rabbitmqctl list_queues name messages | grep '^MyPackage.MyService'
 
 # The exchanges protobus declares
@@ -557,7 +560,7 @@ rabbitmqctl purge_queue MyPackage.MyService.Events
 
 </details>
 
-A message in `<Service>.DLQ` carries headers saying why it got there —
+A message in `<Service>.DLQ` carries headers saying why it got there:
 `x-retry-count`, `x-last-error`, `x-first-failure-time` and others. They are the
 fastest way to diagnose a failing handler in production; see
 [Delivery Guarantees](../concepts/delivery-guarantees.md).

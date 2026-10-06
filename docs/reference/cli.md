@@ -10,13 +10,13 @@
 | **Next** | [Configuration](./configuration.md) · [API reference](./api) |
 | **Source** | [`lib/cli/`](../../lib/cli) |
 
-**On this page** — [Install](#install) · [`generate`](#protobus-generate) · [`generate:service`](#protobus-generateservice-name) · [`init`](#protobus-init) · [Configuration](#configuration) · [Workflow](#workflow) · [Tips](#tips)
+**On this page:** [Install](#install) · [`generate`](#protobus-generate) · [`generate:service`](#protobus-generateservice-name) · [`init`](#protobus-init) · [Configuration](#configuration) · [Workflow](#workflow) · [Tips](#tips)
 
 ---
 
 ## Install
 
-The CLI ships with protobus — there is nothing extra to install to run it. Type
+The CLI ships with protobus; there is nothing extra to install to run it. Type
 generation additionally needs `protobufjs-cli` as a dev dependency:
 
 ```bash
@@ -153,7 +153,7 @@ export namespace Calculator {
 </details>
 
 > [!NOTE]
-> Earlier versions of this page showed a simplified shape —
+> Earlier versions of this page showed a simplified shape:
 > `export interface IAddRequest { a?: number; b?: number; }` and
 > `add(request: ...): Promise<...>` on the service interface. That is not what the
 > generator emits. The real output carries more: a per-method type with `name`,
@@ -168,8 +168,8 @@ The pieces worth knowing:
 | `Calculator.<Service>ServiceName` | each service's bus name (`Calculator.MathServiceName === 'Calculator.Math'`; plain `ServiceName` for a service called `Service`): the string to pass to `ServiceProxy` and to return from `ServiceName`. Use it rather than a literal |
 | `Calculator.ServiceName`, `Calculator.Service` | when a package declares exactly one service: its bus name, and its interface under the established name |
 | `Calculator.<Service>` | the service's interface, as a caller's `ServiceProxy` sees it: each method is the call signature plus its metadata, so it types a proxy, not a server class |
-| `Calculator.IAddRequest` / `IAddResponse` | the request and response shapes — every field optional, because proto3 has no required fields |
-| `Calculator.Service.add` | per-method metadata as literal types (`path`, `requestType`, `responseType`), and the call signature — `(request, actor?, rpc?, timeoutMs?, options?)` for a unary method, `(request, actor?, idleTimeoutMs?, options?)` returning `AsyncIterable` for a server-streaming one |
+| `Calculator.IAddRequest` / `IAddResponse` | the request and response shapes, with every field optional, because proto3 has no required fields |
+| `Calculator.Service.add` | per-method metadata as literal types (`path`, `requestType`, `responseType`), and the call signature: `(request, actor?, rpc?, timeoutMs?, options?)` for a unary method, `(request, actor?, idleTimeoutMs?, options?)` returning `AsyncIterable` for a server-streaming one |
 | `Long` | the alias every 64-bit scalar (`int64`, `uint64`, `sint64`, `fixed64`, `sfixed64`) resolves to. Encoding accepts a number or a decimal string; decoding always yields a decimal string, because the range of these types exceeds what a JavaScript number holds exactly |
 
 ### `protobus generate:service <Name>`
@@ -315,7 +315,7 @@ The typical development workflow with the CLI:
    npx tsx services/calculator/CalculatorService.ts
    ```
 
-   Not `ts-node` — see [Troubleshooting](../operations/troubleshooting.md#ts-node-does-not-work).
+   Not `ts-node`; see [Troubleshooting](../operations/troubleshooting.md#ts-node-does-not-work).
 
 ## Tips
 
@@ -324,7 +324,7 @@ The typical development workflow with the CLI:
 - Use the `ServiceName` constant instead of hardcoding strings: `Calculator.ServiceName` instead of `'Calculator.Service'`
 
 > [!WARNING]
-> The stub the generator writes is **CommonJS** — it ends in
+> The stub the generator writes is **CommonJS**: it ends in
 > `if (require.main === module)`. A snippet you paste into it that awaits at the
 > top level will fail to compile with `Top-level await is currently not supported
 > with the "cjs" output format`. Wrap it in an `async function main()`.

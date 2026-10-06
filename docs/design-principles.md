@@ -10,7 +10,7 @@
 | **Next** | [Architecture](./concepts/architecture.md) · [Delivery Guarantees](./concepts/delivery-guarantees.md) |
 | **Source** | [`lib/`](../lib) |
 
-**On this page** — [Messaging, not the application](#1-solve-messaging-not-the-application) · [Standards](#2-prefer-standards-over-proprietary-representations) · [RabbitMQ is not plumbing](#3-rabbitmq-is-not-replaceable-plumbing) · [A Promise means something](#4-a-resolved-promise-must-have-a-defined-meaning) · [Failure paths](#5-make-failure-paths-first-class) · [Small](#6-stay-small-enough-to-understand) · [Cross-language](#7-cross-language-compatibility-constrains-the-design) · [Schema is truth](#8-the-schema-is-the-source-of-truth) · [Idempotency](#9-at-least-once-means-idempotency-matters) · [Composition](#10-boring-composition-is-a-feature)
+**On this page:** [Messaging, not the application](#1-solve-messaging-not-the-application) · [Standards](#2-prefer-standards-over-proprietary-representations) · [RabbitMQ is not plumbing](#3-rabbitmq-is-not-replaceable-plumbing) · [A Promise means something](#4-a-resolved-promise-must-have-a-defined-meaning) · [Failure paths](#5-design-failure-paths-deliberately) · [Small](#6-stay-small-enough-to-understand) · [Cross-language](#7-cross-language-compatibility-constrains-the-design) · [Schema is truth](#8-the-schema-is-the-source-of-truth) · [Idempotency](#9-at-least-once-means-idempotency-matters) · [Composition](#10-boring-composition-is-a-feature)
 
 ---
 
@@ -77,7 +77,7 @@ uncertainty into a convenient boolean. [Delivery Guarantees](./concepts/delivery
 is where those meanings are written down, and [Errors](./reference/errors.md)
 is where definite failures and ambiguous outcomes get distinct types.
 
-## 5. Make failure paths first-class
+## 5. Design failure paths deliberately
 
 Reconnect, shutdown, broker backpressure, unroutable messages, duplicate delivery,
 timeouts and partial failure are normal distributed-system states, not edge-case
@@ -116,7 +116,7 @@ ProtoBus should provide stable message identity and precise delivery semantics,
 but it should not claim magical exactly-once execution.
 
 Applications with side effects should be able to build idempotency on top of the
-identity and settlement guarantees ProtoBus exposes — a caller-supplied
+identity and settlement guarantees ProtoBus exposes. A caller-supplied
 `messageId` survives every redelivery and every retry hop for exactly that reason.
 
 ## 10. Boring composition is a feature

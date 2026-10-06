@@ -8,14 +8,14 @@
 |---|---|
 | **Prerequisites** | [Getting Started](./getting-started.md) · [Error Handling](./error-handling.md) |
 | **Next** | [Testing](./testing.md) · [Configuration](../reference/configuration.md) |
-| **Source** | [`sample/combatGame`](../../sample/combatGame) — six services doing most of this at once |
+| **Source** | [`sample/combatGame`](../../sample/combatGame) (six services doing most of this at once) |
 
-**On this page** — [Concurrency](#concurrency-control) · [Retries](#retry-configuration) · [Events](#event-driven-patterns) · [Service to service](#service-to-service-calls) · [Shutdown](#graceful-shutdown-with-cleanup) · [Scaling out](#load-balancing-multiple-instances) · [Configuration](#environment-based-configuration) · [Docker](#docker-deployment) · [Resilience](#resilience-patterns)
+**On this page:** [Concurrency](#concurrency-control) · [Retries](#retry-configuration) · [Events](#event-driven-patterns) · [Service to service](#service-to-service-calls) · [Shutdown](#graceful-shutdown-with-cleanup) · [Scaling out](#load-balancing-multiple-instances) · [Configuration](#environment-based-configuration) · [Docker](#docker-deployment) · [Resilience](#resilience-patterns)
 
 > [!NOTE]
 > Most snippets below are written against **CLI-generated types**
 > (`Orders.ServiceName`, `Orders.ICreateOrderRequest`), which is how a real
-> project looks. They are marked as not machine-checked for that reason — the
+> project looks. They are marked as not machine-checked for that reason: the
 > types come from your schema, not from this repository. The
 > [Getting Started](./getting-started.md) examples are executed by CI and are the
 > place to copy runnable code from.
@@ -376,8 +376,8 @@ would around any remote call.
 
 ### Retry a call from the caller's side
 
-Protobus retries on the **server**. A caller that wants its own attempts — for a
-timeout, or a service that was briefly not running — needs its own loop, and must
+Protobus retries on the **server**. A caller that wants its own attempts (for a
+timeout, or a service that was briefly not running) needs its own loop, and must
 not retry a terminal failure:
 
 <!-- doc-check: compile -->
@@ -448,7 +448,7 @@ export class CircuitBreaker {
 ### Graceful degradation
 
 When a dependency is optional, answer without it rather than failing the whole
-request — but say so in the response, so the caller can tell a real answer from a
+request, but say so in the response, so the caller can tell a real answer from a
 degraded one:
 
 <!-- doc-check: compile -->

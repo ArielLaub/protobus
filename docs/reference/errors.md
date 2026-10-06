@@ -6,40 +6,40 @@
 
 | | |
 |---|---|
-| **Prerequisites** | [Error Handling](../guide/error-handling.md) — the retriable/terminal split |
+| **Prerequisites** | [Error Handling](../guide/error-handling.md): the retriable/terminal split |
 | **Next** | [Custom Types](./custom-types.md) · [Configuration](./configuration.md) |
 | **Source** | [`lib/errors.ts`](../../lib/errors.ts) · [`lib/connection.ts`](../../lib/connection.ts) · [`lib/message_dispatcher.ts`](../../lib/message_dispatcher.ts) · [`lib/message_listener.ts`](../../lib/message_listener.ts) · [`lib/priority.ts`](../../lib/priority.ts) |
 
-**On this page** — [Which error am I looking at](#which-error-am-i-looking-at) · [Where each one comes from](#where-each-one-comes-from) · [Service-side errors](#service-side-errors) · [Caller-side errors](#caller-side-errors) · [Publish errors](#publish-errors) · [Streaming errors](#streaming-errors) · [Startup errors](#startup-errors) · [Writing your own terminal errors](#writing-your-own-terminal-errors) · [What crosses the wire](#what-crosses-the-wire)
+**On this page:** [Which error am I looking at](#which-error-am-i-looking-at) · [Where each one comes from](#where-each-one-comes-from) · [Service-side errors](#service-side-errors) · [Caller-side errors](#caller-side-errors) · [Publish errors](#publish-errors) · [Streaming errors](#streaming-errors) · [Startup errors](#startup-errors) · [Writing your own terminal errors](#writing-your-own-terminal-errors) · [What crosses the wire](#what-crosses-the-wire)
 
 ---
 
 ## Which error am I looking at
 
-Every row is verified against the class in [`lib/errors.ts`](../../lib/errors.ts) or the module named in the third column. **`code`** is the `code` property on the instance, which is also what travels to the caller in the response envelope; a dash means the class does not set one.
+Every row is verified against the class in [`lib/errors.ts`](../../lib/errors.ts) or the module named in the third column. **`code`** is the `code` property on the instance, which is also what travels to the caller in the response envelope; "none" means the class does not set one.
 
 | Error | `code` | Thrown by | Retried? | What to do |
 |---|---|---|---|---|
-| `HandledError` | `HANDLED_ERROR` * | your handler | **never** — answered to the caller at once | nothing; this is the deliberate path |
-| `ProtocolError` | `PROTOCOL_ERROR` | `MessageService` on an undecodable or misaddressed request | **never** — a `HandledError` | fix the caller or the schema; the same bytes fail identically forever |
+| `HandledError` | `HANDLED_ERROR` * | your handler | **never**, answered to the caller at once | nothing; this is the deliberate path |
+| `ProtocolError` | `PROTOCOL_ERROR` | `MessageService` on an undecodable or misaddressed request | **never**, it is a `HandledError` | fix the caller or the schema; the same bytes fail identically forever |
 | `InternalServiceError` | `INTERNAL_ERROR` | the error boundary, replacing an unhandled throw | the *original* error was retried to exhaustion first | join the `correlationId` in the message to the service's own log |
 | `RpcTimeoutError` | `RPC_TIMEOUT` | `MessageDispatcher`, in the **caller** | no | nothing consumed the request, or the handler is slower than the budget |
-| `DisconnectedError` | — | `MessageDispatcher`, when the socket drops mid-call | no | the outcome is unknown; reissue only if the call is idempotent |
-| `NotReadyError` | `NOT_READY` | `Connection.whenReady()` | no | nothing was published — safe to retry |
-| `ReconnectionError` | — | `Connection`, on giving up or being torn down mid-restore | no | the connection is finished; build a new one or exit |
-| `PublishNackedError` | `PUBLISH_NACKED` | `Connection`, on `basic.nack` | no | definite failure, nothing stored — **safe to republish** |
+| `DisconnectedError` | none | `MessageDispatcher`, when the socket drops mid-call | no | the outcome is unknown; reissue only if the call is idempotent |
+| `NotReadyError` | `NOT_READY` | `Connection.whenReady()` | no | nothing was published, so it is safe to retry |
+| `ReconnectionError` | none | `Connection`, on giving up or being torn down mid-restore | no | the connection is finished; build a new one or exit |
+| `PublishNackedError` | `PUBLISH_NACKED` | `Connection`, on `basic.nack` | no | definite failure, nothing stored: **safe to republish** |
 | `UnroutableError` | `UNROUTABLE` | `Connection`, on a returned `mandatory` publish | no | no service is bound to that routing key |
-| `PublishConfirmTimeoutError` | `PUBLISH_CONFIRM_TIMEOUT` | `Connection`, after `publishConfirmTimeoutMs` | no | **ambiguous** — see the caution below |
-| `ChannelClosedError` | `CHANNEL_CLOSED` | `Connection`, channel closed with confirms outstanding | no | **ambiguous** — see the caution below |
-| `StreamTimeoutError` | — | the caller's stream iterator, on the idle deadline | no | the producer stalled, or nothing was ever produced |
-| `StreamBackpressureError` | — | the dispatcher, when a stream's buffer bound is exceeded | no | consume faster, or raise the bound |
-| `StreamSequenceError` | — | the dispatcher, on a gap in `x-protobus-seq` | no | a chunk was lost; the partial stream is deliberately not yielded |
-| `StreamClosedError` | — | **nothing raises it; deprecated in 2.3.0** | — | see [Streaming errors](#streaming-errors) |
-| `InvalidMessageIdError` | — | `MessageDispatcher`, on a blank `CallOptions.messageId` | no | pass a non-empty id, or none at all |
-| `CustomTypeConflictError` | — | `registerCustomType`, on a name re-registered with a different `wireType` | no | use a different name, or keep the original wire type |
-| `InvalidPriorityError` | — | `validatePriority` / `validateMaxPriority`, before any broker I/O | no | fix the integer |
-| `RetryQueueMismatchError` | — | `MessageListener` at queue declare | no | you changed `retryDelayMs` on a service that has already run |
-| `MissingProto` | — | `MessageService`, at `init()` or on the `Proto` getter | no | the `.proto` is missing or declares no matching service |
+| `PublishConfirmTimeoutError` | `PUBLISH_CONFIRM_TIMEOUT` | `Connection`, after `publishConfirmTimeoutMs` | no | **ambiguous**; see the caution below |
+| `ChannelClosedError` | `CHANNEL_CLOSED` | `Connection`, channel closed with confirms outstanding | no | **ambiguous**; see the caution below |
+| `StreamTimeoutError` | none | the caller's stream iterator, on the idle deadline | no | the producer stalled, or nothing was ever produced |
+| `StreamBackpressureError` | none | the dispatcher, when a stream's buffer bound is exceeded | no | consume faster, or raise the bound |
+| `StreamSequenceError` | none | the dispatcher, on a gap in `x-protobus-seq` | no | a chunk was lost; the partial stream is deliberately not yielded |
+| `StreamClosedError` | none | **nothing raises it; deprecated in 2.3.0** | n/a | see [Streaming errors](#streaming-errors) |
+| `InvalidMessageIdError` | none | `MessageDispatcher`, on a blank `CallOptions.messageId` | no | pass a non-empty id, or none at all |
+| `CustomTypeConflictError` | none | `registerCustomType`, on a name re-registered with a different `wireType` | no | use a different name, or keep the original wire type |
+| `InvalidPriorityError` | none | `validatePriority` / `validateMaxPriority`, before any broker I/O | no | fix the integer |
+| `RetryQueueMismatchError` | none | `MessageListener` at queue declare | no | you changed `retryDelayMs` on a service that has already run |
+| `MissingProto` | none | `MessageService`, at `init()` or on the `Proto` getter | no | the `.proto` is missing or declares no matching service |
 
 \* `HANDLED_ERROR` is the default. The second constructor argument is the code, and in practice you always pass one.
 
@@ -83,7 +83,7 @@ The dashed arrow is the only crossing: a service-side error reaches the caller a
 
 ### `HandledError`
 
-The one class most services will use. Throwing it says *retrying cannot help* — the error is encoded as the response and the delivery is settled with no retry ladder and no DLQ entry.
+The one class most services will use. Throwing it says *retrying cannot help*: the error is encoded as the response and the delivery is settled with no retry ladder and no DLQ entry.
 
 `isHandled` is a public `true` on every instance, and `isHandledError()` accepts anything carrying that flag, so an error class from another library qualifies without extending anything ([`lib/errors.ts:46`](../../lib/errors.ts)).
 
@@ -112,14 +112,14 @@ const foreign = Object.assign(new Error('rejected by the payment gateway'), {
 console.log(isHandledError(foreign));   // true
 ```
 
-Anything that is *not* handled — a plain `Error`, a `TypeError`, a driver timeout — is treated as an infrastructure failure and goes through the retry ladder described in [Architecture → When a handler fails](../concepts/architecture.md#when-a-handler-fails).
+Anything that is *not* handled (a plain `Error`, a `TypeError`, a driver timeout) is treated as an infrastructure failure and goes through the retry ladder described in [Architecture → When a handler fails](../concepts/architecture.md#when-a-handler-fails).
 
 > [!WARNING]
 > A plain `Error` keeps the caller waiting for the whole ladder. With the defaults (`maxRetries: 3`, `retryDelayMs: 5000`, both from `DEFAULT_RETRY_OPTIONS` in [`lib/message_service.ts:55`](../../lib/message_service.ts)) a permanently failing call parks its caller for roughly 15 seconds before any error is published back. The repo's own integration test carries this note and gives that one case a 90-second budget.
 
 ### `ProtocolError`
 
-A `HandledError` subclass, so it is answered rather than retried — by definition, because a malformed message is malformed on every redelivery. Every condition that produces one lives in [`lib/message_service.ts`](../../lib/message_service.ts):
+A `HandledError` subclass, so it is answered rather than retried, by definition, because a malformed message is malformed on every redelivery. Every condition that produces one lives in [`lib/message_service.ts`](../../lib/message_service.ts):
 
 | Condition | Message |
 |---|---|
@@ -128,11 +128,11 @@ A `HandledError` subclass, so it is answered rather than retried — by definiti
 | the routing key does not belong to this service, or contradicts the method in the body | raised as `InvalidMethodError`, a `ProtocolError` subclass |
 | the contract declares no such method, or the service does not implement it | same |
 
-The last two are the security checks: the body names the method, the routing key is what the broker actually matched, and a mismatch means a publisher tried to choose a handler the key did not authorise. `InvalidMethodError` is not exported from the package root either — on the wire it is simply `code: "PROTOCOL_ERROR"`.
+The last two are the security checks: the body names the method, the routing key is what the broker actually matched, and a mismatch means a publisher tried to choose a handler the key did not authorise. `InvalidMethodError` is not exported from the package root either; on the wire it is `code: "PROTOCOL_ERROR"`.
 
 ### `InternalServiceError`
 
-Not thrown by your code. `sanitizeErrorForClient()` substitutes it for an unhandled error on the way back to the caller, so a message written for the service's own operators — one that may quote a connection string or the row that failed — does not travel to another team's process.
+Not thrown by your code. `sanitizeErrorForClient()` substitutes it for an unhandled error on the way back to the caller, so a message written for the service's own operators (one that may quote a connection string or the row that failed) does not travel to another team's process.
 
 > [!IMPORTANT]
 > This substitution is **off by default**. `Config.exposeInternalErrors` reads `PROTOBUS_EXPOSE_INTERNAL_ERRORS` and defaults to `true` ([`lib/config.ts:78`](../../lib/config.ts)), which means the real message crosses unchanged. Set it to `false` on any service whose callers you do not control; the caller then gets `internal service error (correlationId …)` and the real exception stays in your log.
@@ -157,17 +157,17 @@ The message is always `Connection lost during RPC call`. The outcome is unknown:
 
 ### `NotReadyError`
 
-Distinct from a publish failure — *nothing was attempted*. A publish issued while the connection is being restored parks on `whenReady()` rather than failing, and `NotReadyError` is what ends that wait badly. Three ways ([`lib/connection.ts:311`](../../lib/connection.ts)):
+Distinct from a publish failure: *nothing was attempted*. A publish issued while the connection is being restored parks on `whenReady()` rather than failing, and `NotReadyError` is what ends that wait badly. Three ways ([`lib/connection.ts:311`](../../lib/connection.ts)):
 
 - the connection has been closed (`the connection has been closed`);
 - reconnection was abandoned after `maxRetries` attempts;
-- the wait exceeded `Config.connectionReadyTimeoutMs` — `CONNECTION_READY_TIMEOUT_MS`, **30000 ms** — because a publisher parked on an unreachable broker has to be told eventually.
+- the wait exceeded `Config.connectionReadyTimeoutMs` (`CONNECTION_READY_TIMEOUT_MS`, **30000 ms**), because a publisher parked on an unreachable broker has to be told eventually.
 
 Because nothing was published, retrying cannot duplicate.
 
 ### `ReconnectionError`
 
-Raised inside the connection machinery, on `max reconnection attempts (N) exceeded` (default `maxRetries: 10`, `0` meaning infinite) or when a generation is superseded mid-restore. When reconnection is abandoned, everything parked on readiness is rejected with a `NotReadyError` carrying the same text — so a *caller* normally sees `NotReadyError` and this class shows up in the connection's `error` event and in logs.
+Raised inside the connection machinery, on `max reconnection attempts (N) exceeded` (default `maxRetries: 10`, `0` meaning infinite) or when a generation is superseded mid-restore. When reconnection is abandoned, everything parked on readiness is rejected with a `NotReadyError` carrying the same text, so a *caller* normally sees `NotReadyError` and this class shows up in the connection's `error` event and in logs.
 
 > [!NOTE]
 > `ReconnectionError` and `DisconnectedError` do not set `this.name`, so both report `err.name === 'Error'`. Discriminate with `instanceof`, not by name.
@@ -176,19 +176,19 @@ Raised inside the connection machinery, on `max reconnection attempts (N) exceed
 
 ## Publish errors
 
-`PublishError` is the base class, and every subclass carries a **`messageId`** — stable across retries of the same logical message, and there precisely so a consumer can deduplicate after an ambiguous outcome.
+`PublishError` is the base class, and every subclass carries a **`messageId`**, stable across retries of the same logical message, and there precisely so a consumer can deduplicate after an ambiguous outcome.
 
 A resolved `publish()` means all three of: the broker sent `basic.ack`, the message was routed if `mandatory` asked for routing to be enforced, and the channel's write buffer drained ([`lib/connection.ts`, `_confirmedPublish`](../../lib/connection.ts)). Anything else is one of these four.
 
 | | Outcome | Republishing |
 |---|---|---|
 | `PublishNackedError` | definite: the broker refused it, nothing was stored | safe |
-| `UnroutableError` | definite: confirmed, but returned before the confirm — it reached no queue | safe, once something is bound |
+| `UnroutableError` | definite: confirmed, but returned before the confirm, so it reached no queue | safe, once something is bound |
 | `PublishConfirmTimeoutError` | **unknown** | may duplicate |
 | `ChannelClosedError` | **unknown** | may duplicate |
 
 > [!CAUTION]
-> `PublishConfirmTimeoutError` and `ChannelClosedError` are **ambiguous, not failed**. The broker may have stored the message and lost only the confirm; the channel may have closed after the message was safely on disk. Retrying either can deliver it twice. Deduplicate on `messageId` at the consumer, or accept the duplicate — there is no third option, and treating an ambiguous outcome as a definite failure is how a "reliable" publisher double-books.
+> `PublishConfirmTimeoutError` and `ChannelClosedError` are **ambiguous, not failed**. The broker may have stored the message and lost only the confirm; the channel may have closed after the message was safely on disk. Retrying either can deliver it twice. Deduplicate on `messageId` at the consumer, or accept the duplicate. There is no third option, and treating an ambiguous outcome as a definite failure is how a "reliable" publisher double-books.
 
 <!-- doc-check: compile id=publish-errors -->
 ```typescript
@@ -214,7 +214,7 @@ function idOf(error: unknown): string | undefined {
 }
 ```
 
-`UnroutableError` only reaches an RPC caller. `mandatory` is set for requests and deliberately **not** for events ([`lib/message_dispatcher.ts`, `publish`](../../lib/message_dispatcher.ts)) — an event with no subscribers is normal, and making that an error would break fan-out.
+`UnroutableError` only reaches an RPC caller. `mandatory` is set for requests and deliberately **not** for events ([`lib/message_dispatcher.ts`, `publish`](../../lib/message_dispatcher.ts)): an event with no subscribers is normal, and making that an error would break fan-out.
 
 `ChannelClosedError` has one non-obvious origin. amqplib reports both a broker nack and a channel teardown through the same confirm callback, and the only discriminator left by the time protobus sees it is the message text: `/closed/i` picks the ambiguous case, everything else becomes `PublishNackedError`.
 
@@ -228,13 +228,13 @@ All four extend `StreamingError`, none of them sets a `code`, and all are raised
 |---|---|---|
 | `StreamTimeoutError` | no chunk within the idle window; also cancels the producer | 60000 ms |
 | `StreamBackpressureError` | this call exceeded 1024 chunks or 64 MiB, or all calls together exceeded 256 MiB | `STREAM_MAX_BUFFERED_CHUNKS` / `_BYTES` / `STREAM_MAX_TOTAL_BUFFERED_BYTES` |
-| `StreamSequenceError` | `x-protobus-seq` jumped, so at least one chunk was lost | — |
-| `StreamClosedError` | **deprecated, never thrown** | — |
+| `StreamSequenceError` | `x-protobus-seq` jumped, so at least one chunk was lost | none |
+| `StreamClosedError` | **deprecated, never thrown** | none |
 
 `StreamSequenceError` discards the chunks already buffered rather than yielding them. That is deliberate: a short stream that looks complete is worse than a visibly broken one.
 
 > [!WARNING]
-> **`StreamClosedError` is exported but never thrown, and is deprecated as of 2.3.0** — it will be removed in 3.0. Do not write a `catch` that depends on it.
+> **`StreamClosedError` is exported but never thrown, and is deprecated as of 2.3.0**, and it will be removed in 3.0. Do not write a `catch` that depends on it.
 >
 > It was not revived, because every ending it was meant to describe already has a defined outcome and none of them is this one: a disconnect raises `DisconnectedError`, a stall raises `StreamTimeoutError`, an `AbortSignal` cancellation [deliberately ends the loop rather than raising](../guide/streaming.md#cancellation), and iterating after `return()` reports `done` because the async-iterator protocol requires it. Repurposing any of those would change behaviour callers already depend on.
 
@@ -276,14 +276,14 @@ These two fail `init()`, before any message is handled. Both are worth recognisi
 
 Two conditions, both in [`lib/message_service.ts`](../../lib/message_service.ts):
 
-1. **`missing_proto_source`** — the default `Proto` getter did `fs.existsSync(this.ProtoFileName)` and the file is not there. With `RunnableService` the filename is derived by convention: `Orders.Service` → `Orders.proto`, resolved **relative to the process's working directory**, not to the source file. A service started from a different directory hits this, and the message says only `missing_proto_source`.
-2. **`no service in the schema matches '<name>' or any prefix of it`** — the schema loaded, but `resolveContract()` trimmed `ServiceName` segment by segment and found no `service` block. `Combat.Player.player6` resolves because `Combat.Player` is declared; a typo in either the class or the `.proto` does not.
+1. **`missing_proto_source`**: the default `Proto` getter did `fs.existsSync(this.ProtoFileName)` and the file is not there. With `RunnableService` the filename is derived by convention: `Orders.Service` → `Orders.proto`, resolved **relative to the process's working directory**, not to the source file. A service started from a different directory hits this, and the message says only `missing_proto_source`.
+2. **`no service in the schema matches '<name>' or any prefix of it`**: the schema loaded, but `resolveContract()` trimmed `ServiceName` segment by segment and found no `service` block. `Combat.Player.player6` resolves because `Combat.Player` is declared; a typo in either the class or the `.proto` does not.
 
 Fix (1) by overriding `ProtoFileName` with an absolute path, or by passing the proto directory to `context.init()`. Fix (2) by making the `.proto` declare the service the class serves.
 
 ### `RetryQueueMismatchError`
 
-`retryDelayMs` becomes the retry queue's `x-message-ttl`, and RabbitMQ fixes queue arguments at declare time. Changing it for a service that has already run gives a `PRECONDITION_FAILED` on `queue.declare`; protobus catches that and rewrites it into a message that says what to actually do — drain and delete `<Service>.Retry`, or keep the original value. See [Queue Migration](../operations/queue-migration.md).
+`retryDelayMs` becomes the retry queue's `x-message-ttl`, and RabbitMQ fixes queue arguments at declare time. Changing it for a service that has already run gives a `PRECONDITION_FAILED` on `queue.declare`; protobus catches that and rewrites it into a message that says what to actually do: drain and delete `<Service>.Retry`, or keep the original value. See [Queue Migration](../operations/queue-migration.md).
 
 ---
 
@@ -309,11 +309,11 @@ export class InsufficientFundsError extends HandledError {
 ```
 
 > [!IMPORTANT]
-> **Extra properties do not cross the bus.** `ResponseError` carries exactly three fields — `method`, `message`, `code` ([`lib/message_factory.ts`](../../lib/message_factory.ts)). `shortfallCents` above exists in the service process and nowhere else. If the caller needs a value, put it in the `message` or, better, in the response message.
+> **Extra properties do not cross the bus.** `ResponseError` carries exactly three fields: `method`, `message`, `code` ([`lib/message_factory.ts`](../../lib/message_factory.ts)). `shortfallCents` above exists in the service process and nowhere else. If the caller needs a value, put it in the `message` or, better, in the response message.
 
 ### What the caller actually receives
 
-Not your class. `ServiceProxy` decodes the `ResponseError` and throws a **plain `Error`** with `message` set and `code` copied on when non-empty ([`lib/service_proxy.ts:101`](../../lib/service_proxy.ts)). So `instanceof NotFoundError` is `false` in the caller, and `isHandledError()` returns `false` there too — the `isHandled` flag is not on the wire.
+Not your class. `ServiceProxy` decodes the `ResponseError` and throws a **plain `Error`** with `message` set and `code` copied on when non-empty ([`lib/service_proxy.ts:101`](../../lib/service_proxy.ts)). So `instanceof NotFoundError` is `false` in the caller, and `isHandledError()` returns `false` there too, because the `isHandled` flag is not on the wire.
 
 Switch on `code`:
 
@@ -336,7 +336,7 @@ export async function placeOrder(call: () => Promise<{ id: string }>) {
 }
 ```
 
-No code is shared between the two sets — the wire carries `HANDLED_ERROR`, `PROTOCOL_ERROR`, `INTERNAL_ERROR` and whatever you define, while `RPC_TIMEOUT`, `NOT_READY` and the publish codes are set locally — so one `switch` can cover both origins without ambiguity.
+No code is shared between the two sets (the wire carries `HANDLED_ERROR`, `PROTOCOL_ERROR`, `INTERNAL_ERROR` and whatever you define, while `RPC_TIMEOUT`, `NOT_READY` and the publish codes are set locally), so one `switch` can cover both origins without ambiguity.
 
 > [!NOTE]
 > A local code can still reach a *further* caller when services are chained. Service B calling service C gets an `RpcTimeoutError`, which is not a `HandledError`, so it runs B's retry ladder and is finally answered to A as `code: "RPC_TIMEOUT"`. The code is unambiguous; the hop it happened on is not, which is what `correlationId` is for.
@@ -356,9 +356,9 @@ flowchart LR
     style E fill:#1f6feb,color:#fff,stroke:#1f6feb
 ```
 
-Three fields, one class on the far side. Everything else — the class, the stack, extra properties, the `isHandled` flag — is local to the service process.
+Three fields, one class on the far side. Everything else (the class, the stack, extra properties, the `isHandled` flag) is local to the service process.
 
-One more surface worth knowing: a failed message stamps `x-last-error` on its retry and DLQ copies, and that header is written by `safeErrorSummary()`. For a `HandledError` it is `Name[CODE]: message`; for anything else it is `Name[code]` or just `Name`, with **the message deliberately omitted** — exception text routinely interpolates the data that caused it, and a DLQ entry outlives the incident. See [Architecture → headers](../concepts/architecture.md#when-a-handler-fails).
+One more surface worth knowing: a failed message stamps `x-last-error` on its retry and DLQ copies, and that header is written by `safeErrorSummary()`. For a `HandledError` it is `Name[CODE]: message`; for anything else it is `Name[code]` or just `Name`, with **the message deliberately omitted**: exception text routinely interpolates the data that caused it, and a DLQ entry outlives the incident. See [Architecture → headers](../concepts/architecture.md#when-a-handler-fails).
 
 ---
 
