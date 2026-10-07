@@ -39,8 +39,8 @@ project layout. There is no container, module system or framework runtime you ha
 to adopt.
 
 > **Cross-language:** [protobus-py](https://github.com/ArielLaub/protobus-py) (Python, stable),
-> [protobus-go](https://github.com/ArielLaub/protobus-go) (Go, stable) and [protobus-cpp](https://github.com/ArielLaub/protobus-cpp)
-> (C++, new) speak the same wire protocol and use the same `.proto` contracts.
+> [protobus-go](https://github.com/ArielLaub/protobus-go) (Go, stable), [protobus-cpp](https://github.com/ArielLaub/protobus-cpp)
+> (C++, new) and [protobus-java](https://github.com/ArielLaub/protobus-java) (Java, new) speak the same wire protocol and use the same `.proto` contracts.
 > Write each service in the language that suits it; see
 > [Other languages](https://github.com/ArielLaub/protobus/blob/master/docs/README.md#other-languages).
 
@@ -195,7 +195,7 @@ The service definition is not a TypeScript decorator, a JSON pattern or a runtim
 registration object. It is a language-neutral Protobuf schema. The
 `Calculator.proto` above is the whole contract for `Calculator.Math`.
 
-The same contract can be consumed from TypeScript, Python, Go, C++, or any future port.
+The same contract can be consumed from TypeScript, Python, Go, C++, Java, or any future port.
 Schema changes can be checked at build time instead of being discovered after two
 services disagree in production.
 
@@ -421,6 +421,7 @@ Current ports:
 | Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
+| Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
 
 Wire compatibility matters more than matching APIs character-for-character. The
 `.proto` stays the source of truth across languages.

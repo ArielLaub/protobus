@@ -158,6 +158,7 @@ client.
 | Python | [protobus-py](https://github.com/ArielLaub/protobus-py) | stable |
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
+| Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
 
 The goal of a port is wire compatibility and equivalent messaging semantics, not
 a line-for-line copy of the TypeScript API. Differences between ports are recorded
