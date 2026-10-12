@@ -38,11 +38,9 @@ HTTP server, logger, validation, database layer, config system, tracing stack an
 project layout. There is no container, module system or framework runtime you have
 to adopt.
 
-> **Cross-language:** [protobus-py](https://github.com/ArielLaub/protobus-py) (Python, stable),
-> [protobus-go](https://github.com/ArielLaub/protobus-go) (Go, stable), [protobus-cpp](https://github.com/ArielLaub/protobus-cpp)
-> (C++, new) and [protobus-java](https://github.com/ArielLaub/protobus-java) (Java, new) speak the same wire protocol and use the same `.proto` contracts.
-> Write each service in the language that suits it; see
-> [Other languages](https://github.com/ArielLaub/protobus/blob/master/docs/README.md#other-languages).
+> **Cross-language:** ProtoBus has first-party ports in other languages. They speak the same
+> wire protocol and use the same `.proto` contracts, so each service can be written in the
+> language that suits it; see [Current ports](#cross-language-by-design).
 
 ---
 
@@ -422,6 +420,8 @@ Current ports:
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 | Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
+| C# | [protobus-csharp](https://github.com/ArielLaub/protobus-csharp) | new |
+| Rust | [protobus-rs](https://github.com/ArielLaub/protobus-rs) | new |
 
 Wire compatibility matters more than matching APIs character-for-character. The
 `.proto` stays the source of truth across languages.

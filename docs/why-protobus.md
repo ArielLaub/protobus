@@ -149,7 +149,7 @@ The schema does three jobs at once:
 That is more important than "binary is smaller than JSON." The real benefit is
 that the contract is external to any one runtime.
 
-The same `.proto` is consumed by TypeScript, Python, Go, C++ and Java implementations.
+The same `.proto` is consumed by the implementation in every language [listed below](#cross-language-is-a-core-property).
 
 ## Cross-language is a core property
 
@@ -163,6 +163,8 @@ There are first-party compatible implementations:
 - [protobus-go](https://github.com/ArielLaub/protobus-go) (Go)
 - [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) (C++)
 - [protobus-java](https://github.com/ArielLaub/protobus-java) (Java)
+- [protobus-csharp](https://github.com/ArielLaub/protobus-csharp) (C#)
+- [protobus-rs](https://github.com/ArielLaub/protobus-rs) (Rust)
 
 That constraint is healthy for the TypeScript implementation: wire behavior
 cannot casually depend on JavaScript-only object conventions. Where the ports
@@ -172,8 +174,8 @@ differ, the difference is recorded per feature; see
 Interoperability is tested: protobus-go's CI runs Go, TypeScript
 and Python services and clients against each other, in both directions, on a
 real RabbitMQ 3 and 4, with replicas in different languages sharing one queue.
-protobus-cpp's CI runs C++ against the TypeScript, Python and Go ports the same
-way, and protobus-java's runs Java against all four.
+Each port since has a suite of its own that runs it, the same way, against the
+real libraries of the ports that came before it.
 This repository's own cross-language test is not part of its CI, because it
 needs the other ports checked out beside it.
 
