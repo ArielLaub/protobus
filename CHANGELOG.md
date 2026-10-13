@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-13
+
+A documentation and runtime-support release. The library code is unchanged
+from 2.5.0.
+
+A minor rather than a patch because the supported Node.js range moves: Node 20
+is no longer accepted by `engines`.
+
 ### Changed
 
 - **Node.js 22 or later.** `engines` now declares `>=22`, and CI tests Node 22
@@ -16,6 +24,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Bun is a supported consumer runtime.** CI runs the combat-game sample on
   Bun as well as Node, against a real broker. The library is still built and
   tested with Node; Bun runs the published package unchanged.
+
+### Documentation
+
+- **Every port in one place.** The README and the docs carry one list of the
+  seven ports (TypeScript, Python, Go, C++, Java, C#, Rust), or a single
+  pointer to it, instead of a different subset in each document.
+  [protobus-java](https://github.com/ArielLaub/protobus-java) and
+  [protobus-rs](https://github.com/ArielLaub/protobus-rs) are listed for the
+  first time. Statements about what a cross-language test suite covers name
+  the languages that suite actually runs.
+- **Stale claims corrected.** The `ServiceProxy` instance-name and
+  failed-event descriptions now match the code.
+- **README restructured** to the outline shared across the ports, with a
+  banner image.
 
 ## [2.5.0] - 2026-10-04
 
