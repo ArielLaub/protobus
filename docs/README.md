@@ -159,6 +159,8 @@ client.
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 | Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
+| C# | [protobus-csharp](https://github.com/ArielLaub/protobus-csharp) | new |
+| Rust | [protobus-rs](https://github.com/ArielLaub/protobus-rs) | new |
 
 The goal of a port is wire compatibility and equivalent messaging semantics, not
 a line-for-line copy of the TypeScript API. Differences between ports are recorded

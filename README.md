@@ -1,6 +1,10 @@
-# ProtoBus
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ArielLaub/protobus/master/docs/assets/banner.jpg" alt="ProtoBus: many languages, one message bus. A thin layer over Protocol Buffers and RabbitMQ." width="100%">
+</p>
 
-**Schema-first RPC over RabbitMQ. Protobuf on the wire. No application framework attached.**
+# ProtoBus for TypeScript
+
+**RabbitMQ-native microservices for Node.js and Bun, with Protocol Buffers on the wire.**
 
 [![npm version](https://img.shields.io/npm/v/protobus.svg?logo=npm)](https://www.npmjs.com/package/protobus)
 [![node](https://img.shields.io/badge/node-%E2%89%A522-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org)
@@ -10,39 +14,24 @@
 [![CI](https://github.com/ArielLaub/protobus/actions/workflows/ci.yml/badge.svg)](https://github.com/ArielLaub/protobus/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/protobus.svg)](https://github.com/ArielLaub/protobus/blob/master/LICENSE)
 
-ProtoBus takes the part of gRPC that works exceptionally well (a language-neutral
-`.proto` contract, compact binary messages, typed RPC and streaming) and puts it
-on a durable message bus instead of a direct HTTP/2 connection.
+Define a service in a `.proto` file, implement it as an ordinary class, and
+call it from anywhere on the bus as if it were local. ProtoBus turns each
+service into **one durable RabbitMQ queue with N processes competing for it**,
+so load balancing, failover, backpressure, retries and dead-lettering are
+handled by the broker.
 
-```text
-                    RabbitMQ
-                ┌──────┴──────┐
- TypeScript ────┤             ├──── Python
-                │ Protobuf    │
-                │ queues      │
-                │ routing     │
-                │ confirms    │
-                │ redelivery  │
-                └──────┬──────┘
-                       │
-                      Go
-```
+**ProtoBus solves messaging. It does not own your application.** Bring your own
+DI, HTTP server, logger, validation, database layer, config system, tracing
+stack and project layout. There is no container, module system or framework
+runtime you have to adopt.
 
-A service is defined once in Protobuf, implemented as an ordinary class, and can
-be called from another process or another language. RabbitMQ owns routing, queueing,
-competing consumers, backpressure and redelivery. ProtoBus owns the RPC contract,
-serialization, correlation, streaming and lifecycle around that broker.
+This is the reference implementation, in TypeScript, for Node.js and Bun. Its
+ports are **wire-compatible**: a service written in one language serves callers
+in all the others, with streaming, events, custom types and error codes
+included. They are listed under [Wire compatibility](#wire-compatibility).
 
-**ProtoBus solves messaging. It does not own your application.** Bring your own DI,
-HTTP server, logger, validation, database layer, config system, tracing stack and
-project layout. There is no container, module system or framework runtime you have
-to adopt.
-
-> **Cross-language:** [protobus-py](https://github.com/ArielLaub/protobus-py) (Python, stable),
-> [protobus-go](https://github.com/ArielLaub/protobus-go) (Go, stable), [protobus-cpp](https://github.com/ArielLaub/protobus-cpp)
-> (C++, new) and [protobus-java](https://github.com/ArielLaub/protobus-java) (Java, new) speak the same wire protocol and use the same `.proto` contracts.
-> Write each service in the language that suits it; see
-> [Other languages](https://github.com/ArielLaub/protobus/blob/master/docs/README.md#other-languages).
+**Status: stable.** 2.5.0 is the current release. Every port runs its own
+cross-language suite against this library, in both directions, on RabbitMQ.
 
 ---
 
@@ -55,12 +44,18 @@ bun add protobus
 ```
 
 ProtoBus is fully compatible with [Bun](https://bun.sh) as well as Node.js:
-the same package, with no flags or shims.
+the same package, with no flags or shims. `.proto` files are parsed at
+runtime, so there is no `protoc` to install; `npx protobus generate` writes
+TypeScript interfaces for them when you want generated types (see
+[CLI](https://github.com/ArielLaub/protobus/blob/master/docs/reference/cli.md)).
+The runtime depends on [amqplib](https://github.com/amqp-node/amqplib) for
+AMQP and [protobufjs](https://github.com/protobufjs/protobuf.js) for the wire.
 
 You also need a RabbitMQ 3.8+ broker:
 
 ```bash
 docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management-alpine
+export AMQP_URL=amqp://guest:guest@localhost:5672/
 ```
 
 ---
@@ -93,7 +88,9 @@ service Math {
 }
 ```
 
-Package plus service name is the service's name on the bus: `Calculator.Math`.
+The package plus the service name is the service's name on the bus:
+`Calculator.Math`. The file is an ordinary protobus schema, shared as-is with
+the other languages.
 
 ### 2. Implement it
 
@@ -170,250 +167,215 @@ $ npx tsx src/client.ts
 5 + 3 = 8
 ```
 
-For generated interfaces instead of the handwritten type above, run
-`npx protobus generate`; see [CLI](#cli) below.
+A call is bounded by `RPC_CALL_TIMEOUT_MS` (10 minutes by default, as in the
+other ports) unless you pass a timeout. For generated interfaces instead of the
+handwritten type above, run `npx protobus generate`.
 
-Full walkthrough, including events and the project layout:
+The full walkthrough adds events, error handling and the project layout:
 **[Getting Started](https://github.com/ArielLaub/protobus/blob/master/docs/guide/getting-started.md)**.
 
 ---
 
-## Why ProtoBus exists
+## Why ProtoBus
 
-There are already excellent ways to build distributed systems. ProtoBus exists
-for a narrower case:
+### RabbitMQ only, on purpose
 
-> **You want Protobuf-style RPC, but you want RabbitMQ semantics rather than a
-> direct point-to-point connection, and you do not want a full application
-> framework deciding the rest of your stack.**
+ProtoBus is built for one broker, so the things a broker is good at stay in the
+broker instead of being reimplemented above it:
 
-That leads to a few deliberate choices.
+| Concern | Where it lives |
+|---|---|
+| Load balancing | competing consumers on one queue |
+| Routing | topic exchange bindings (`REQUEST.<Service>.*`) |
+| Redelivery on consumer loss | late ack: an unacked delivery returns to the queue |
+| Retry delay | the retry queue's `x-message-ttl`, drained by a dead-letter exchange |
+| Persistence | durable queues, persistent messages |
+| Dead letters | a real `<Service>.DLQ` |
+| Priority | native queue priorities |
 
-### 1. The `.proto` is the contract
-
-The service definition is not a TypeScript decorator, a JSON pattern or a runtime
-registration object. It is a language-neutral Protobuf schema. The
-`Calculator.proto` above is the whole contract for `Calculator.Math`.
-
-The same contract can be consumed from TypeScript, Python, Go, C++, Java, or any future port.
-Schema changes can be checked at build time instead of being discovered after two
-services disagree in production.
-
-### 2. Protobuf is the actual wire format
-
-ProtoBus does not wrap your payload in a JSON-first transport abstraction. Request,
-response, event and stream payloads are encoded as Protocol Buffers.
-
-That gives you a compact binary representation, explicit compatibility rules and
-one schema that serves documentation, runtime serialization and generated types.
-
-### 3. RabbitMQ is part of the design
-
-ProtoBus is deliberately RabbitMQ-native. It does not pretend RabbitMQ, Redis,
-Kafka, NATS and TCP are equivalent transports.
-
-A service maps naturally to a durable queue with competing consumers:
-
-```text
-                         ┌─ worker 1
-caller ──> RabbitMQ queue├─ worker 2
-                         └─ worker 3
-```
-
-RabbitMQ therefore handles the work it was built for:
-
-- durable queues
-- competing-consumer load distribution
-- acknowledgements and redelivery
-- topic routing
-- dead-letter exchanges
-- message priority
-- flow control and broker-side backpressure
-
-If a worker disappears before settlement, the broker still owns the delivery.
-ProtoBus builds its retry, reply and shutdown rules around that fact instead of
-reimplementing a service registry and load balancer in JavaScript.
+A request goes publisher → exchange → queue → consumer. Nothing tracks live
+instances, so nothing holds a stale one, and a consumer that dies mid-request
+leaves its delivery unacked for the next consumer to take.
 
 If you may need to swap RabbitMQ for another broker, use a transport-agnostic
-framework instead. That is a real feature and ProtoBus does not have it.
+framework instead. That is a real feature and protobus does not have it.
 
-### 4. A resolved Promise should mean something
+### Protocol Buffers, not JSON
 
-A recurring design question in ProtoBus is:
+- **Contract-first.** The `.proto` file is the interface between teams and
+  languages, not a decorator, a JSON pattern or a runtime registration object,
+  and the generated types tell you when the two drift apart.
+- **Versioning by field number.** Adding a field does not break an old peer.
+- **Usually smaller on the wire**, since fields travel as numbers and packed
+  binary rather than text.
 
-> **What does this Promise resolving actually prove?**
+### A small protocol, a small library
 
-For publishing, success is coupled to a RabbitMQ publisher confirmation rather
-than handing bytes to a local socket buffer. Retry hand-off confirms the
-replacement publication before acknowledging the original. Reconnection restores
-required topology and consumers before the connection is considered usable.
-Graceful shutdown stops new work and drains in-flight work before disconnecting.
+The protocol protobus adds on top of AMQP is small and documented: five
+envelope messages, a routing-key convention, an error encoding and two
+streaming headers. Because queueing, consumer distribution and retry delays
+belong to the broker, the library is small too: three runtime dependencies
+(`amqplib`, `protobufjs`, `source-map-support`) and a short mental model, a
+`.proto` contract, a `Context`, a service, a proxy, events and streams.
 
-Distributed systems still have unavoidable ambiguous outcomes. For example, a
-connection can disappear while a publisher confirmation is in flight. ProtoBus
-surfaces those cases rather than inventing certainty it does not have. See
-[Delivery Guarantees](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/delivery-guarantees.md).
+It intentionally provides **no** dependency injection, HTTP routing, ORM,
+validation middleware, application modules, configuration framework, required
+logger or required tracing stack. Use constructor injection, Awilix, Inversify
+or tsyringe; Fastify, Express or Koa; Pino, Winston or your own logger. A
+messaging choice should not dictate your application architecture.
 
-### 5. Bring your own application stack
-
-ProtoBus intentionally does **not** provide:
-
-- dependency injection
-- HTTP routing
-- an ORM or database abstraction
-- validation middleware
-- application modules
-- a configuration framework
-- a required logger
-- a required tracing/metrics system
-
-Those are not missing features. They are outside the library's responsibility.
-
-Use constructor injection, Awilix, Inversify, tsyringe or no DI library at all.
-Use Fastify, Express, Koa or no HTTP server. Use Pino, Winston or your own logger.
-A messaging choice should not dictate your application architecture.
-
-### 6. Keep the dependency and conceptual surface small
-
-ProtoBus has three runtime dependencies:
-
-```text
-protobus
-├── amqplib
-├── protobufjs
-└── source-map-support
-```
-
-The public mental model is similarly small:
-
-```text
-.proto contract
-Context
-MessageService / RunnableService
-ServiceProxy
-events / streaming
-RabbitMQ
-```
-
-If you want an ecosystem that owns the whole server application, use one. ProtoBus
-is for the opposite preference: small composable libraries with explicit boundaries.
-
----
-
-## ProtoBus in one table
-
-| | ProtoBus | Direct gRPC | Full microservice frameworks | Raw `amqplib + protobuf` |
-|---|---|---|---|---|
-| Contract | **Protobuf** | **Protobuf** | framework-specific / optional | whatever you build |
-| Wire payload | **Protobuf** | **Protobuf** | commonly JSON or selectable | Protobuf if you build it |
-| Connection model | **brokered** | point-to-point | varies | brokered |
-| Durable queue | **yes** | no | transport-dependent | yes |
-| Broker redelivery | **yes** | no | transport-dependent | yes |
-| Events | **yes** | not the core model | usually | build it |
-| Streaming RPC | **yes** | **yes** | varies | build it |
-| Cross-language contract | **yes** | **yes** | varies | possible, you own protocol |
-| App framework included | **no** | no | usually yes / broad | no |
-| RPC/lifecycle semantics supplied | **yes** | **yes** | yes | no |
-
-A useful shorthand is **"gRPC-style contracts over a durable message bus."** It is
-not gRPC-compatible and it is not trying to replace gRPC everywhere. If direct,
-low-latency point-to-point RPC is exactly what you need, gRPC is a strong choice.
-ProtoBus is for systems where broker ownership of outstanding work is valuable.
-
-The longer comparison, including Moleculer, NestJS and Seneca, and the cases
-where you should choose something else:
+The longer case, the case against, and how it compares with direct gRPC,
+NestJS, Moleculer, Seneca and raw AMQP:
 **[Why ProtoBus](https://github.com/ArielLaub/protobus/blob/master/docs/why-protobus.md)**.
 
 ---
 
-## RPC, events and streaming share one schema
+## Features
 
-Unary RPC:
+- **Retries and dead-lettering.** An unhandled error or a processing timeout
+  parks the request on `<Service>.Retry` and redelivers it; after `maxRetries`
+  (3 by default, 5 seconds apart) it lands on `<Service>.DLQ`, and the caller
+  is answered with the final error. A `HandledError` is an answer and is never
+  retried. See
+  [Error Handling](https://github.com/ArielLaub/protobus/blob/master/docs/guide/error-handling.md).
+- **Server streaming.** A method declared `returns (stream T)` is implemented
+  as an async generator and consumed with `for await`. Leaving the loop, or
+  firing an `AbortSignal`, stops the producer on the server. See
+  [Streaming](https://github.com/ArielLaub/protobus/blob/master/docs/guide/streaming.md).
+- **Events.** `publishEvent` publishes on a topic exchange; `subscribeEvent`
+  receives events by message type, topic pattern (`*`, `#`) or both, with
+  optional per-listener retries and a dead-letter queue. See
+  [Events](https://github.com/ArielLaub/protobus/blob/master/docs/guide/events.md).
+- **Custom types.** `bigint` (unsigned 256-bit) and `timestamp` (milliseconds
+  since the epoch) are built in as `BigIntType` and `TimestampType`, already
+  registered. Register your own with `context.factory.registerType` and it
+  becomes a field type in your schemas. See
+  [Custom Types](https://github.com/ArielLaub/protobus/blob/master/docs/reference/custom-types.md).
+- **Priority.** `maxPriority` makes a service queue a priority queue, and a
+  call's `priority` lets a control message overtake a bulk backlog. See
+  [Priority](https://github.com/ArielLaub/protobus/blob/master/docs/guide/priority.md).
+- **Instance-named services.** Many instances can serve one contract under
+  their own names (`Combat.Player.player6`), each addressed by its own proxy.
+- **Processing timeout.** `processingTimeoutMs` caps one attempt at a unary
+  request; the handler's signal fires and the attempt counts as failed.
+- **Reconnection.** A lost connection is re-established with capped
+  exponential backoff, and every queue, binding and consumer is restored
+  before the connection reports itself ready. Calls made meanwhile wait for
+  it; calls in flight when it dropped fail with `DisconnectedError`.
+- **Publisher confirms.** A resolved Promise means something: every publish
+  waits for the broker's confirm. A failure is a `PublishError` that says
+  whether the outcome is definite or ambiguous, and a caller-supplied
+  `messageId` makes a republish safe to deduplicate. This is at-least-once
+  territory, written down in
+  [Delivery Guarantees](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/delivery-guarantees.md).
+- **Logging, your way.** Structured records for your own sink, or plain lines
+  through any logger you already have. See
+  [Logging](https://github.com/ArielLaub/protobus/blob/master/docs/operations/logging.md).
+- **CLI.** `npx protobus generate` writes TypeScript types from your schemas,
+  `npx protobus generate:service Name` a runnable service stub, configured from
+  the `protobus` key of `package.json`. See
+  [CLI](https://github.com/ArielLaub/protobus/blob/master/docs/reference/cli.md).
+- **Graceful shutdown.** `RunnableService` stops intake on SIGINT/SIGTERM, lets
+  in-flight work finish, runs your `cleanup()`, then disconnects.
 
-<!-- doc-check: ignore why="excerpt of a service block, not a complete schema" -->
-```protobuf
-rpc getOrder(Orders.GetRequest) returns (Orders.Order);
-```
-
-Server streaming:
-
-<!-- doc-check: ignore why="excerpt of a service block, not a complete schema" -->
-```protobuf
-rpc watchOrder(Orders.WatchRequest) returns (stream Orders.Update);
-```
-
-Events are ordinary Protobuf messages published by their fully-qualified message
-type. The result is one vocabulary for synchronous-looking calls, asynchronous
-notifications and streams without switching serialization formats or contract
-systems.
-
-- [Events](https://github.com/ArielLaub/protobus/blob/master/docs/guide/events.md)
-- [Streaming RPC](https://github.com/ArielLaub/protobus/blob/master/docs/guide/streaming.md)
-- [Message Priority](https://github.com/ArielLaub/protobus/blob/master/docs/guide/priority.md)
-
----
-
-## Custom types
-
-Protobuf's scalars do not cover everything. Register a custom type and it becomes
-usable as a field type in your schemas, encoded and decoded transparently:
+### A short tour
 
 <!-- doc-check: compile -->
 ```typescript
-import { Context, ICustomType } from 'protobus';
+import { CallOptions, Config, Context, RunnableService, ServiceProxy } from 'protobus';
 
-const UuidType: ICustomType<string> = {
-    name: 'uuid',                 // how it is written in the .proto
-    wireType: 'string',           // how it travels
-    tsType: 'string',             // what generated types call it
-    encode: (value: string) => value,
-    decode: (data: string) => data,
-};
+class Calculator extends RunnableService {
+    public get ServiceName(): string { return 'Calculator.Math'; }
 
-async function main() {
-    const context = new Context();
+    async add(request: { a: number; b: number }): Promise<{ result: number }> {
+        return { result: request.a + request.b };
+    }
+}
 
-    // Register before init(): init() parses your .proto files, and a schema
-    // using `uuid` cannot be parsed until the type exists.
-    context.factory.registerType(UuidType);
+interface CalculatorMath {
+    add(request: { a: number; b: number }, actor?: string, rpc?: boolean, timeoutMs?: number, options?: CallOptions): Promise<{ result: number }>;
+}
 
-    await context.init('amqp://localhost', ['./proto']);
+async function tour(context: Context) {
+    // Options on a service: concurrency, retries, a processing timeout and a
+    // priority queue.
+    const service = await RunnableService.start(context, Calculator, {
+        maxConcurrent: 16,
+        retry: { maxRetries: 5, retryDelayMs: 10000 },
+        processingTimeoutMs: 30000,
+        maxPriority: Config.RECOMMENDED_MAX_PRIORITY,
+    });
+
+    // Options on a call: an actor, a timeout and a priority.
+    const calculator = new ServiceProxy(context, 'Calculator.Math') as ServiceProxy & CalculatorMath;
+    await calculator.init();
+    await calculator.add({ a: 1, b: 2 }, 'billing-job', true, 5000, { priority: Config.PRIORITY_HIGH });
+
+    // Events: subscribe by type, publish from anywhere on the bus.
+    await service.subscribeEvent('Calculator.Calculated', async (event) => {
+        console.log(event.operation);
+    });
+    await service.publishEvent('Calculator.Calculated', { operation: 'add', at: Date.now() });
 }
 ```
 
-<!-- doc-check: ignore why="uses a custom type, so it only parses in a process that has registered it first" -->
-```protobuf
-// The schema MUST declare syntax = "proto3" or protobufjs rejects the
-// custom type with: illegal token 'uuid'
-syntax = "proto3";
-package Accounts;
+<!-- doc-check: compile -->
+```typescript
+import { MessageHandlerContext, MessageService } from 'protobus';
 
-message Account {
-    uuid id = 1;
+// Streaming, server side: an async generator; each yield is one chunk.
+class Assistant extends MessageService {
+    public get ServiceName(): string { return 'Chat.Assistant'; }
+    public get ProtoFileName(): string { return 'chat.proto'; }
+
+    async *generate(request: { prompt: string }, actor: string, correlationId: string, context: MessageHandlerContext): AsyncIterable<{ index: number; text: string }> {
+        const words = ['hello', 'from', 'typescript'];
+        for (let index = 0; index < words.length; index++) {
+            if (context.signal.aborted) return; // the caller has gone: stop producing
+            yield { index, text: words[index] };
+        }
+    }
+}
+
+interface ChatAssistant {
+    generate(request: { prompt: string }): AsyncIterable<{ index: number; text: string }>;
+}
+
+// Client side: `for await` over the proxy's stream.
+async function read(assistant: ChatAssistant) {
+    for await (const token of assistant.generate({ prompt: 'hi' })) {
+        process.stdout.write(token.text + ' ');
+        if (token.index === 1) break; // leaving the loop tells the server to stop
+    }
 }
 ```
-
-`BigIntType` and `TimestampType` ship with the library and are **already
-registered**; registering either again is a no-op. A custom type is a convention
-on top of a standard Protobuf wire type, so every language that consumes the
-schema has to agree on it. Details, and the rules that make this work:
-**[Custom Types](https://github.com/ArielLaub/protobus/blob/master/docs/reference/custom-types.md)**.
 
 ---
 
-## Cross-language by design
+## Concurrency
 
-Cross-language support is not an adapter bolted onto a TypeScript object protocol.
-The shared pieces are intentionally language-neutral:
+One process is one event loop. Handlers run concurrently as promises, never in
+parallel, so they share state freely; a handler that blocks the loop stalls
+every other in-flight message on that replica, so keep CPU-bound work off it
+or run more replicas. The number in flight is bounded by the consumer's
+prefetch: `maxConcurrent` for a service (default 1, one request at a time),
+`DEFAULT_PREFETCH` for event handling (also 1). A streaming handler holds its
+slot for the life of its stream.
 
-```text
-contract      = Protocol Buffers
-serialization = Protocol Buffers
-broker        = RabbitMQ / AMQP
-routing       = RabbitMQ topology + documented ProtoBus conventions
-```
+Create one `Context` per process and share it between services and proxies.
+See
+[Architecture](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/architecture.md).
 
-Current ports:
+---
+
+## Wire compatibility
+
+The ports speak this library's wire protocol exactly: the same exchanges,
+queues, envelopes (byte for byte), headers and error codes, and the same
+environment variables for configuration. Replicas of one service in different
+languages can share its queue and climb one retry ladder together. Every port
+runs a cross-language suite against this library over a real broker, in both
+directions.
 
 | Language | Repo | Status |
 |---|---|---|
@@ -422,58 +384,11 @@ Current ports:
 | Go | [protobus-go](https://github.com/ArielLaub/protobus-go) | stable |
 | C++ | [protobus-cpp](https://github.com/ArielLaub/protobus-cpp) | new |
 | Java | [protobus-java](https://github.com/ArielLaub/protobus-java) | new |
+| C# | [protobus-csharp](https://github.com/ArielLaub/protobus-csharp) | new |
+| Rust | [protobus-rs](https://github.com/ArielLaub/protobus-rs) | new |
 
-Wire compatibility matters more than matching APIs character-for-character. The
-`.proto` stays the source of truth across languages.
-
----
-
-## Reliability model
-
-ProtoBus is intentionally explicit about what RabbitMQ can and cannot guarantee.
-The important properties include:
-
-- consumers acknowledge work after the relevant processing/settlement path
-- publications use publisher-confirm channels
-- unroutable RPC requests are surfaced as an error, not a timeout
-- retry publication is confirmed before the original delivery is acknowledged
-- disconnects reject or interrupt pending work rather than silently pretending it completed
-- reconnection restores required topology/consumers before readiness
-- graceful process shutdown drains work already in flight
-- definite failures and ambiguous outcomes are raised as distinct error types
-- callers can supply a stable `messageId` for deduplication across ambiguous retries
-
-This is **at-least-once territory**. It is not exactly-once execution. Handlers
-with side effects should be idempotent where duplicates matter.
-
-Read **[Delivery Guarantees](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/delivery-guarantees.md)** before
-relying on any stronger interpretation.
-
----
-
-## CLI
-
-```bash
-npx protobus generate               # .proto -> TypeScript types
-npx protobus generate:service Name  # a runnable service stub
-npx protobus init                   # print project setup instructions
-```
-
-Configured from `package.json`:
-
-```json
-{
-  "protobus": {
-    "protoDir": "./proto",
-    "typesOutput": "./common/types/proto.ts",
-    "servicesDir": "./services"
-  }
-}
-```
-
-All three keys are optional; the defaults above are what the CLI uses. Generated
-code is a convenience; the `.proto` remains authoritative.
-**[CLI reference](https://github.com/ArielLaub/protobus/blob/master/docs/reference/cli.md)**.
+The wire format and the round trip are in
+**[Message Flow](https://github.com/ArielLaub/protobus/blob/master/docs/concepts/message-flow.md)**.
 
 ---
 
@@ -491,6 +406,7 @@ Full index: **[docs/](https://github.com/ArielLaub/protobus/blob/master/docs/REA
 | [Getting Started](https://github.com/ArielLaub/protobus/blob/master/docs/guide/getting-started.md) | zero to a working RPC, plus events |
 | [Schema Design](https://github.com/ArielLaub/protobus/blob/master/docs/guide/schema.md) | writing the `.proto` that is your contract |
 | [Events](https://github.com/ArielLaub/protobus/blob/master/docs/guide/events.md) | publish/subscribe and wildcard topics |
+| [Streaming](https://github.com/ArielLaub/protobus/blob/master/docs/guide/streaming.md) | server streaming and cancellation |
 | [Error Handling](https://github.com/ArielLaub/protobus/blob/master/docs/guide/error-handling.md) | retriable vs terminal, the retry ladder, the DLQ |
 | [Testing](https://github.com/ArielLaub/protobus/blob/master/docs/guide/testing.md) | unit, integration and end-to-end |
 
@@ -506,6 +422,7 @@ Full index: **[docs/](https://github.com/ArielLaub/protobus/blob/master/docs/REA
 | [API reference](https://github.com/ArielLaub/protobus/blob/master/docs/reference/api) | Context, MessageService, RunnableService, ServiceProxy |
 | [Errors](https://github.com/ArielLaub/protobus/blob/master/docs/reference/errors.md) | every exported error class and when it is thrown |
 | [Custom Types](https://github.com/ArielLaub/protobus/blob/master/docs/reference/custom-types.md) | extending the type system |
+| [CLI](https://github.com/ArielLaub/protobus/blob/master/docs/reference/cli.md) | `generate`, `generate:service`, `init` |
 
 | Run it | |
 |---|---|
@@ -518,41 +435,20 @@ Full index: **[docs/](https://github.com/ArielLaub/protobus/blob/master/docs/REA
 
 ---
 
-## See a real system in a minute
+## Examples
+
+| Example | Shows |
+|---|---|
+| [`sample/combatGame`](https://github.com/ArielLaub/protobus/tree/master/sample/combatGame) | Six instances of one service playing a game over RPC and events, with graceful shutdown |
+| [`sample/tokenStream`](https://github.com/ArielLaub/protobus/tree/master/sample/tokenStream) | Streaming tokens like a language model, with cancellation stopping the producer |
 
 ```bash
 git clone https://github.com/ArielLaub/protobus && cd protobus && npm install
 npm run docker:up
-bash scripts/run-combat-sample.sh
+bash scripts/run-combat-sample.sh   # asserts that exactly one player survived
 ```
-
-Six services fight a battle royale over the bus (RPC, published events and
-graceful shutdown in one run), and the script asserts exactly one player
-survived. The source is
-[`sample/combatGame`](https://github.com/ArielLaub/protobus/tree/master/sample/combatGame).
 
 ---
-
-## Requirements
-
-- Node.js 22+ (enforced by `engines`; CI runs 22 and 24), or Bun (CI runs the
-  combat-game sample on the latest Bun)
-- RabbitMQ 3.8+
-
-## Development
-
-```bash
-npm test                          # unit suite
-npm run test:integration          # integration suite (starts RabbitMQ via Docker)
-node scripts/check-doc-snippets.js  # compile and run every example in the docs
-bash scripts/run-combat-sample.sh   # end-to-end sample
-```
-
-## Design principle
-
-> **Do the messaging job completely; leave the rest of the application alone.**
-
-That is the boundary ProtoBus is intended to keep.
 
 ## License
 
