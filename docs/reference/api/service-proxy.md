@@ -116,6 +116,7 @@ methodName(
 | `timeoutMs` | `Config.rpcCallTimeoutMs` (`RPC_CALL_TIMEOUT_MS`, 600000) | rejects with `RpcTimeoutError` |
 | `options.priority` | unset | AMQP priority, integer 0-255 |
 | `options.messageId` | a fresh UUID | the message identity the consumer sees. Set it to make a caller-driven republish recognisable after an ambiguous outcome; see [Deduplicating a caller own republish](../../concepts/delivery-guarantees.md#deduplicating-a-callers-own-republish). Blank is refused with `InvalidMessageIdError` |
+| `options.mandatory` | `false` | fire-and-forget only: publish `mandatory`, so a call whose routing key reaches no queue rejects with `UnroutableError` instead of resolving. Use it for a command whose loss must be retried; an RPC is always mandatory |
 
 > [!WARNING]
 > **With `rpc: false` the returned promise resolves with `{}`**, not with the service's response. Nothing is waited for and nothing is decoded. Destructuring the result of a fire-and-forget call gives you `undefined` for every field, silently.

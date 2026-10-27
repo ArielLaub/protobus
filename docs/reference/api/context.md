@@ -118,7 +118,7 @@ Publishes an already-encoded request and resolves with the encoded reply.
 | `timeoutMs` | `Config.rpcCallTimeoutMs` (`RPC_CALL_TIMEOUT_MS`, 600000) | Rejects with `RpcTimeoutError` if no reply arrives. Ignored when `rpc` is `false`. |
 | `options.priority` | unset | AMQP priority 0-255. Only meaningful on a queue declared with `maxPriority`. See [Message Priority](../../guide/priority.md). |
 
-An RPC publish sets `mandatory`, so a request routed to a key nothing is bound to fails immediately with `UnroutableError` rather than after the full timeout. A non-RPC publish does not; an event with no subscribers is normal.
+An RPC publish sets `mandatory`, so a request routed to a key nothing is bound to fails immediately with `UnroutableError` rather than after the full timeout. A non-RPC publish does not, unless it passes `options.mandatory: true`: a fire-and-forget command whose loss must be retried should, while anything event-like, where nobody listening is normal, should not.
 
 **The one case you need this.** A service whose `ServiceName` carries extra instance segments (`Combat.Player.player6`) is not addressable through `ServiceProxy`, which looks its name up in the schema verbatim. The routing key has to be built by hand:
 
