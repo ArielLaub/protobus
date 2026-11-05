@@ -62,6 +62,18 @@ export interface CallOptions {
      * failure this option exists to prevent, arriving silently.
      */
     messageId?: string;
+    /**
+     * Fire-and-forget only (`rpc === false`): publish with AMQP's `mandatory`
+     * flag, so a message whose routing key reaches no queue is returned by the
+     * broker and the call rejects with `UnroutableError` instead of resolving.
+     *
+     * Use it for a COMMAND sent without waiting for the reply ("recalculate
+     * this user"), where a missing queue means lost work the caller must learn
+     * about and retry. Leave it unset for anything event-like, where nobody
+     * listening is normal. An RPC is always mandatory; `false` cannot change
+     * that.
+     */
+    mandatory?: boolean;
 }
 
 /** AMQP carries `message-id` as a shortstr: one length byte, so 255 max. */
@@ -441,7 +453,10 @@ export default class MessageDispatcher implements IMessageDispatcher {
             //
             // Deliberately NOT set for events: an event with no subscribers is
             // normal, and making that an error would break fan-out publishing.
-            mandatory: rpc,
+            // A fire-and-forget COMMAND opts in through CallOptions.mandatory:
+            // without it a missing queue drops the message behind a positive
+            // confirm, and the caller records work that never happened.
+            mandatory: rpc || options?.mandatory === true,
         };
         // Assigned only when the caller asked for one, so a publish with no
         // priority carries no priority property at all — byte-identical to

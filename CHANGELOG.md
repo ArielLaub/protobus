@@ -6,6 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`CallOptions.mandatory` for fire-and-forget publishes.** A call made with
+  `rpc === false` can pass `{ mandatory: true }` to be published with AMQP's
+  `mandatory` flag: a message that reaches no queue is returned by the broker
+  and the call rejects with `UnroutableError` instead of resolving. Without it
+  (the default, unchanged) a fire-and-forget command to a missing queue is
+  dropped behind a positive confirm, which is right for an event and wrong for
+  a command whose loss must be retried. RPC requests stay mandatory regardless.
+
 ## [2.6.0] - 2026-10-13
 
 A documentation and runtime-support release. The library code is unchanged
